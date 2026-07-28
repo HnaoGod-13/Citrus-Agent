@@ -1,0 +1,11 @@
+{
+  "built_at": "2026-06-16T14:52:17",
+  "source_dir": "D:\\桌面\\柑橘Agent\\文献库",
+  "output_dir": "D:\\桌面\\柑橘Agent\\data\\literature",
+  "articles": 36,
+  "chunks": 1184,
+  "json_files": 24,
+  "pdf_files": 12,
+  "converted_pdf_json_dir": "D:\\桌面\\柑橘Agent\\data\\literature\\converted_json",
+  "errors": []
+}
