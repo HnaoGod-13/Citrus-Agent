@@ -633,12 +633,19 @@ def inject_style() -> None:
             background: rgba(255, 255, 255, 0.045);
             border: 1px dashed var(--agent-line-strong);
             border-radius: 8px;
+            min-height: 5.1rem;
+            padding: 0.78rem 0.82rem;
         }
         [data-testid="stFileUploader"] button {
             background: rgba(255, 255, 255, 0.08) !important;
             border: 1px solid rgba(255, 255, 255, 0.12) !important;
             color: var(--agent-text-soft) !important;
             border-radius: 8px;
+            min-height: 2.3rem;
+            padding: 0.55rem 0.78rem;
+        }
+        [data-testid="stFileUploader"] small {
+            display: none !important;
         }
         [data-testid="stTextArea"] div[data-baseweb="textarea"],
         [data-testid="stTextArea"] div[data-baseweb="base-input"],
@@ -1310,9 +1317,7 @@ def render_sidebar() -> tuple[str, bool, bytes | None, str]:
                 st.error(str(error))
             else:
                 st.image(prepared_image.data, caption="图片预览", width="stretch")
-                st.caption("；".join(prepared_image.notes))
                 st.info("图片会在本轮分析中自动调用视觉模型识别；下方外观描述可作为人工补充。")
-        st.caption("支持 JPG、PNG、WebP、BMP、GIF、TIFF、HEIC/HEIF、AVIF、JPEG 2000、ICO 等常见格式；单文件不超过 40 MB。")
 
         manual_observation = st.text_area(
             "外观描述",
@@ -1329,18 +1334,6 @@ def render_sidebar() -> tuple[str, bool, bytes | None, str]:
             <div class="status-list">
                 <div class="status-row"><span>DeepSeek</span><span class="status-pill">{DEEPSEEK_MODEL}</span></div>
                 <div class="status-row"><span>Qwen Vision</span><span class="status-pill">{get_vision_model()}</span></div>
-            </div>
-            <div class="sidebar-section-title">计算工具</div>
-            <div class="status-list">
-                <div class="status-row"><span>Literature RAG</span><span class="status-pill">local chunks · evidence</span></div>
-                <div class="status-row"><span>Rule Engine</span><span class="status-pill">processing score · QC risk</span></div>
-                <div class="status-row"><span>Report Builder</span><span class="status-pill">markdown · audit log</span></div>
-            </div>
-            <div class="sidebar-section-title">工作流</div>
-            <div class="status-list">
-                <div class="status-row"><span>批次抽取</span><span class="status-pill">text / image / manual notes</span></div>
-                <div class="status-row"><span>路线评分</span><span class="status-pill">whole · pulp · peel · seed · byproduct</span></div>
-                <div class="status-row"><span>复核输出</span><span class="status-pill">risk boundary · report draft</span></div>
             </div>
             """,
             unsafe_allow_html=True,
