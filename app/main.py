@@ -813,6 +813,16 @@ def inject_style() -> None:
         [data-testid="stSidebar"] > div {
             padding: 2.35rem 1.35rem 1.4rem;
         }
+        [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p,
+        [data-testid="stSidebar"] label {
+            font-size: 0.88rem !important;
+            line-height: 1.55 !important;
+        }
+        [data-testid="stSidebar"] .stCaption,
+        [data-testid="stSidebar"] small {
+            font-size: 0.76rem !important;
+            line-height: 1.45 !important;
+        }
         .sidebar-brand {
             display: block;
             padding: 0 0 1.1rem;
@@ -834,7 +844,7 @@ def inject_style() -> None:
         .brand-title {
             margin-top: 0.65rem;
             color: var(--agent-text);
-            font-size: 1.28rem;
+            font-size: 1.34rem;
             line-height: 1.15;
             font-weight: 560;
             font-style: normal;
@@ -843,14 +853,14 @@ def inject_style() -> None:
         .brand-subtitle {
             color: var(--agent-muted);
             font-family: var(--agent-mono-font-family) !important;
-            font-size: 0.64rem;
+            font-size: 0.7rem;
             letter-spacing: 0.18em;
             text-transform: uppercase;
         }
         .sidebar-section-title {
             color: var(--agent-muted);
             font-family: var(--agent-mono-font-family) !important;
-            font-size: 0.68rem;
+            font-size: 0.76rem;
             font-weight: 500;
             letter-spacing: 0.16em;
             margin: 1.7rem 0 0.82rem;
@@ -866,7 +876,7 @@ def inject_style() -> None:
             padding: 0.78rem 0 0.9rem 1.1rem;
             border-bottom: 1px solid rgba(217, 189, 130, 0.12);
             color: var(--agent-text-soft);
-            font-size: 0.92rem;
+            font-size: 1rem;
         }
         .status-row::before {
             content: "";
@@ -889,13 +899,14 @@ def inject_style() -> None:
             border-radius: 0;
             padding: 0;
             font-family: var(--agent-mono-font-family) !important;
-            font-size: 0.66rem;
+            font-size: 0.74rem;
             letter-spacing: 0;
         }
         .sidebar-note {
             border: 1px solid rgba(217, 189, 130, 0.18);
             background: rgba(17, 21, 29, 0.58);
             color: var(--agent-muted);
+            font-size: 0.86rem;
             line-height: 1.75;
         }
         div[data-testid="stButton"] > button {
