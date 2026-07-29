@@ -88,8 +88,8 @@ def inject_style() -> None:
             --agent-accent: #f97316;
             --agent-accent-soft: rgba(249, 115, 22, 0.16);
             --agent-shadow: 0 22px 70px rgba(0, 0, 0, 0.28);
-            --agent-font-family: Inter, "SF Pro Display", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", Arial, sans-serif;
-            --agent-mono-font-family: "Cascadia Mono", Consolas, "Courier New", monospace;
+            --agent-font-family: "Times New Roman", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", serif;
+            --agent-mono-font-family: "Times New Roman", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", serif;
         }
         html {
             background: var(--agent-bg);
@@ -785,8 +785,8 @@ def inject_style() -> None:
             --agent-accent: #d9bd82;
             --agent-accent-soft: rgba(217, 189, 130, 0.12);
             --agent-shadow: 0 24px 72px rgba(0, 0, 0, 0.44);
-            --agent-font-family: "Noto Serif SC", "Source Han Serif SC", "Songti SC", SimSun, Georgia, "Times New Roman", serif;
-            --agent-mono-font-family: "Cascadia Mono", "SFMono-Regular", Consolas, "Courier New", monospace;
+            --agent-font-family: "Times New Roman", "Noto Serif SC", "Source Han Serif SC", "Songti SC", SimSun, Georgia, serif;
+            --agent-mono-font-family: "Times New Roman", "Noto Serif SC", "Source Han Serif SC", "Songti SC", SimSun, Georgia, serif;
         }
         html, body, .stApp {
             background: #08090c !important;
