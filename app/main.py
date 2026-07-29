@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+import base64
 import html
 import importlib
 import json
@@ -1071,6 +1072,20 @@ def inject_style() -> None:
             font-size: 1.12rem;
             box-shadow: none;
         }
+        .user-attachment-row {
+            display: flex;
+            justify-content: flex-end;
+            margin: 0 0 0.65rem;
+        }
+        .user-attachment {
+            display: block;
+            width: min(22rem, 58vw);
+            max-height: 24rem;
+            object-fit: contain;
+            border: 1px solid #2b3039;
+            border-radius: 8px;
+            background: rgba(17, 21, 29, 0.86);
+        }
         .message-row.assistant {
             display: grid;
             grid-template-columns: 6.8rem minmax(0, 1fr);
@@ -1558,6 +1573,14 @@ def render_message(message: dict[str, Any]) -> None:
         return
 
     if role == "user":
+        image_bytes = message.get("image_bytes")
+        if image_bytes:
+            image_mime_type = html.escape(str(message.get("image_mime_type") or "image/jpeg"))
+            image_data = base64.b64encode(image_bytes).decode("ascii")
+            st.markdown(
+                f'<div class="user-attachment-row"><img class="user-attachment" src="data:{image_mime_type};base64,{image_data}" alt="本轮上传图片"></div>',
+                unsafe_allow_html=True,
+            )
         content = html.escape(content_text).replace("\n", "<br>")
         st.markdown(
             f'<div class="message-row user"><div class="message-bubble">{content}</div></div>',
@@ -1655,7 +1678,11 @@ def handle_prompt(
     image_mime_type: str,
 ) -> None:
     history = build_conversation_history(st.session_state.agent_messages)
-    st.session_state.agent_messages.append({"role": "user", "content": prompt})
+    user_message: dict[str, Any] = {"role": "user", "content": prompt}
+    if has_image and image_bytes:
+        user_message["image_bytes"] = image_bytes
+        user_message["image_mime_type"] = image_mime_type
+    st.session_state.agent_messages.append(user_message)
 
     importlib.reload(workflow)
     live_orchestrator = importlib.reload(orchestrator)
@@ -1676,20 +1703,14 @@ def handle_prompt(
         has_image=has_image,
     )
 
-    if live_orchestrator.should_request_batch_data(
-        prompt,
-        current_batch=batch_for_turn,
-        manual_observation=effective_observation,
-        has_image=has_image,
-    ):
-        answer = live_orchestrator.build_batch_data_request(missing_inputs)
-        st.session_state.agent_messages.append({"role": "assistant", "content": answer})
-    elif live_orchestrator.should_run_tools(
+    should_run_full_analysis = live_orchestrator.should_run_tools(
         prompt,
         has_image=has_image,
         has_current_batch=references_current,
         has_minimum_batch_data=not missing_inputs,
-    ):
+    )
+
+    if should_run_full_analysis:
         def update_progress(message: str) -> None:
             render_agent_progress(progress_slot, message)
 
@@ -1711,6 +1732,38 @@ def handle_prompt(
         st.session_state.current_batch = payload["batch"]
         st.session_state.last_result = payload["result"]
         st.session_state.agent_messages.append({"role": "assistant", "kind": "analysis", "payload": payload})
+    elif has_image and image_bytes:
+        render_agent_progress(progress_slot, "正在读取图片并回答本轮问题")
+        try:
+            vision_payload = live_orchestrator.run_vision_turn(
+                user_prompt=prompt,
+                image_bytes=image_bytes,
+                image_mime_type=image_mime_type,
+            )
+            answer = vision_payload["answer"]
+            if live_orchestrator.should_request_batch_data(
+                prompt,
+                current_batch=batch_for_turn,
+                manual_observation=effective_observation,
+                has_image=has_image,
+            ):
+                answer += (
+                    "\n\n图片已经纳入本轮分析。如需进一步生成加工路线评分和报告，"
+                    + live_orchestrator.build_batch_data_request(missing_inputs)
+                )
+        except vision_client.VisionAPIError as error:
+            answer = f"图片已经收到，但视觉模型分析失败：{error}"
+        finally:
+            progress_slot.empty()
+        st.session_state.agent_messages.append({"role": "assistant", "content": answer})
+    elif live_orchestrator.should_request_batch_data(
+        prompt,
+        current_batch=batch_for_turn,
+        manual_observation=effective_observation,
+        has_image=has_image,
+    ):
+        answer = live_orchestrator.build_batch_data_request(missing_inputs)
+        st.session_state.agent_messages.append({"role": "assistant", "content": answer})
     else:
         render_agent_progress(progress_slot, "正在连接模型并组织回答")
         try:

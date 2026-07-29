@@ -246,24 +246,38 @@ def normalize_vision_result(data: dict[str, Any]) -> dict[str, Any]:
     if isinstance(risk_notes, str):
         risk_notes = [risk_notes]
     risk_notes.append("图片识别仅用于外观初筛，不能替代农残、重金属、微生物和黄曲霉毒素检测。")
+    answer = str(
+        data.get("针对用户问题的回答")
+        or data.get("answer")
+        or appearance_description
+    ).strip()
 
     return {
+        "answer": answer,
         "appearance_description": appearance_description,
         "structured_observation": data,
         "risk_notes": risk_notes,
     }
 
 
-def recognize_citrus_image(image_bytes: bytes, mime_type: str = "image/jpeg", timeout: int = 90) -> dict[str, Any]:
+def recognize_citrus_image(
+    image_bytes: bytes,
+    mime_type: str = "image/jpeg",
+    user_prompt: str = "",
+    timeout: int = 90,
+) -> dict[str, Any]:
     api_key = get_vision_api_key()
     if not api_key:
         raise VisionAPIError("请先在 agent/llm_config.py 中配置 VISION_API_KEY。")
 
-    prompt = """
+    user_task = user_prompt.strip() or "请分析图片中柑橘的可见外观、缺陷和风险。"
+    prompt = f"""
 你是柑橘/陈皮加工质控助手。请只根据图片中可见外观做初步识别，不要推断不可见检测结果。
+用户本轮问题：{user_task}
+必须针对用户本轮问题直接回答，并明确哪些判断来自图片、哪些信息无法从图片得出。
 请返回严格 JSON，不要输出 Markdown，不要输出解释性前后缀。
 字段必须包含：
-{
+{{
   "颜色成熟度": "偏青/偏成熟/过熟/无法判断",
   "果皮完整度": "完整/轻微破损/明显破损/无法判断",
   "疑似霉斑": true或false,
@@ -271,8 +285,9 @@ def recognize_citrus_image(image_bytes: bytes, mime_type: str = "image/jpeg", ti
   "机械伤": "未见明显机械伤/轻微/明显/无法判断",
   "表面状态": "干爽/潮湿/皱缩/有污渍/无法判断",
   "外观描述": "一句适合写入批次分析报告的中文描述",
+  "针对用户问题的回答": "根据图片直接回答用户本轮问题；图片无法支持的结论必须明确说明",
   "风险提示": ["仅基于图片外观判断，不能替代实验室检测"]
-}
+}}
 如果图片不是柑橘或无法判断，也请如实说明，不要编造。
 """.strip()
 

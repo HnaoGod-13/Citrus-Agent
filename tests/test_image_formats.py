@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import unittest
+from unittest.mock import patch
 
 import pillow_heif
 from PIL import Image
@@ -10,8 +11,10 @@ from agent.vision_client import (
     MAX_MODEL_IMAGE_BYTES,
     SUPPORTED_UPLOAD_EXTENSIONS,
     VisionAPIError,
+    normalize_vision_result,
     prepare_image_for_vision,
 )
+from agent.orchestrator import run_vision_turn
 
 
 def image_bytes(image: Image.Image, image_format: str) -> bytes:
@@ -112,6 +115,36 @@ class ImageFormatCompatibilityTests(unittest.TestCase):
             "sgi",
         }
         self.assertTrue(expected.issubset(set(SUPPORTED_UPLOAD_EXTENSIONS)))
+
+    def test_vision_result_keeps_direct_answer_to_user_question(self) -> None:
+        result = normalize_vision_result(
+            {
+                "外观描述": "图中果实颜色偏成熟，表皮完整。",
+                "针对用户问题的回答": "从图片可见信息看，未发现明显破损。",
+                "风险提示": [],
+            }
+        )
+        self.assertEqual(result["answer"], "从图片可见信息看，未发现明显破损。")
+
+    @patch("agent.orchestrator.recognize_citrus_image")
+    def test_direct_vision_turn_passes_the_user_question_and_uses_the_image_answer(self, recognize) -> None:
+        recognize.return_value = {
+            "answer": "图片显示果皮完整。",
+            "appearance_description": "果皮完整，颜色偏成熟。",
+            "risk_notes": [],
+        }
+        payload = run_vision_turn(
+            "请按照图片分析外观",
+            b"\xff\xd8test-image",
+            "image/jpeg",
+        )
+        recognize.assert_called_once_with(
+            b"\xff\xd8test-image",
+            "image/jpeg",
+            user_prompt="请按照图片分析外观",
+        )
+        self.assertIn("图片显示果皮完整", payload["answer"])
+        self.assertIn("图片中可见外观", payload["answer"])
 
 
 if __name__ == "__main__":

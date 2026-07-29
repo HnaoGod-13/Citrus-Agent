@@ -394,6 +394,31 @@ def summarize_result(result: dict[str, Any], report_path: Path) -> str:
 """.strip()
 
 
+def run_vision_turn(
+    user_prompt: str,
+    image_bytes: bytes,
+    image_mime_type: str = "image/jpeg",
+    progress_callback: ProgressCallback | None = None,
+) -> dict[str, Any]:
+    _notify(progress_callback, "正在调用视觉模型分析上传图片")
+    vision_result = recognize_citrus_image(
+        image_bytes,
+        image_mime_type,
+        user_prompt=user_prompt,
+    )
+    answer = str(vision_result.get("answer") or "").strip()
+    appearance = str(vision_result.get("appearance_description") or "").strip()
+    if appearance and appearance not in answer:
+        answer = f"{answer}\n\n图片中可见外观：{appearance}".strip()
+    if not answer:
+        answer = "视觉模型没有返回可用的图片分析结果，请更换图片后重试。"
+    return {
+        "answer": answer,
+        "vision_result": vision_result,
+        "image_observation": appearance,
+    }
+
+
 def run_analysis_turn(
     user_prompt: str,
     api_key: str,
@@ -413,7 +438,11 @@ def run_analysis_turn(
     if image_bytes:
         try:
             _notify(progress_callback, "正在调用视觉模型识别柑橘外观")
-            vision_result = recognize_citrus_image(image_bytes, image_mime_type)
+            vision_result = recognize_citrus_image(
+                image_bytes,
+                image_mime_type,
+                user_prompt=user_prompt,
+            )
             vision_observation = vision_result.get("appearance_description", "")
             notes.append("已调用视觉模型识别上传图片，识别结果已进入本轮加工分析。")
         except (VisionAPIError, Exception) as error:
