@@ -2,12 +2,21 @@
 
 import base64
 import importlib
+import io
 import json
 import os
 import re
 import urllib.error
 import urllib.request
+from dataclasses import dataclass
 from typing import Any
+
+from PIL import Image, ImageOps, UnidentifiedImageError
+
+try:
+    from pillow_heif import register_heif_opener
+except ImportError:
+    register_heif_opener = None
 
 try:
     from . import llm_config as _llm_config
@@ -17,10 +26,56 @@ except ImportError:
 
 DEFAULT_VISION_API_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
 DEFAULT_VISION_MODEL = "qwen-vl-max"
+SUPPORTED_UPLOAD_EXTENSIONS = (
+    "jpg",
+    "jpeg",
+    "jpe",
+    "jfif",
+    "png",
+    "webp",
+    "bmp",
+    "dib",
+    "gif",
+    "tif",
+    "tiff",
+    "heic",
+    "heif",
+    "avif",
+    "jp2",
+    "j2k",
+    "ico",
+    "ppm",
+    "pgm",
+    "pbm",
+    "pnm",
+    "tga",
+    "dds",
+    "pcx",
+    "sgi",
+)
+MAX_UPLOAD_BYTES = 40 * 1024 * 1024
+MAX_SOURCE_PIXELS = 50_000_000
+MAX_MODEL_PIXELS = 15_000_000
+MAX_MODEL_EDGE = 4096
+MAX_MODEL_IMAGE_BYTES = 7_000_000
+
+if register_heif_opener is not None:
+    register_heif_opener()
 
 
 class VisionAPIError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True)
+class PreparedVisionImage:
+    data: bytes
+    mime_type: str
+    source_format: str
+    width: int
+    height: int
+    frame_count: int
+    notes: tuple[str, ...]
 
 
 def _config_value(name: str, default: str = "") -> str:
@@ -55,6 +110,109 @@ def _image_data_url(image_bytes: bytes, mime_type: str) -> str:
     mime_type = mime_type or "image/jpeg"
     encoded = base64.b64encode(image_bytes).decode("ascii")
     return f"data:{mime_type};base64,{encoded}"
+
+
+def _to_rgb(image: Image.Image) -> Image.Image:
+    has_alpha = image.mode in {"RGBA", "LA"} or (
+        image.mode == "P" and "transparency" in image.info
+    )
+    if has_alpha:
+        rgba = image.convert("RGBA")
+        background = Image.new("RGB", rgba.size, "white")
+        background.paste(rgba, mask=rgba.getchannel("A"))
+        return background
+    return image.convert("RGB")
+
+
+def _fit_model_dimensions(image: Image.Image) -> tuple[Image.Image, bool]:
+    width, height = image.size
+    scale = min(
+        1.0,
+        MAX_MODEL_EDGE / max(width, height),
+        (MAX_MODEL_PIXELS / (width * height)) ** 0.5,
+    )
+    if scale >= 1.0:
+        return image, False
+    target = (max(10, round(width * scale)), max(10, round(height * scale)))
+    return image.resize(target, Image.Resampling.LANCZOS), True
+
+
+def _encode_model_jpeg(image: Image.Image) -> tuple[bytes, Image.Image]:
+    current = image
+    while True:
+        for quality in (92, 86, 80, 72, 64, 56):
+            output = io.BytesIO()
+            current.save(
+                output,
+                format="JPEG",
+                quality=quality,
+                optimize=True,
+                progressive=True,
+            )
+            data = output.getvalue()
+            if len(data) <= MAX_MODEL_IMAGE_BYTES:
+                return data, current
+        width, height = current.size
+        if min(width, height) <= 10:
+            raise VisionAPIError("图片压缩后仍超过视觉模型的大小限制，请先缩小图片。")
+        current = current.resize(
+            (max(10, round(width * 0.82)), max(10, round(height * 0.82))),
+            Image.Resampling.LANCZOS,
+        )
+
+
+def prepare_image_for_vision(
+    image_bytes: bytes,
+    filename: str = "",
+    mime_type: str = "",
+) -> PreparedVisionImage:
+    if not image_bytes:
+        raise VisionAPIError("上传的图片为空，请重新选择文件。")
+    if len(image_bytes) > MAX_UPLOAD_BYTES:
+        raise VisionAPIError("图片超过 40 MB，请先压缩后再上传。")
+
+    try:
+        with Image.open(io.BytesIO(image_bytes)) as source:
+            source_format = str(source.format or mime_type or "未知格式").upper()
+            frame_count = int(getattr(source, "n_frames", 1) or 1)
+            width, height = source.size
+            if width < 10 or height < 10:
+                raise VisionAPIError("图片的宽和高都必须至少为 10 像素。")
+            if width * height > MAX_SOURCE_PIXELS:
+                raise VisionAPIError("图片像素超过 5000 万，请先缩小分辨率后再上传。")
+            if max(width / height, height / width) > 200:
+                raise VisionAPIError("图片长宽比不能超过 200:1。")
+
+            source.seek(0)
+            first_frame = ImageOps.exif_transpose(source).copy()
+    except VisionAPIError:
+        raise
+    except (UnidentifiedImageError, OSError, ValueError) as error:
+        suffix = f"（{filename}）" if filename else ""
+        raise VisionAPIError(f"无法读取该图片{suffix}，文件可能损坏或格式与扩展名不一致。") from error
+
+    image = _to_rgb(first_frame)
+    image, resized = _fit_model_dimensions(image)
+    data, image = _encode_model_jpeg(image)
+    notes: list[str] = []
+    if source_format not in {"JPEG", "JPG"}:
+        notes.append(f"{source_format} 已自动转为 JPEG")
+    if frame_count > 1:
+        notes.append(f"检测到 {frame_count} 帧，仅分析第一帧")
+    if resized or image.size != (width, height):
+        notes.append(f"已缩放至 {image.width}×{image.height}")
+    if not notes:
+        notes.append("已完成图片内容校验")
+
+    return PreparedVisionImage(
+        data=data,
+        mime_type="image/jpeg",
+        source_format=source_format,
+        width=image.width,
+        height=image.height,
+        frame_count=frame_count,
+        notes=tuple(notes),
+    )
 
 
 def _extract_json(text: str) -> dict[str, Any]:
@@ -117,6 +275,17 @@ def recognize_citrus_image(image_bytes: bytes, mime_type: str = "image/jpeg", ti
 }
 如果图片不是柑橘或无法判断，也请如实说明，不要编造。
 """.strip()
+
+    normalized_mime = (mime_type or "").lower()
+    is_prepared_jpeg = (
+        normalized_mime in {"image/jpeg", "image/jpg"}
+        and image_bytes.startswith(b"\xff\xd8")
+        and len(image_bytes) <= MAX_MODEL_IMAGE_BYTES
+    )
+    if not is_prepared_jpeg:
+        prepared = prepare_image_for_vision(image_bytes, mime_type=mime_type)
+        image_bytes = prepared.data
+        mime_type = prepared.mime_type
 
     payload = {
         "model": get_vision_model(),

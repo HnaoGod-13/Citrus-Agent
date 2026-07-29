@@ -26,6 +26,8 @@ build_general_chat_messages = llm_client.build_general_chat_messages
 chat_with_deepseek = llm_client.chat_with_deepseek
 get_deepseek_api_key = llm_client.get_deepseek_api_key
 get_vision_model = vision_client.get_vision_model
+prepare_image_for_vision = vision_client.prepare_image_for_vision
+SUPPORTED_UPLOAD_EXTENSIONS = vision_client.SUPPORTED_UPLOAD_EXTENSIONS
 
 
 EXAMPLE_PROMPTS = [
@@ -1293,12 +1295,24 @@ def render_sidebar() -> tuple[str, bool, bytes | None, str]:
         st.markdown('<div class="sidebar-section-title">视觉输入</div>', unsafe_allow_html=True)
         uploaded_image = st.file_uploader(
             "上传柑橘图片",
-            type=["jpg", "jpeg", "png"],
+            type=list(SUPPORTED_UPLOAD_EXTENSIONS),
             key="uploaded_citrus_image",
         )
+        prepared_image = None
         if uploaded_image:
-            st.image(uploaded_image, caption="图片预览", width="stretch")
-            st.info("图片会在本轮分析中自动调用视觉模型识别；下方外观描述可作为人工补充。")
+            try:
+                prepared_image = prepare_image_for_vision(
+                    uploaded_image.getvalue(),
+                    filename=uploaded_image.name,
+                    mime_type=uploaded_image.type,
+                )
+            except vision_client.VisionAPIError as error:
+                st.error(str(error))
+            else:
+                st.image(prepared_image.data, caption="图片预览", width="stretch")
+                st.caption("；".join(prepared_image.notes))
+                st.info("图片会在本轮分析中自动调用视觉模型识别；下方外观描述可作为人工补充。")
+        st.caption("支持 JPG、PNG、WebP、BMP、GIF、TIFF、HEIC/HEIF、AVIF、JPEG 2000、ICO 等常见格式；单文件不超过 40 MB。")
 
         manual_observation = st.text_area(
             "外观描述",
@@ -1338,9 +1352,9 @@ def render_sidebar() -> tuple[str, bool, bytes | None, str]:
             unsafe_allow_html=True,
         )
 
-    image_bytes = uploaded_image.getvalue() if uploaded_image else None
-    image_mime_type = uploaded_image.type if uploaded_image else "image/jpeg"
-    return manual_observation, uploaded_image is not None, image_bytes, image_mime_type
+    image_bytes = prepared_image.data if prepared_image else None
+    image_mime_type = prepared_image.mime_type if prepared_image else "image/jpeg"
+    return manual_observation, prepared_image is not None, image_bytes, image_mime_type
 
 
 def score_table(result: dict[str, Any]) -> pd.DataFrame:
