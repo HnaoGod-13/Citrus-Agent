@@ -1281,14 +1281,38 @@ def inject_style() -> None:
     )
 
 
+def image_uploader_key() -> str:
+    version = int(st.session_state.get("image_uploader_version", 0))
+    return f"uploaded_citrus_image_{version}"
+
+
+def reset_uploaded_image() -> None:
+    st.session_state.pop(image_uploader_key(), None)
+    st.session_state.image_uploader_version = (
+        int(st.session_state.get("image_uploader_version", 0)) + 1
+    )
+
+
+def reset_sidebar_inputs() -> None:
+    reset_uploaded_image()
+    st.session_state.pop("manual_observation", None)
+
+
+def start_new_conversation() -> None:
+    st.session_state.agent_messages = []
+    st.session_state.current_batch = None
+    st.session_state.last_result = None
+    reset_sidebar_inputs()
+
+
 def init_state() -> None:
     st.session_state.setdefault("agent_messages", [])
     st.session_state.setdefault("current_batch", None)
     st.session_state.setdefault("last_result", None)
     st.session_state.setdefault("clear_sidebar_inputs", False)
+    st.session_state.setdefault("image_uploader_version", 0)
     if st.session_state.clear_sidebar_inputs:
-        st.session_state.pop("uploaded_citrus_image", None)
-        st.session_state.pop("manual_observation", None)
+        reset_sidebar_inputs()
         st.session_state.clear_sidebar_inputs = False
 
 
@@ -1306,19 +1330,18 @@ def render_sidebar() -> tuple[str, bool, bytes | None, str]:
             unsafe_allow_html=True,
         )
 
-        if st.button("＋ 新建对话", width="stretch"):
-            st.session_state.agent_messages = []
-            st.session_state.current_batch = None
-            st.session_state.last_result = None
-            st.session_state.pop("uploaded_citrus_image", None)
-            st.session_state.pop("manual_observation", None)
-            st.rerun()
+        st.button(
+            "＋ 新建对话",
+            width="stretch",
+            on_click=start_new_conversation,
+        )
 
         st.markdown('<div class="sidebar-section-title">视觉输入</div>', unsafe_allow_html=True)
+        uploader_version = int(st.session_state.image_uploader_version)
         uploaded_image = st.file_uploader(
             "上传柑橘图片",
             type=list(SUPPORTED_UPLOAD_EXTENSIONS),
-            key="uploaded_citrus_image",
+            key=image_uploader_key(),
         )
         prepared_image = None
         if uploaded_image:
@@ -1333,6 +1356,12 @@ def render_sidebar() -> tuple[str, bool, bytes | None, str]:
             else:
                 st.image(prepared_image.data, caption="图片预览", width="stretch")
                 st.info("图片会在本轮分析中自动调用视觉模型识别；下方外观描述可作为人工补充。")
+                st.button(
+                    "× 删除图片",
+                    width="stretch",
+                    key=f"remove_uploaded_image_{uploader_version}",
+                    on_click=reset_uploaded_image,
+                )
 
         manual_observation = st.text_area(
             "外观描述",
