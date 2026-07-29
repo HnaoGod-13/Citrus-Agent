@@ -137,13 +137,12 @@ def run_demo_agent(
     memory_snapshot = build_memory_snapshot(batch, image_observation, product_filter)
     completed_tool_keys.append("memory")
     chunk_count = memory_snapshot.get("long_term", {}).get("literature_chunk_count", 0)
-    case_count = len(memory_snapshot.get("long_term", {}).get("demo_case_summaries", []))
     agent_steps.append(
         AgentStep(
             name="读取受控记忆",
             tool="Memory Manager",
             status="完成",
-            observation=f"短期记忆已记录当前批次；长期记忆可用文献切片 {chunk_count} 条，示例案例 {case_count} 条。",
+            observation=f"短期记忆仅记录当前批次；长期知识仅使用文献切片 {chunk_count} 条，不读取演示案例作为事实。",
         )
     )
 

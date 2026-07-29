@@ -3,6 +3,7 @@
 import importlib
 import json
 import os
+import re
 import urllib.error
 import urllib.request
 from typing import Any
@@ -15,44 +16,28 @@ except ImportError:
 
 DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
 DEEPSEEK_MODEL = "deepseek-v4-pro"
-GENERAL_PROMPT_KEYWORDS = [
-    "介绍",
-    "科普",
-    "是什么",
-    "什么是",
-    "讲讲",
-    "概述",
-    "解释",
-    "了解一下",
-    "百科",
-    "有哪些",
-    "有什么",
-    "有几种",
-    "哪些",
-    "种类",
-    "分类",
-    "品种",
-    "特点",
-    "区别",
-    "用途",
-]
-BATCH_CONTEXT_KEYWORDS = [
+HISTORY_REFERENCE_KEYWORDS = [
+    "根据上面",
+    "根据刚才",
+    "上文",
+    "上述",
+    "刚才",
+    "前面",
+    "上一条",
+    "上一个问题",
+    "继续",
+    "接着",
     "这批",
     "当前批次",
-    "根据上面",
-    "继续",
-    "批次",
-    "原料",
-    "出报告",
-    "分析",
-    "判断",
-    "适合",
-    "加工",
-    "质控",
-    "风险",
-    "糖度",
-    "水分",
-    "酸度",
+    "该批次",
+    "这个结论",
+    "这个推荐",
+    "这个结果",
+    "为什么这样",
+    "为什么这么",
+    "那它",
+    "那这个",
+    "按你说的",
 ]
 
 
@@ -84,11 +69,31 @@ def _shorten(text: str, limit: int) -> str:
     return text[:limit].rstrip() + "..."
 
 
-def _is_standalone_general_prompt(user_prompt: str) -> bool:
-    normalized = user_prompt.lower()
-    has_general_intent = any(keyword.lower() in normalized for keyword in GENERAL_PROMPT_KEYWORDS)
-    has_batch_context = any(keyword.lower() in normalized for keyword in BATCH_CONTEXT_KEYWORDS)
-    return has_general_intent and not has_batch_context
+def should_include_history(user_prompt: str) -> bool:
+    normalized = re.sub(r"\s+", "", user_prompt.lower())
+    if any(keyword.lower() in normalized for keyword in HISTORY_REFERENCE_KEYWORDS):
+        return True
+    if len(normalized) <= 80 and re.search(r"(它|他|她|这个|那个|该)(?:是|和|与|为什么|怎么|有什么|能|可以|适合|指)", normalized):
+        return True
+    return False
+
+
+def _clean_history(
+    history: list[dict[str, str]],
+    user_prompt: str,
+    limit: int,
+) -> list[dict[str, str]]:
+    cleaned: list[dict[str, str]] = []
+    current = user_prompt.strip()
+    for item in history:
+        role = item.get("role")
+        content = str(item.get("content") or "").strip()
+        if role not in {"user", "assistant"} or not content:
+            continue
+        if role == "user" and content == current:
+            continue
+        cleaned.append({"role": role, "content": content})
+    return cleaned[-limit:]
 
 
 def build_general_chat_messages(history: list[dict[str, str]], user_prompt: str) -> list[dict[str, str]]:
@@ -99,11 +104,12 @@ def build_general_chat_messages(history: list[dict[str, str]], user_prompt: str)
 回答用中文，直接、清楚、可执行。
 不要使用 Markdown 标题、加粗星号、代码块或复杂列表；用简洁段落和普通编号表达。
 如果用户只是要求介绍、科普、解释某个概念，必须按通用知识回答，不要结合历史批次、示例输入或当前批次信息。
-只有用户明确提到“这批、当前批次、根据上面、继续分析、出报告、适合加工”等语义时，才引用会话里的批次背景。
+默认把每个新问题当作独立问题。只有用户明确使用“根据上面、刚才、继续、这批、当前批次、它、这个结论”等指代语义时，才引用会话历史。
+演示模板、默认字段和旧批次不得被当作本轮事实；没有资料时必须说明缺少什么，不能自行补全后给结论。
 """.strip()
     messages = [{"role": "system", "content": system_prompt}]
-    if not _is_standalone_general_prompt(user_prompt):
-        messages.extend(history[-12:])
+    if should_include_history(user_prompt):
+        messages.extend(_clean_history(history, user_prompt, 8))
     messages.append({"role": "user", "content": user_prompt})
     return messages
 
@@ -179,7 +185,8 @@ def build_chat_messages(result: dict[str, Any], history: list[dict[str, str]], u
         {"role": "system", "content": system_prompt},
         {"role": "system", "content": "当前 Agent 分析上下文：\n" + build_analysis_context(result)},
     ]
-    messages.extend(history[-10:])
+    if should_include_history(user_prompt):
+        messages.extend(_clean_history(history, user_prompt, 8))
     messages.append({"role": "user", "content": user_prompt})
     return messages
 

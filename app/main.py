@@ -1261,6 +1261,11 @@ def init_state() -> None:
     st.session_state.setdefault("agent_messages", [])
     st.session_state.setdefault("current_batch", None)
     st.session_state.setdefault("last_result", None)
+    st.session_state.setdefault("clear_sidebar_inputs", False)
+    if st.session_state.clear_sidebar_inputs:
+        st.session_state.pop("uploaded_citrus_image", None)
+        st.session_state.pop("manual_observation", None)
+        st.session_state.clear_sidebar_inputs = False
 
 
 def render_sidebar() -> tuple[str, bool, bytes | None, str]:
@@ -1281,10 +1286,16 @@ def render_sidebar() -> tuple[str, bool, bytes | None, str]:
             st.session_state.agent_messages = []
             st.session_state.current_batch = None
             st.session_state.last_result = None
+            st.session_state.pop("uploaded_citrus_image", None)
+            st.session_state.pop("manual_observation", None)
             st.rerun()
 
         st.markdown('<div class="sidebar-section-title">视觉输入</div>', unsafe_allow_html=True)
-        uploaded_image = st.file_uploader("上传柑橘图片", type=["jpg", "jpeg", "png"])
+        uploaded_image = st.file_uploader(
+            "上传柑橘图片",
+            type=["jpg", "jpeg", "png"],
+            key="uploaded_citrus_image",
+        )
         if uploaded_image:
             st.image(uploaded_image, caption="图片预览", width="stretch")
             st.info("图片会在本轮分析中自动调用视觉模型识别；下方外观描述可作为人工补充。")
@@ -1293,6 +1304,7 @@ def render_sidebar() -> tuple[str, bool, bytes | None, str]:
             "外观描述",
             placeholder="例如：果皮完整，颜色偏成熟，无明显霉斑或腐烂。",
             height=120,
+            key="manual_observation",
         )
 
         st.divider()
@@ -1561,7 +1573,7 @@ def render_empty_state(api_key: str) -> str | None:
             <h1>与柑橘产业链对话</h1>
             <p>基于本地文献库、加工路线评分和质控边界，生成可追溯、可复核的批次决策草稿。</p>
         </div>
-        <div class="prompt-grid-label">选择一个演示任务</div>
+        <div class="prompt-grid-label">示例数据（点击后会立即作为一轮演示提交）</div>
         """,
         unsafe_allow_html=True,
     )
@@ -1601,14 +1613,25 @@ def render_agent_progress(slot: Any, message: str) -> None:
     )
 
 
-def run_general_turn(prompt: str, api_key: str) -> str:
+def build_conversation_history(messages: list[dict[str, Any]]) -> list[dict[str, str]]:
+    history: list[dict[str, str]] = []
+    for item in messages:
+        role = item.get("role")
+        if item.get("kind") == "analysis":
+            payload = item.get("payload") or {}
+            content = str(payload.get("llm_answer") or payload.get("summary") or "").strip()
+            if content:
+                history.append({"role": "assistant", "content": content})
+            continue
+        content = str(item.get("content") or "").strip()
+        if role in {"user", "assistant"} and content:
+            history.append({"role": role, "content": content})
+    return history
+
+
+def run_general_turn(prompt: str, api_key: str, history: list[dict[str, str]]) -> str:
     if not api_key:
         return "我可以帮你调用本地批次分析工具。若要普通大模型问答，请先在 `agent/llm_config.py` 中填入 DeepSeek API Key。"
-    history = [
-        {"role": item["role"], "content": item.get("content", "")}
-        for item in st.session_state.agent_messages
-        if item.get("kind") != "analysis"
-    ]
     messages = build_general_chat_messages(history, prompt)
     try:
         return chat_with_deepseek(api_key, messages)
@@ -1624,16 +1647,41 @@ def handle_prompt(
     image_bytes: bytes | None,
     image_mime_type: str,
 ) -> None:
+    history = build_conversation_history(st.session_state.agent_messages)
     st.session_state.agent_messages.append({"role": "user", "content": prompt})
 
     importlib.reload(workflow)
     live_orchestrator = importlib.reload(orchestrator)
     progress_slot = st.empty()
+    references_current = (
+        st.session_state.current_batch is not None
+        and live_orchestrator.references_current_batch(prompt)
+    )
+    batch_for_turn = st.session_state.current_batch if references_current else None
+    previous_observation = ""
+    if references_current and st.session_state.last_result:
+        previous_observation = str(st.session_state.last_result.get("image_observation") or "")
+    effective_observation = manual_observation.strip() or previous_observation
+    missing_inputs = live_orchestrator.missing_batch_inputs(
+        prompt,
+        current_batch=batch_for_turn,
+        manual_observation=effective_observation,
+        has_image=has_image,
+    )
 
-    if live_orchestrator.should_run_tools(
+    if live_orchestrator.should_request_batch_data(
+        prompt,
+        current_batch=batch_for_turn,
+        manual_observation=effective_observation,
+        has_image=has_image,
+    ):
+        answer = live_orchestrator.build_batch_data_request(missing_inputs)
+        st.session_state.agent_messages.append({"role": "assistant", "content": answer})
+    elif live_orchestrator.should_run_tools(
         prompt,
         has_image=has_image,
-        has_current_batch=st.session_state.current_batch is not None,
+        has_current_batch=references_current,
+        has_minimum_batch_data=not missing_inputs,
     ):
         def update_progress(message: str) -> None:
             render_agent_progress(progress_slot, message)
@@ -1643,13 +1691,9 @@ def handle_prompt(
             payload = live_orchestrator.run_analysis_turn(
                 user_prompt=prompt,
                 api_key=api_key,
-                history=[
-                    {"role": item["role"], "content": item.get("content", "")}
-                    for item in st.session_state.agent_messages
-                    if item.get("kind") != "analysis"
-                ],
-                current_batch=st.session_state.current_batch,
-                manual_observation=manual_observation,
+                history=history,
+                current_batch=batch_for_turn,
+                manual_observation=effective_observation,
                 has_image=has_image,
                 image_bytes=image_bytes,
                 image_mime_type=image_mime_type,
@@ -1663,11 +1707,12 @@ def handle_prompt(
     else:
         render_agent_progress(progress_slot, "正在连接模型并组织回答")
         try:
-            answer = run_general_turn(prompt, api_key)
+            answer = run_general_turn(prompt, api_key, history)
         finally:
             progress_slot.empty()
         st.session_state.agent_messages.append({"role": "assistant", "content": answer})
 
+    st.session_state.clear_sidebar_inputs = True
     st.rerun()
 
 

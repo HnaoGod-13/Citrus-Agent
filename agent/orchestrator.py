@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import re
-from datetime import date
 from pathlib import Path
 from typing import Any, Callable
 from uuid import uuid4
@@ -99,6 +98,22 @@ TOOL_INTENT_KEYWORDS = [
     "怎么处理",
 ]
 BATCH_REFERENCE_KEYWORDS = ["这批", "一批", "当前批次", "当前", "批次", "原料", "样品", "这批货", "一批货", "当前原料"]
+CURRENT_BATCH_REFERENCE_KEYWORDS = [
+    "这批",
+    "当前批次",
+    "当前原料",
+    "该批次",
+    "刚才那批",
+    "刚才的批次",
+    "上一批",
+    "上一个批次",
+    "上面那批",
+    "根据上面",
+    "按刚才",
+    "沿用刚才",
+    "继续分析",
+    "继续评估",
+]
 BATCH_DATA_KEYWORDS = [
     "糖度",
     "brix",
@@ -135,6 +150,8 @@ DOMAIN_KEYWORDS = [
     "果汁",
 ]
 OBSERVATION_KEYWORDS = ["霉", "腐烂", "破损", "裂果", "压伤", "机械伤", "异味", "发黑", "完整", "成熟", "颜色"]
+KNOWN_ORIGINS = ["新会", "赣南", "宜昌", "秭归", "广西", "福建", "云南", "四川"]
+KNOWN_VARIETIES = ["茶枝柑", "脐橙", "甜橙", "砂糖橘", "沃柑", "金桔", "金橘", "柚", "柠檬", "柑橘", "橙"]
 ProgressCallback = Callable[[str], None]
 
 
@@ -146,18 +163,18 @@ def _notify(progress_callback: ProgressCallback | None, message: str) -> None:
 def default_batch() -> dict[str, Any]:
     return {
         "batch_id": f"B{uuid4().hex[:8].upper()}",
-        "origin": "新会",
-        "variety": "茶枝柑",
-        "harvest_date": str(date.today()),
+        "origin": "",
+        "variety": "",
+        "harvest_date": "",
         "weight_kg": "",
         "brix": "",
         "acidity": "",
         "moisture": "",
-        "customer_type": "陈皮经销商",
-        "pesticide": False,
-        "heavy_metal": False,
-        "microbe": False,
-        "aflatoxin": False,
+        "customer_type": "",
+        "pesticide": None,
+        "heavy_metal": None,
+        "microbe": None,
+        "aflatoxin": None,
     }
 
 
@@ -166,8 +183,92 @@ def _has_any(text: str, keywords: list[str]) -> bool:
     return any(keyword.lower() in normalized for keyword in keywords)
 
 
-def should_run_tools(text: str, has_image: bool = False, has_current_batch: bool = False) -> bool:
+def references_current_batch(text: str) -> bool:
+    normalized = re.sub(r"\s+", "", text.lower())
+    if _has_any(normalized, CURRENT_BATCH_REFERENCE_KEYWORDS):
+        return True
+    return normalized in {"继续", "接着", "出报告", "生成报告", "做质控", "重新评分", "再评估"}
+
+
+def _batch_has_identity(text: str, current_batch: dict[str, Any] | None) -> bool:
+    if current_batch and (current_batch.get("origin") or current_batch.get("variety")):
+        return True
+    if re.search(r"(?:产地|来自|来源|原产地|品种)[:：\s]*[\u4e00-\u9fa5A-Za-z0-9]{2,12}", text):
+        return True
+    return _has_any(text, KNOWN_ORIGINS + KNOWN_VARIETIES)
+
+
+def _batch_has_decision_data(
+    text: str,
+    current_batch: dict[str, Any] | None,
+    manual_observation: str,
+    has_image: bool,
+) -> bool:
+    if has_image or manual_observation.strip():
+        return True
+    if _has_any(text, BATCH_DATA_KEYWORDS + WEAK_BATCH_DATA_KEYWORDS + OBSERVATION_KEYWORDS):
+        return True
+    if re.search(r"\d+(?:\.\d+)?\s*(?:%|kg|公斤|千克|brix|bx|°brix)", text, flags=re.IGNORECASE):
+        return True
+    if not current_batch:
+        return False
+    measured_fields = ("weight_kg", "brix", "acidity", "moisture", "customer_type")
+    if any(current_batch.get(key) not in ("", None) for key in measured_fields):
+        return True
+    return any(current_batch.get(key) is not None for key in TEST_LABELS)
+
+
+def missing_batch_inputs(
+    text: str,
+    current_batch: dict[str, Any] | None = None,
+    manual_observation: str = "",
+    has_image: bool = False,
+) -> list[str]:
+    missing: list[str] = []
+    if not _batch_has_identity(text, current_batch):
+        missing.append("产地或品种（陈皮方向最好同时提供两项）")
+    if not _batch_has_decision_data(text, current_batch, manual_observation, has_image):
+        missing.append("至少一项真实批次信息，如糖度、酸度、水分、客户类型、检测状态或外观记录")
+    return missing
+
+
+def should_request_batch_data(
+    text: str,
+    current_batch: dict[str, Any] | None = None,
+    manual_observation: str = "",
+    has_image: bool = False,
+) -> bool:
+    normalized = text.lower()
+    has_general_knowledge_intent = _has_any(normalized, GENERAL_KNOWLEDGE_KEYWORDS)
+    has_analysis_intent = _has_any(normalized, TOOL_INTENT_KEYWORDS)
+    has_batch_topic = _has_any(normalized, BATCH_REFERENCE_KEYWORDS + DOMAIN_KEYWORDS + IMAGE_INTENT_KEYWORDS)
+    if has_general_knowledge_intent and not references_current_batch(text):
+        return False
+    if not (has_analysis_intent and (has_batch_topic or has_image)):
+        return False
+    return bool(missing_batch_inputs(text, current_batch, manual_observation, has_image))
+
+
+def build_batch_data_request(missing: list[str]) -> str:
+    missing_text = "；".join(missing)
+    return (
+        "目前不能得出加工方向或质控结论，因为本轮没有足够的真实批次数据。"
+        "我不会用演示模板、默认值或上一轮内容替你补齐事实。\n\n"
+        f"请补充：{missing_text}。\n"
+        "可以直接按“产地、品种、糖度、酸度、水分、客户类型、检测状态、外观”一行填写；"
+        "资料不全时我只会列出缺口，不会生成推荐分数或报告。"
+    )
+
+
+def should_run_tools(
+    text: str,
+    has_image: bool = False,
+    has_current_batch: bool = False,
+    has_minimum_batch_data: bool = True,
+) -> bool:
     """Decide whether to run the batch-analysis tool chain instead of general chat."""
+    if not has_minimum_batch_data:
+        return False
     normalized = text.lower()
     has_general_knowledge_intent = _has_any(normalized, GENERAL_KNOWLEDGE_KEYWORDS)
     has_tool_intent = _has_any(normalized, TOOL_INTENT_KEYWORDS)
@@ -221,12 +322,12 @@ def extract_batch_from_text(text: str, current_batch: dict[str, Any] | None = No
     if origin_match:
         batch["origin"] = origin_match.group(1)
     else:
-        for origin in ["新会", "赣南", "宜昌", "秭归", "广西", "福建", "云南", "四川"]:
+        for origin in KNOWN_ORIGINS:
             if origin in text:
                 batch["origin"] = origin
                 break
 
-    for variety in ["茶枝柑", "脐橙", "甜橙", "砂糖橘", "沃柑", "金桔", "金橘", "柚", "柠檬", "柑橘", "橙"]:
+    for variety in KNOWN_VARIETIES:
         if variety in text:
             batch["variety"] = variety
             break
