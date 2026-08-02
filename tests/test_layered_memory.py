@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -300,6 +301,36 @@ class LayeredMemoryTests(unittest.TestCase):
             ),
             [],
         )
+
+    def test_concurrent_duplicate_sample_writes_are_atomic(self) -> None:
+        second_manager = MemoryManager(self.db_path)
+        common = {
+            "user_id": self.user_id,
+            "session_id": self.session_id,
+            "project_id": self.project_id,
+            "variety": "脐橙",
+            "origin": "赣南",
+            "processing_goal": "NFC橙汁",
+            "solution": "清洗、榨汁、杀菌和灌装。",
+            "source": "agent_analysis_pending",
+        }
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(
+                executor.map(
+                    lambda manager: manager.save_sample(dict(common)),
+                    (self.manager, second_manager),
+                )
+            )
+
+        self.assertEqual(results[0]["sample_id"], results[1]["sample_id"])
+        self.assertEqual(sum(bool(result.get("deduplicated")) for result in results), 1)
+        with self.manager._connect() as connection:
+            count = connection.execute(
+                "SELECT COUNT(*) FROM citrus_samples WHERE sample_id=?",
+                (results[0]["sample_id"],),
+            ).fetchone()[0]
+        self.assertEqual(count, 1)
 
     def test_context_manifest_audit_redaction_and_restart_message_recovery(self) -> None:
         self.manager.ensure_session(

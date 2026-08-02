@@ -1260,69 +1260,69 @@ class MemoryManager:
         now = utc_now()
         try:
             with self._lock, self._connect() as connection:
-                existing = connection.execute(
-                    """
-                    SELECT sample_id,user_id,project_id FROM citrus_samples
-                    WHERE sample_id=?
-                    """,
-                    (sample_id,),
-                ).fetchone()
-                if existing:
-                    if existing["user_id"] == user_id and existing["project_id"] == project_id:
-                        return {"sample_id": sample_id, "deduplicated": True}
-                    # A caller-supplied ID or a legacy content-only ID may already
-                    # belong to another tenant. Namespace the collision without
-                    # exposing or reusing the other tenant's record.
-                    scope_suffix = hashlib.sha256(
-                        f"{user_id}\x1f{project_id}\x1f{sample_id}".encode("utf-8")
-                    ).hexdigest()[:12]
-                    sample_id = f"{sample_id[:147]}_{scope_suffix}"
-                    scoped_existing = connection.execute(
+                # Make deduplication atomic. Streamlit may execute overlapping
+                # reruns in different threads/processes, so a SELECT followed by
+                # a plain INSERT can still race on the globally unique sample_id.
+                candidate_id = sample_id
+                for collision_attempt in range(2):
+                    changes_before = connection.total_changes
+                    connection.execute(
+                        """
+                        INSERT INTO citrus_samples(
+                            sample_id,user_id,session_id,project_id,variety,origin,event_time,growth_stage,maturity,
+                            image_paths_json,disease_or_quality,processing_goal,metrics_json,solution,outcome,
+                            source,confidence,keywords_json,status,created_at,updated_at
+                        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                        ON CONFLICT(sample_id) DO NOTHING
+                        """,
+                        (
+                            candidate_id,
+                            user_id,
+                            session_id,
+                            project_id,
+                            fields["variety"],
+                            fields["origin"],
+                            fields["event_time"],
+                            fields["growth_stage"],
+                            fields["maturity"],
+                            _safe_json(image_paths),
+                            fields["disease_or_quality"],
+                            fields["processing_goal"],
+                            _safe_json(metrics),
+                            fields["solution"],
+                            fields["outcome"],
+                            fields["source"],
+                            confidence,
+                            _safe_json(keywords),
+                            "active",
+                            now,
+                            now,
+                        ),
+                    )
+                    if connection.total_changes > changes_before:
+                        sample_id = candidate_id
+                        break
+
+                    existing = connection.execute(
                         """
                         SELECT sample_id,user_id,project_id FROM citrus_samples
                         WHERE sample_id=?
                         """,
-                        (sample_id,),
+                        (candidate_id,),
                     ).fetchone()
-                    if scoped_existing:
-                        if (
-                            scoped_existing["user_id"] == user_id
-                            and scoped_existing["project_id"] == project_id
-                        ):
-                            return {"sample_id": sample_id, "deduplicated": True}
-                        raise MemoryIsolationError("历史样本 ID 与其他用户作用域冲突。")
-                connection.execute(
-                    """
-                    INSERT INTO citrus_samples(
-                        sample_id,user_id,session_id,project_id,variety,origin,event_time,growth_stage,maturity,
-                        image_paths_json,disease_or_quality,processing_goal,metrics_json,solution,outcome,
-                        source,confidence,keywords_json,status,created_at,updated_at
-                    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-                    """,
-                    (
-                        sample_id,
-                        user_id,
-                        session_id,
-                        project_id,
-                        fields["variety"],
-                        fields["origin"],
-                        fields["event_time"],
-                        fields["growth_stage"],
-                        fields["maturity"],
-                        _safe_json(image_paths),
-                        fields["disease_or_quality"],
-                        fields["processing_goal"],
-                        _safe_json(metrics),
-                        fields["solution"],
-                        fields["outcome"],
-                        fields["source"],
-                        confidence,
-                        _safe_json(keywords),
-                        "active",
-                        now,
-                        now,
-                    ),
-                )
+                    if existing and existing["user_id"] == user_id and existing["project_id"] == project_id:
+                        return {"sample_id": candidate_id, "deduplicated": True}
+
+                    if collision_attempt == 0:
+                        # A caller-supplied ID or a legacy content-only ID may
+                        # belong to another tenant. Namespace it without exposing
+                        # or reusing that tenant's record, then retry atomically.
+                        scope_suffix = hashlib.sha256(
+                            f"{user_id}\x1f{project_id}\x1f{candidate_id}".encode("utf-8")
+                        ).hexdigest()[:12]
+                        candidate_id = f"{candidate_id[:147]}_{scope_suffix}"
+                        continue
+                    raise MemoryIsolationError("历史样本 ID 与其他用户作用域冲突。")
         except sqlite3.Error as error:
             raise MemoryStorageError(f"保存历史样本失败：{error}") from error
         return {
