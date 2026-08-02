@@ -2325,6 +2325,11 @@ def finalize_memory_turn(
     result = result or {}
     payload = payload or {}
     general_trace = general_trace or {}
+    sample_image_path = str(
+        (vision_payload or {}).get("stored_image_path")
+        or payload.get("stored_image_path")
+        or ""
+    )
     run_id = f"run_{uuid4().hex}"
     tool_calls: list[dict[str, Any]] = []
     batch_id = str((result.get("batch") or {}).get("batch_id") or "")
@@ -2460,7 +2465,7 @@ def finalize_memory_turn(
                     "origin": batch.get("origin"),
                     "time": batch.get("harvest_date"),
                     "maturity": (result.get("image_observation") or "")[:300],
-                    "image_paths": [stored_image_path] if stored_image_path else [],
+                    "image_paths": [sample_image_path] if sample_image_path else [],
                     "disease_or_quality": "；".join(
                         (state_updates.get("constraints") or {}).get("set", [])
                     )[:1200],

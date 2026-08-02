@@ -4,6 +4,7 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import MagicMock
 
 from agent.llm_client import build_general_chat_messages
 from agent.memory import (
@@ -359,6 +360,40 @@ class LayeredMemoryTests(unittest.TestCase):
         blocked.mkdir()
         with self.assertRaises(MemoryStorageError):
             MemoryManager(blocked)
+
+
+class MemoryTurnFinalizationTests(unittest.TestCase):
+    def test_analysis_without_uploaded_image_does_not_reference_missing_variable(self) -> None:
+        from app.main import finalize_memory_turn
+
+        manager = MagicMock()
+        manager.update_working_memory.return_value = {}
+        manager.capture_long_term_from_turn.return_value = []
+        manager.save_memory.return_value = {}
+        manager.save_sample.return_value = {"sample_id": "sample-1"}
+
+        trace = finalize_memory_turn(
+            manager=manager,
+            user_id="user-a",
+            session_id="session-a",
+            project_id="project-a",
+            prompt="这批脐橙适合怎样加工成果汁？",
+            assistant_message={"role": "assistant", "content": "完整加工流程"},
+            assistant_text="完整加工流程",
+            mode="analysis",
+            memory_context={},
+            missing_inputs=[],
+            result={
+                "batch": {"batch_id": "B-1", "origin": "赣南", "variety": "脐橙"},
+                "scores": [{"direction": "果肉-柑橘汁/NFC", "match_level": "优先评估"}],
+                "processing_plan": {},
+            },
+            payload={},
+        )
+
+        saved_sample = manager.save_sample.call_args.args[0]
+        self.assertEqual(saved_sample["image_paths"], [])
+        self.assertEqual(trace["sample_ids"], ["sample-1"])
 
 
 if __name__ == "__main__":
