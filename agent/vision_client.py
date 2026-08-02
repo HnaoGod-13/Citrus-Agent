@@ -251,12 +251,26 @@ def normalize_vision_result(data: dict[str, Any]) -> dict[str, Any]:
         or data.get("answer")
         or appearance_description
     ).strip()
+    variety_candidate = str(
+        data.get("品种候选")
+        or data.get("variety_candidate")
+        or ""
+    ).strip()
+    variety_confidence = str(
+        data.get("品种判断置信度")
+        or data.get("variety_confidence")
+        or ""
+    ).strip()
 
     return {
         "answer": answer,
         "appearance_description": appearance_description,
         "structured_observation": data,
         "risk_notes": risk_notes,
+        "image_received": True,
+        "analysis_status": "success",
+        "variety_candidate": variety_candidate,
+        "variety_confidence": variety_confidence,
     }
 
 
@@ -284,6 +298,8 @@ def recognize_citrus_image(
   "疑似腐烂": true或false,
   "机械伤": "未见明显机械伤/轻微/明显/无法判断",
   "表面状态": "干爽/潮湿/皱缩/有污渍/无法判断",
+  "品种候选": "只能填写图片支持的候选类别，如甜橙/脐橙/沃柑/无法判断；不要把示例当结论",
+  "品种判断置信度": "低/中/高",
   "外观描述": "一句适合写入批次分析报告的中文描述",
   "针对用户问题的回答": "根据图片直接回答用户本轮问题；图片无法支持的结论必须明确说明",
   "风险提示": ["仅基于图片外观判断，不能替代实验室检测"]
@@ -344,4 +360,6 @@ def recognize_citrus_image(
     except (KeyError, IndexError, TypeError) as error:
         raise VisionAPIError(f"视觉模型返回格式异常：{response_data}") from error
 
-    return normalize_vision_result(_extract_json(content))
+    result = normalize_vision_result(_extract_json(content))
+    result["_raw_model_output"] = str(content)
+    return result

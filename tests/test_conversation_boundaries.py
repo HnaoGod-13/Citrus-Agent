@@ -72,11 +72,12 @@ class ConversationIsolationTests(unittest.TestCase):
             {"role": "assistant", "content": "旧批次结论：建议陈皮丝。"},
         ]
 
-    def test_unrelated_second_question_gets_no_old_history(self) -> None:
+    def test_same_conversation_keeps_recent_history_even_for_new_topic(self) -> None:
         messages = build_general_chat_messages(self.history, UNRELATED_QUESTION)
-        self.assertEqual([item["role"] for item in messages], ["system", "user"])
+        self.assertEqual([item["role"] for item in messages], ["system", "user", "assistant", "user"])
         self.assertEqual(messages[-1]["content"], UNRELATED_QUESTION)
-        self.assertNotIn(SPARSE_TEMPLATE, "\n".join(item["content"] for item in messages))
+        self.assertIn(SPARSE_TEMPLATE, "\n".join(item["content"] for item in messages))
+        self.assertIn("新话题时只回答新问题", messages[0]["content"])
 
     def test_explicit_follow_up_can_use_history(self) -> None:
         messages = build_general_chat_messages(self.history, "那这个结论为什么这样？")
@@ -114,7 +115,8 @@ class ControlledMemoryTests(unittest.TestCase):
     def test_demo_cases_are_not_loaded_as_long_term_facts(self) -> None:
         snapshot = build_memory_snapshot(default_batch(), "", "不限")
         self.assertNotIn("demo_case_summaries", snapshot["long_term"])
-        self.assertEqual(snapshot["long_term"]["knowledge_sources"], ["data/literature/chunks.jsonl"])
+        self.assertIn("data/literature/chunks.jsonl", snapshot["long_term"]["knowledge_sources"])
+        self.assertNotIn("data/cases/demo_cases.json", snapshot["long_term"]["knowledge_sources"])
 
 
 if __name__ == "__main__":

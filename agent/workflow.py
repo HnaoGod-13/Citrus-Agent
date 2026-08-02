@@ -7,16 +7,18 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .guardrails import run_fixed_guardrails
-from .memory import build_memory_snapshot
+from .memory import build_memory_snapshot, redact_sensitive
 from .planner import build_controlled_plan, serialize_plan
 from .tools import (
     TOOL_REGISTRY,
     ToolResult,
-    build_retrieval_query,
+    analyze_processing_request,
+    build_retrieval_specs,
     check_quality,
     classify_product,
     infer_product_filter as infer_product_filter_tool,
     retrieve_literature,
+    retrieve_processing_parameters,
     score_processing,
     write_report,
 )
@@ -56,18 +58,35 @@ def _step_from_tool_result(result: ToolResult) -> AgentStep:
     )
 
 
+def _merge_evidence(*groups: list[dict[str, Any]], limit: int = 24) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    document_counts: dict[str, int] = {}
+    for item in (item for group in groups for item in group):
+        chunk_id = str(item.get("chunk_id") or f"{item.get('document_id')}:{item.get('page') or item.get('page_start')}")
+        document_id = str(item.get("document_id") or item.get("source_file") or item.get("title"))
+        if chunk_id in seen or document_counts.get(document_id, 0) >= 2:
+            continue
+        seen.add(chunk_id)
+        document_counts[document_id] = document_counts.get(document_id, 0) + 1
+        merged.append(item)
+        if len(merged) >= limit:
+            break
+    return merged
+
+
 def build_agent_brief(batch: dict[str, Any], image_observation: str, product_filter: str) -> dict[str, str]:
-    missing_tests = [
-        label
-        for key, label in {
-            "pesticide": "农残",
-            "heavy_metal": "重金属",
-            "microbe": "微生物",
-            "aflatoxin": "黄曲霉毒素",
-        }.items()
-        if not batch.get(key)
-    ]
-    constraints = "、".join(missing_tests) + "检测缺失" if missing_tests else "关键检测资料较完整"
+    test_labels = {"pesticide": "农残", "heavy_metal": "重金属", "microbe": "微生物", "aflatoxin": "黄曲霉毒素"}
+    test_issues = []
+    for key, label in test_labels.items():
+        status = batch.get(f"{key}_status")
+        if status == "failed":
+            test_issues.append(f"{label}结果异常")
+        elif status == "result_missing":
+            test_issues.append(f"{label}结果未明确")
+        elif batch.get(key) is not True:
+            test_issues.append(f"{label}检测缺失")
+    constraints = "、".join(test_issues) if test_issues else "关键检测资料较完整"
     return {
         "role": "受控柑橘批次加工决策 Agent",
         "goal": f"判断批次 {batch.get('batch_id') or '未命名批次'} 更适合的加工方向，并生成可复核报告。",
@@ -85,7 +104,12 @@ def build_next_actions(result: dict[str, Any]) -> list[str]:
         "aflatoxin": "补齐黄曲霉毒素检测",
     }
     for key, action in missing_labels.items():
-        if not result["batch"].get(key):
+        status = result["batch"].get(f"{key}_status")
+        if status == "failed":
+            actions.append(action.replace("补齐", "隔离批次并复核"))
+        elif status == "result_missing":
+            actions.append(action.replace("补齐", "补充具体结果和原始报告："))
+        elif result["batch"].get(key) is not True:
             actions.append(action)
 
     if result["quality_risks"]:
@@ -102,6 +126,7 @@ def run_demo_agent(
     batch: dict[str, Any],
     image_observation: str,
     progress_callback: ProgressCallback | None = None,
+    analysis_question: str = "",
 ) -> dict[str, Any]:
     completed_tool_keys: list[str] = []
     agent_steps: list[AgentStep] = [
@@ -142,25 +167,72 @@ def run_demo_agent(
             name="读取受控记忆",
             tool="Memory Manager",
             status="完成",
-            observation=f"短期记忆仅记录当前批次；长期知识仅使用文献切片 {chunk_count} 条，不读取演示案例作为事实。",
+            observation=f"结构化短期状态记录当前批次，会话层保留最近 12 条消息；长期知识使用文献切片 {chunk_count} 条，不读取演示案例作为事实。",
         )
     )
 
-    _notify(progress_callback, "正在检索本地文献库和语义证据")
-    evidence_result = retrieve_literature(
-        query=build_retrieval_query(batch),
-        product_filter=product_filter,
-        top_k=8,
-    )
-    evidence = evidence_result.data
-    completed_tool_keys.append("literature_retriever")
-    agent_steps.append(_step_from_tool_result(evidence_result))
+    _notify(progress_callback, "正在识别加工目标、规模、设备和参数需求")
+    intent_result = analyze_processing_request(analysis_question, batch)
+    processing_intent = intent_result.data
+    completed_tool_keys.append("processing_intent_analyzer")
+    agent_steps.append(_step_from_tool_result(intent_result))
 
-    _notify(progress_callback, "正在评估整果、果肉、果皮、种子和副产物路线")
-    score_result = score_processing(batch, image_observation)
+    explicit_processing_target = processing_intent.get("primary_product") != "柑橘加工品"
+    broad_evidence: list[dict[str, Any]] = []
+    process_payload: dict[str, Any] = {}
+    if explicit_processing_target:
+        _notify(progress_callback, "正在按单元操作拆分问题并检索参数化文献证据")
+        process_result = retrieve_processing_parameters(processing_intent, product_filter, top_k=24)
+        process_payload = process_result.data
+        evidence = list(process_payload.get("evidence") or [])
+        agent_steps.append(_step_from_tool_result(process_result))
+        if not evidence:
+            fallback_result = retrieve_literature(
+                query=build_retrieval_specs(batch, focus_query=analysis_question),
+                product_filter=product_filter,
+                top_k=16,
+            )
+            broad_evidence = fallback_result.data
+            evidence = broad_evidence
+            agent_steps.append(_step_from_tool_result(fallback_result))
+    else:
+        _notify(progress_callback, "正在检索本地文献库和语义证据")
+        evidence_result = retrieve_literature(
+            query=build_retrieval_specs(batch, focus_query=analysis_question),
+            product_filter=product_filter,
+            top_k=16,
+        )
+        broad_evidence = evidence_result.data
+        evidence = broad_evidence
+        agent_steps.append(_step_from_tool_result(evidence_result))
+    completed_tool_keys.append("literature_retriever")
+
+    _notify(progress_callback, "正在综合批次规则、文献适用性和数据完整度评估加工路线")
+    score_result = score_processing(batch, image_observation, evidence)
     scores = score_result.data
     completed_tool_keys.append("rule_scoring_engine")
     agent_steps.append(_step_from_tool_result(score_result))
+
+    if not explicit_processing_target:
+        top_direction = scores[0].direction if scores else ""
+        intent_result = analyze_processing_request(analysis_question, batch, top_direction)
+        processing_intent = intent_result.data
+        _notify(progress_callback, "正在围绕优先路线补充单元操作参数、质量和包装证据")
+        process_result = retrieve_processing_parameters(processing_intent, product_filter, top_k=24)
+        process_payload = process_result.data
+        processing_evidence = list(process_payload.get("evidence") or [])
+        evidence = _merge_evidence(processing_evidence, broad_evidence, limit=24)
+        agent_steps.append(_step_from_tool_result(process_result))
+        # Re-evaluate support labels after focused evidence has been added.
+        score_result = score_processing(batch, image_observation, evidence)
+        scores = score_result.data
+
+    completed_tool_keys.append("processing_evidence_aggregator")
+    process_parameters = list(process_payload.get("parameters") or [])
+    parameter_groups = list(process_payload.get("parameter_groups") or [])
+    parameterized_plan = process_payload.get("parameterized_plan") or {}
+    processing_subquestions = list(process_payload.get("subquestions") or [])
+    processing_evidence = list(process_payload.get("evidence") or [])
 
     _notify(progress_callback, "正在检查质控边界和风险项")
     risk_result = check_quality(batch, image_observation)
@@ -169,9 +241,20 @@ def run_demo_agent(
     agent_steps.append(_step_from_tool_result(risk_result))
 
     _notify(progress_callback, "正在生成可复核的 Markdown 报告")
-    report_result = write_report(batch, image_observation, evidence, scores, quality_risks)
+    report_result = write_report(
+        batch,
+        image_observation,
+        evidence,
+        scores,
+        quality_risks,
+        processing_intent=processing_intent,
+        process_parameters=process_parameters,
+        parameter_groups=parameter_groups,
+        parameterized_plan=parameterized_plan,
+    )
     report_payload = report_result.data
     report = report_payload["report"]
+    processing_plan = report_payload["processing_plan"]
     compliance_issues = report_payload["compliance_issues"]
     completed_tool_keys.append("report_writer")
     agent_steps.append(_step_from_tool_result(report_result))
@@ -196,6 +279,7 @@ def run_demo_agent(
 
     result = {
         "batch": batch,
+        "analysis_question": analysis_question,
         "agent_brief": agent_brief,
         "agent_steps": agent_steps,
         "plan": serialize_plan(plan),
@@ -205,8 +289,15 @@ def run_demo_agent(
         "image_observation": image_observation,
         "product_filter": product_filter,
         "evidence": evidence,
+        "processing_evidence": processing_evidence,
+        "processing_intent": processing_intent,
+        "processing_subquestions": processing_subquestions,
+        "process_parameters": process_parameters,
+        "parameter_groups": parameter_groups,
+        "parameterized_plan": parameterized_plan,
         "scores": scores,
         "quality_risks": quality_risks,
+        "processing_plan": processing_plan,
         "report": report,
         "compliance_issues": compliance_issues,
     }
@@ -224,17 +315,31 @@ def save_report(markdown: str, batch_id: str) -> Path:
 
 def write_audit_event(result: dict[str, Any], report_path: Path) -> None:
     AUDIT_LOG.parent.mkdir(parents=True, exist_ok=True)
+    tool_result_path = report_path.with_suffix(".tools.json")
+    tool_result_path.write_text(
+        json.dumps(redact_sensitive(serialize_result(result)), ensure_ascii=False, indent=2, default=str),
+        encoding="utf-8",
+    )
+    result["tool_result_path"] = str(tool_result_path)
     event = {
         "time": datetime.now().isoformat(timespec="seconds"),
         "batch_id": result["batch"].get("batch_id"),
         "product_filter": result["product_filter"],
         "top_direction": result["scores"][0].direction if result["scores"] else None,
-        "top_score": result["scores"][0].score if result["scores"] else None,
+        "top_match_level": result["scores"][0].match_level if result["scores"] else None,
         "risk_count": len(result["quality_risks"]),
         "evidence_count": len(result["evidence"]),
+        "processing_evidence_count": len(result.get("processing_evidence", [])),
+        "parameter_count": len(result.get("process_parameters", [])),
+        "parameter_ids": [
+            item.get("parameter_id")
+            for item in result.get("process_parameters", [])
+            if item.get("parameter_id")
+        ],
         "guardrail_count": len(result.get("guardrail_issues", [])),
         "next_actions": result.get("next_actions", []),
         "report_path": str(report_path),
+        "tool_result_path": str(tool_result_path),
     }
     with AUDIT_LOG.open("a", encoding="utf-8") as file:
         file.write(json.dumps(event, ensure_ascii=False) + "\n")

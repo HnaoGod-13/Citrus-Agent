@@ -6,7 +6,9 @@ from typing import Any
 REQUIRED_TOOL_KEYS = [
     "product_classifier",
     "memory",
+    "processing_intent_analyzer",
     "literature_retriever",
+    "processing_evidence_aggregator",
     "rule_scoring_engine",
     "quality_gate",
     "report_writer",
@@ -29,7 +31,7 @@ def check_result_boundaries(
     if not evidence:
         issues.append("未检索到文献证据，报告只能作为低置信度草稿。")
     if not scores:
-        issues.append("未获得加工路线评分，不能给出推荐方向。")
+        issues.append("未获得加工路线分级结果，不能给出推荐方向。")
     if compliance_issues:
         issues.extend(f"报告合规扫描提示：{item}" for item in compliance_issues)
 

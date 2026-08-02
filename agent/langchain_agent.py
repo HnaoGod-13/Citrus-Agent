@@ -96,7 +96,12 @@ def tool_search_knowledge(query: str, product_filter: str = "不限") -> str:
 def tool_score_processing_options(batch_json: str, image_observation: str) -> str:
     batch = json.loads(batch_json)
     scores = score_processing_options(batch, image_observation)
-    lines = [f"{item.direction}：{item.score} 分；原因：{'；'.join(item.reasons)}。风险：{'；'.join(item.risk_notes) or '无'}" for item in scores]
+    lines = [
+        f"{item.direction}：{item.match_level}；文献支持：{item.evidence_support}；"
+        f"数据置信度：{item.data_confidence}；原因：{'；'.join(item.reasons)}。"
+        f"风险：{'；'.join(item.risk_notes) or '无'}"
+        for item in scores
+    ]
     return "\n".join(lines)
 
 
@@ -148,7 +153,7 @@ def run_langchain_agent(batch: dict[str, Any], image_observation: str) -> str:
         Tool(
             name="score_processing_options",
             func=tool_score_processing_options,
-            description="基于批次数据和外观信息，按整果、果肉、果皮、种子和副产物打分多个加工方向。输入格式：batch_json|image_observation。",
+            description="基于批次数据、文献适用性和数据置信度，按整果、果肉、果皮、种子和副产物分级多个加工方向。输入格式：batch_json|image_observation。",
         ),
         Tool(
             name="check_quality_risks",

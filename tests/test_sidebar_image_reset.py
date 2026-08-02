@@ -45,6 +45,10 @@ class SidebarImageResetTests(unittest.TestCase):
     def test_new_conversation_also_clears_the_uploaded_image(self) -> None:
         app = self.run_app()
         self.upload_image(app)
+        app.session_state.last_vision_context = {
+            "variety_candidate": "普通甜橙",
+            "variety_confidence": "低",
+        }
         new_chat_index = next(
             index
             for index, button in enumerate(app.button)
@@ -55,6 +59,7 @@ class SidebarImageResetTests(unittest.TestCase):
 
         self.assertEqual([], list(app.exception))
         self.assertIsNone(app.get("file_uploader")[0].value)
+        self.assertIsNone(app.session_state.last_vision_context)
         self.assertNotIn("remove_uploaded_image_0", [button.key for button in app.button])
 
     def test_completed_message_reset_clears_the_uploaded_image(self) -> None:

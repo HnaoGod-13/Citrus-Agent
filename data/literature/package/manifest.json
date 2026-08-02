@@ -1,0 +1,16 @@
+{
+  "format": "zstd-split-sqlite-v1",
+  "built_at": "2026-07-31T18:39:19+08:00",
+  "documents": 1899,
+  "chunks": 99874,
+  "original_size": 581816320,
+  "sha256": "9cbc89f7effa0748b402c4b74a074348335830c8988d8a67d540483101f89c1c",
+  "parts": [
+    "literature.db.zst.part001",
+    "literature.db.zst.part002"
+  ],
+  "part_sha256": {
+    "literature.db.zst.part001": "e1ee68af73a09f9b3404b085c633f2115f7a44e2d1002b52e38e6acec95dd744",
+    "literature.db.zst.part002": "0ab49fadb9d078179174c6d29966bbdda1115404c23103f141944021572f1019"
+  }
+}

@@ -60,13 +60,37 @@ DIRECTION_PARTS = {
     DIRECTION_BYPRODUCT: "副产物",
 }
 
+DIRECTION_EVIDENCE_TERMS = {
+    DIRECTION_PEEL: ["陈皮", "广陈皮", "chenpi", "citri reticulatae", "陈化", "dried tangerine peel"],
+    DIRECTION_SHRED: ["陈皮丝", "陈皮粉", "果皮粉", "peel powder", "particle size"],
+    DIRECTION_PEEL_OIL: ["精油", "挥发油", "essential oil", "volatile oil", "柠檬烯", "limonene", "冷压", "蒸馏"],
+    DIRECTION_PEEL_PECTIN: ["果胶", "pectin", "酯化度", "凝胶", "galacturonic"],
+    DIRECTION_PEEL_FLAVONOID: ["黄酮", "flavonoid", "橙皮苷", "hesperidin", "柚皮苷", "naringin", "色素"],
+    DIRECTION_JUICE: ["橙汁", "柑橘汁", "果汁", "nfc", "citrus juice", "orange juice", "榨汁"],
+    DIRECTION_CONCENTRATE: ["浓缩汁", "浓缩果汁", "concentrated juice", "膜浓缩", "真空浓缩"],
+    DIRECTION_VINEGAR_WINE: ["果醋", "果酒", "vinegar", "wine fermentation", "酒精发酵", "醋酸发酵"],
+    DIRECTION_SEGMENT: ["橘瓣", "糖水橘瓣", "罐头", "canned citrus", "citrus segment"],
+    DIRECTION_PULP_DRINK: ["砂囊", "果粒", "果肉饮料", "juice sac", "pulp beverage"],
+    DIRECTION_WHOLE_PRESERVE: ["果脯", "蜜饯", "candied citrus", "preserved citrus"],
+    DIRECTION_WHOLE_DRY: ["冻干", "烘干片", "干燥片", "freeze drying", "dried slice"],
+    DIRECTION_WHOLE_POWDER_TEA: ["果粉", "果茶", "whole fruit powder", "citrus tea"],
+    DIRECTION_WHOLE_MEDICINAL: ["枳实", "药橘", "咸柑橘", "medicinal citrus"],
+    DIRECTION_SEED: ["种子", "籽油", "橘核", "seed oil", "citrus seed"],
+    DIRECTION_BYPRODUCT: ["副产物", "果渣", "饲料", "有机肥", "by-product", "byproduct", "pomace", "citrus waste"],
+}
+
 
 @dataclass
 class ScoreResult:
     direction: str
+    # score is retained as an internal ordering value. User-facing output uses match_level.
     score: int
     reasons: list[str] = field(default_factory=list)
     risk_notes: list[str] = field(default_factory=list)
+    match_level: str = "待评估"
+    evidence_support: str = "未检索到直接支持"
+    evidence_count: int = 0
+    data_confidence: str = "低"
 
 
 @dataclass
@@ -127,8 +151,49 @@ def _risk(results: dict[str, ScoreResult], directions: list[str], note: str, sco
         results[direction].risk_notes.append(note)
 
 
-def score_processing_options(batch: dict[str, Any], image_observation: str) -> list[ScoreResult]:
-    """Score citrus processing directions by raw-material part with auditable rules."""
+def _evidence_documents(evidence: list[dict[str, Any]], terms: list[str]) -> int:
+    documents: set[str] = set()
+    lowered_terms = [term.lower() for term in terms]
+    for index, item in enumerate(evidence):
+        text = " ".join(
+            str(item.get(field) or "")
+            for field in ["title", "category", "product", "topic", "keywords", "section", "chunk_text"]
+        ).lower()
+        if any(term in text for term in lowered_terms):
+            documents.add(
+                str(item.get("document_id") or item.get("source_file") or item.get("title") or index)
+            )
+    return len(documents)
+
+
+def _data_confidence(batch: dict[str, Any], image_observation: str) -> str:
+    fields = ["origin", "variety", "weight_kg", "brix", "acidity", "moisture", "customer_type"]
+    available = sum(batch.get(field) not in ("", None) for field in fields)
+    available += sum(batch.get(field) is True for field in ["pesticide", "heavy_metal", "microbe", "aflatoxin"])
+    available += bool((image_observation or "").strip())
+    if available >= 9:
+        return "高"
+    if available >= 5:
+        return "中"
+    return "低"
+
+
+def _match_level(score: int) -> str:
+    if score >= 75:
+        return "优先评估"
+    if score >= 60:
+        return "重点小试"
+    if score >= 48:
+        return "条件性备选"
+    return "暂不优先"
+
+
+def score_processing_options(
+    batch: dict[str, Any],
+    image_observation: str,
+    evidence: list[dict[str, Any]] | None = None,
+) -> list[ScoreResult]:
+    """Rank routes with auditable batch rules plus direct literature applicability."""
     origin = str(batch.get("origin", ""))
     variety = str(batch.get("variety", ""))
     customer_type = str(batch.get("customer_type", ""))
@@ -263,8 +328,30 @@ def score_processing_options(batch: dict[str, Any], image_observation: str) -> l
     for direction in [DIRECTION_WHOLE_MEDICINAL, DIRECTION_SEED, DIRECTION_PEEL_FLAVONOID]:
         results[direction].risk_notes.append("涉及药食、提取物或功能性成分时，需单独复核资质、标签、法规和宣称边界。")
 
+    evidence = evidence or []
+    confidence = _data_confidence(batch, image_observation)
     for result in results.values():
+        document_count = _evidence_documents(evidence, DIRECTION_EVIDENCE_TERMS[result.direction])
+        result.evidence_count = document_count
+        result.data_confidence = confidence
+        if document_count >= 3:
+            result.score += 9
+            result.evidence_support = "较强（至少3篇直接相关文献）"
+        elif document_count == 2:
+            result.score += 6
+            result.evidence_support = "中等（2篇直接相关文献）"
+        elif document_count == 1:
+            result.score += 3
+            result.evidence_support = "有限（1篇直接相关文献）"
+        else:
+            result.evidence_support = "未检索到直接支持"
+            result.risk_notes.append("本轮未检索到该路线的直接相关文献，不能仅凭规则排序进入生产。")
+        if document_count:
+            result.reasons.append(
+                f"本轮检索到 {document_count} 篇与该路线直接相关的文献，已纳入路线排序；实验条件仍需原文复核和小试。"
+            )
         result.score = max(0, min(100, result.score))
+        result.match_level = _match_level(result.score)
 
     return sorted(results.values(), key=lambda item: item.score, reverse=True)
 
@@ -280,7 +367,24 @@ def check_quality_risks(batch: dict[str, Any], image_observation: str) -> list[Q
         "aflatoxin": "黄曲霉毒素检测",
     }
     for key, label in required_tests.items():
-        if not batch.get(key):
+        status = batch.get(f"{key}_status")
+        if status == "failed":
+            risks.append(
+                QualityRisk(
+                    level="高",
+                    item=f"{label}结果异常或不合格",
+                    suggestion="该结果不能用于放行；应隔离批次、回查原始报告并由质控人员决定复检或处置。",
+                )
+            )
+        elif status == "result_missing":
+            risks.append(
+                QualityRisk(
+                    level="高",
+                    item=f"{label}结果未明确",
+                    suggestion="仅说明已检测或已有报告不足以放行，必须补充具体结果、限量依据和报告原件。",
+                )
+            )
+        elif batch.get(key) is not True:
             risks.append(
                 QualityRisk(
                     level="高",
