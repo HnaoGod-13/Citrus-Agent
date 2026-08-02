@@ -267,6 +267,32 @@ class LayeredMemoryTests(unittest.TestCase):
             ),
             [],
         )
+
+    def test_identical_samples_from_different_users_have_scoped_ids(self) -> None:
+        common = {
+            "project_id": self.project_id,
+            "variety": "脐橙",
+            "origin": "赣南",
+            "processing_goal": "NFC橙汁",
+            "metrics": {"brix": 12.2, "acidity": 0.7},
+            "solution": "清洗、榨汁、杀菌和灌装。",
+            "outcome": "待小试验证。",
+            "source": "agent_analysis_pending",
+        }
+        first = self.manager.save_sample(
+            {**common, "user_id": self.user_id, "session_id": self.session_id}
+        )
+        duplicate = self.manager.save_sample(
+            {**common, "user_id": self.user_id, "session_id": self.session_id}
+        )
+        self.manager.ensure_session("user_b", "session_b", self.project_id)
+        second_user = self.manager.save_sample(
+            {**common, "user_id": "user_b", "session_id": "session_b"}
+        )
+
+        self.assertTrue(duplicate["deduplicated"])
+        self.assertEqual(first["sample_id"], duplicate["sample_id"])
+        self.assertNotEqual(first["sample_id"], second_user["sample_id"])
         self.assertEqual(
             self.manager.retrieve_similar_samples(
                 {"user_id": self.user_id, "project_id": "project_b", "query": "赣南脐橙NFC"},
@@ -394,6 +420,37 @@ class MemoryTurnFinalizationTests(unittest.TestCase):
         saved_sample = manager.save_sample.call_args.args[0]
         self.assertEqual(saved_sample["image_paths"], [])
         self.assertEqual(trace["sample_ids"], ["sample-1"])
+
+    def test_sample_integrity_error_is_audit_warning_not_page_failure(self) -> None:
+        from app.main import finalize_memory_turn
+
+        manager = MagicMock()
+        manager.update_working_memory.return_value = {}
+        manager.capture_long_term_from_turn.return_value = []
+        manager.save_memory.return_value = {}
+        manager.save_sample.side_effect = sqlite3.IntegrityError("UNIQUE constraint failed")
+
+        trace = finalize_memory_turn(
+            manager=manager,
+            user_id="user-a",
+            session_id="session-a",
+            project_id="project-a",
+            prompt="这批脐橙适合怎样加工成果汁？",
+            assistant_message={"role": "assistant", "content": "完整加工流程"},
+            assistant_text="完整加工流程",
+            mode="analysis",
+            memory_context={},
+            missing_inputs=[],
+            result={
+                "batch": {"batch_id": "B-1", "origin": "赣南", "variety": "脐橙"},
+                "scores": [{"direction": "果肉-柑橘汁/NFC", "match_level": "优先评估"}],
+                "processing_plan": {},
+            },
+            payload={},
+        )
+
+        self.assertIn("UNIQUE constraint failed", trace["error"])
+        manager.record_message.assert_called()
 
 
 if __name__ == "__main__":

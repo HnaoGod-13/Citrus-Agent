@@ -1252,51 +1252,79 @@ class MemoryManager:
             " ".join(str(value) for value in fields.values()),
         )
         identity = _safe_json({**fields, "metrics": metrics, "image_paths": image_paths})
-        sample_hash = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+        scoped_identity = _safe_json(
+            {"user_id": user_id, "project_id": project_id, "sample": identity}
+        )
+        sample_hash = hashlib.sha256(scoped_identity.encode("utf-8")).hexdigest()
         sample_id = _normalize_text(sample.get("sample_id") or f"sample_{sample_hash[:24]}", 160)
         now = utc_now()
-        with self._lock, self._connect() as connection:
-            existing = connection.execute(
-                """
-                SELECT sample_id FROM citrus_samples
-                WHERE user_id=? AND project_id=? AND sample_id=?
-                """,
-                (user_id, project_id, sample_id),
-            ).fetchone()
-            if existing:
-                return {"sample_id": sample_id, "deduplicated": True}
-            connection.execute(
-                """
-                INSERT INTO citrus_samples(
-                    sample_id,user_id,session_id,project_id,variety,origin,event_time,growth_stage,maturity,
-                    image_paths_json,disease_or_quality,processing_goal,metrics_json,solution,outcome,
-                    source,confidence,keywords_json,status,created_at,updated_at
-                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-                """,
-                (
-                    sample_id,
-                    user_id,
-                    session_id,
-                    project_id,
-                    fields["variety"],
-                    fields["origin"],
-                    fields["event_time"],
-                    fields["growth_stage"],
-                    fields["maturity"],
-                    _safe_json(image_paths),
-                    fields["disease_or_quality"],
-                    fields["processing_goal"],
-                    _safe_json(metrics),
-                    fields["solution"],
-                    fields["outcome"],
-                    fields["source"],
-                    confidence,
-                    _safe_json(keywords),
-                    "active",
-                    now,
-                    now,
-                ),
-            )
+        try:
+            with self._lock, self._connect() as connection:
+                existing = connection.execute(
+                    """
+                    SELECT sample_id,user_id,project_id FROM citrus_samples
+                    WHERE sample_id=?
+                    """,
+                    (sample_id,),
+                ).fetchone()
+                if existing:
+                    if existing["user_id"] == user_id and existing["project_id"] == project_id:
+                        return {"sample_id": sample_id, "deduplicated": True}
+                    # A caller-supplied ID or a legacy content-only ID may already
+                    # belong to another tenant. Namespace the collision without
+                    # exposing or reusing the other tenant's record.
+                    scope_suffix = hashlib.sha256(
+                        f"{user_id}\x1f{project_id}\x1f{sample_id}".encode("utf-8")
+                    ).hexdigest()[:12]
+                    sample_id = f"{sample_id[:147]}_{scope_suffix}"
+                    scoped_existing = connection.execute(
+                        """
+                        SELECT sample_id,user_id,project_id FROM citrus_samples
+                        WHERE sample_id=?
+                        """,
+                        (sample_id,),
+                    ).fetchone()
+                    if scoped_existing:
+                        if (
+                            scoped_existing["user_id"] == user_id
+                            and scoped_existing["project_id"] == project_id
+                        ):
+                            return {"sample_id": sample_id, "deduplicated": True}
+                        raise MemoryIsolationError("历史样本 ID 与其他用户作用域冲突。")
+                connection.execute(
+                    """
+                    INSERT INTO citrus_samples(
+                        sample_id,user_id,session_id,project_id,variety,origin,event_time,growth_stage,maturity,
+                        image_paths_json,disease_or_quality,processing_goal,metrics_json,solution,outcome,
+                        source,confidence,keywords_json,status,created_at,updated_at
+                    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    """,
+                    (
+                        sample_id,
+                        user_id,
+                        session_id,
+                        project_id,
+                        fields["variety"],
+                        fields["origin"],
+                        fields["event_time"],
+                        fields["growth_stage"],
+                        fields["maturity"],
+                        _safe_json(image_paths),
+                        fields["disease_or_quality"],
+                        fields["processing_goal"],
+                        _safe_json(metrics),
+                        fields["solution"],
+                        fields["outcome"],
+                        fields["source"],
+                        confidence,
+                        _safe_json(keywords),
+                        "active",
+                        now,
+                        now,
+                    ),
+                )
+        except sqlite3.Error as error:
+            raise MemoryStorageError(f"保存历史样本失败：{error}") from error
         return {
             "sample_id": sample_id,
             "user_id": user_id,

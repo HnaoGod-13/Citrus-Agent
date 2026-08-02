@@ -7,6 +7,7 @@ import importlib
 import json
 import os
 import re
+import sqlite3
 import sys
 from pathlib import Path
 from typing import Any
@@ -2482,7 +2483,7 @@ def finalize_memory_turn(
             )
             if sample.get("sample_id"):
                 saved_sample_ids.append(str(sample["sample_id"]))
-    except agent_memory.MemoryManagerError as error:
+    except (agent_memory.MemoryManagerError, sqlite3.Error, OSError) as error:
         working = {}
         memory_error = str(error)
 
@@ -2602,7 +2603,7 @@ def finalize_memory_turn(
                 "error": error_text,
             }
         )
-    except agent_memory.MemoryManagerError as error:
+    except (agent_memory.MemoryManagerError, sqlite3.Error, OSError) as error:
         audit_trace["error"] = str(error)
     return audit_trace
 
