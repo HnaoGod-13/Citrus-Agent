@@ -1464,8 +1464,26 @@ def render_scroll_position_manager(*, restore: bool) -> None:
     restore_requested = "true" if restore else "false"
     st.iframe(
         f"""
+        <style>
+            html, body {{
+                margin: 0;
+                padding: 0;
+                overflow: hidden;
+                background: transparent;
+            }}
+        </style>
         <script>
         (() => {{
+            const frame = window.frameElement;
+            if (frame) {{
+                frame.style.visibility = "hidden";
+                frame.style.opacity = "0";
+                frame.style.border = "0";
+                frame.style.background = "transparent";
+                frame.style.pointerEvents = "none";
+                frame.setAttribute("aria-hidden", "true");
+            }}
+
             const host = window.parent;
             const doc = host.document;
             const scroller = doc.querySelector(
