@@ -54,11 +54,6 @@ def get_memory_manager() -> agent_memory.MemoryManager:
     return agent_memory.MemoryManager()
 
 
-@st.cache_data(show_spinner=False, ttl=300)
-def literature_status() -> dict[str, Any]:
-    return agent_rag.database_stats()
-
-
 EXAMPLE_PROMPTS = [
     "我有一批新会茶枝柑，糖度10.5，水分18%，客户是茶饮品牌，帮我按果皮、果肉和副产物拆开判断加工方向并出报告。",
     "这批果皮完整、颜色偏成熟、无明显霉斑，农残和重金属还没做，适合做陈皮、陈皮丝还是果皮精油/果胶？",
@@ -1672,18 +1667,6 @@ def render_sidebar() -> tuple[str, bool, bytes | None, str]:
                 <div class="status-row"><span>Qwen Vision</span><span class="status-pill">{get_vision_model()}</span></div>
             </div>
             """,
-            unsafe_allow_html=True,
-        )
-
-        knowledge = literature_status()
-        status_text = (
-            f"{knowledge.get('documents', 0)} 篇 / {knowledge.get('chunks', 0)} 切片"
-            if knowledge.get("available")
-            else "索引不可用"
-        )
-        st.markdown(
-            f'<div class="status-list"><div class="status-row"><span>本地文献库</span>'
-            f'<span class="status-pill">{html.escape(status_text)}</span></div></div>',
             unsafe_allow_html=True,
         )
 
