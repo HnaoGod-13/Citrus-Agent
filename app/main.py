@@ -1459,6 +1459,119 @@ def inject_style() -> None:
     )
 
 
+def render_scroll_position_manager(*, restore: bool) -> None:
+    """Preserve the reader's main-page position across the final answer rerun."""
+    restore_requested = "true" if restore else "false"
+    st.iframe(
+        f"""
+        <script>
+        (() => {{
+            const host = window.parent;
+            const doc = host.document;
+            const scroller = doc.querySelector(
+                '[data-testid="stAppScrollToBottomContainer"], [data-testid="stMain"]'
+            );
+            if (!scroller) return;
+
+            const storageKey = "citrus-agent:main-scroll-top";
+            const managerKey = "__citrusAgentScrollManager";
+            let manager = host[managerKey];
+
+            if (!manager || manager.version !== 1) {{
+                manager = {{
+                    version: 1,
+                    restoring: false,
+                    userScrollUntil: 0,
+                    scroller: null,
+                    boundScroller: null,
+                }};
+                host[managerKey] = manager;
+
+                manager.remember = () => {{
+                    if (manager.restoring || !manager.scroller) return;
+                    try {{
+                        host.sessionStorage.setItem(storageKey, String(manager.scroller.scrollTop));
+                    }} catch (_) {{
+                        // Storage may be unavailable in a hardened browser; scrolling still works normally.
+                    }}
+                }};
+                manager.markUserScroll = () => {{
+                    manager.userScrollUntil = Date.now() + 1200;
+                }};
+
+                doc.addEventListener("pointerdown", (event) => {{
+                    manager.markUserScroll();
+                    const target = event.target;
+                    if (target && typeof target.closest === "function" && target.closest("button")) {{
+                        manager.remember();
+                    }}
+                }}, true);
+
+                doc.addEventListener("keydown", (event) => {{
+                    const target = event.target;
+                    const isChatSubmit = event.key === "Enter"
+                        && !event.shiftKey
+                        && target
+                        && typeof target.matches === "function"
+                        && target.matches('[data-testid="stChatInputTextArea"]');
+                    if (isChatSubmit) manager.remember();
+
+                    if (["PageUp", "PageDown", "Home", "End", "ArrowUp", "ArrowDown", " "].includes(event.key)) {{
+                        manager.markUserScroll();
+                        host.setTimeout(manager.remember, 0);
+                    }}
+                }}, true);
+            }}
+
+            manager.scroller = scroller;
+            if (manager.boundScroller !== scroller) {{
+                scroller.addEventListener("wheel", manager.markUserScroll, {{ passive: true }});
+                scroller.addEventListener("touchstart", manager.markUserScroll, {{ passive: true }});
+                scroller.addEventListener("scroll", () => {{
+                    if (!manager.restoring && Date.now() <= manager.userScrollUntil) manager.remember();
+                }}, {{ passive: true }});
+                manager.boundScroller = scroller;
+            }}
+            let hasSavedPosition = false;
+            try {{
+                hasSavedPosition = host.sessionStorage.getItem(storageKey) !== null;
+            }} catch (_) {{
+                // Storage availability is checked again by manager.remember().
+            }}
+            if (!hasSavedPosition) manager.remember();
+
+            if ({restore_requested}) {{
+                let savedPosition = Number.NaN;
+                try {{
+                    savedPosition = Number(host.sessionStorage.getItem(storageKey));
+                }} catch (_) {{
+                    // Ignore unavailable storage and retain Streamlit's default behavior.
+                }}
+                if (Number.isFinite(savedPosition)) {{
+                    manager.restoring = true;
+                    scroller.dispatchEvent(new WheelEvent("wheel", {{ bubbles: true, deltaY: -1 }}));
+                    const restorePosition = () => {{
+                        scroller.scrollTo({{
+                            top: savedPosition,
+                            left: scroller.scrollLeft,
+                            behavior: "auto",
+                        }});
+                    }};
+                    [0, 40, 120, 280, 600, 1000].forEach((delay) => host.setTimeout(restorePosition, delay));
+                    host.setTimeout(() => {{
+                        manager.restoring = false;
+                        manager.remember();
+                    }}, 1200);
+                }}
+            }}
+        }})();
+        </script>
+        """,
+        height=1,
+        tab_index=-1,
+    )
+
+
 def image_uploader_key() -> str:
     version = int(st.session_state.get("image_uploader_version", 0))
     return f"uploaded_citrus_image_{version}"
@@ -2846,6 +2959,7 @@ def handle_prompt(
     )
 
     st.session_state.clear_sidebar_inputs = True
+    st.session_state.restore_main_scroll_position = True
     st.rerun()
 
 
@@ -2853,6 +2967,7 @@ def main() -> None:
     st.set_page_config(page_title="柑橘产业链 Agent", layout="wide")
     inject_style()
     init_state()
+    restore_scroll_position = bool(st.session_state.pop("restore_main_scroll_position", False))
 
     api_key = get_deepseek_api_key()
     manual_observation, has_image, image_bytes, image_mime_type = render_sidebar()
@@ -2866,6 +2981,7 @@ def main() -> None:
             render_message(message)
 
     typed_prompt = st.chat_input("输入问题，或粘贴批次信息开始分析...")
+    render_scroll_position_manager(restore=restore_scroll_position)
     prompt = typed_prompt or selected_prompt
     if prompt:
         handle_prompt(prompt, api_key, manual_observation, has_image, image_bytes, image_mime_type)
