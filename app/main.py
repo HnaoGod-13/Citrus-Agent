@@ -2054,32 +2054,6 @@ def render_analysis_payload(payload: dict[str, Any]) -> None:
         st.caption(f"报告已保存到：{report_path}")
 
 
-def render_audit_trace(trace: dict[str, Any] | None) -> None:
-    if not trace:
-        return
-    memory_ids = [str(item) for item in trace.get("memory_ids") or [] if item]
-    sample_ids = [str(item) for item in trace.get("sample_ids") or [] if item]
-    literature_ids = [str(item) for item in trace.get("literature_ids") or [] if item]
-    parameter_ids = [str(item) for item in trace.get("parameter_ids") or [] if item]
-    with st.expander("本次回答依据与审计", expanded=False):
-        st.caption(
-            f"运行 ID：{trace.get('run_id') or '未记录'} · "
-            f"模型：{trace.get('model') or '本地受控流程'} · "
-            f"上下文估算：{int(trace.get('estimated_context_tokens') or 0)} tokens"
-        )
-        st.write(
-            {
-                "相关长期记忆": memory_ids,
-                "相似历史样本": sample_ids,
-                "文献证据": literature_ids,
-                "工艺参数记录": parameter_ids,
-                "工具调用数量": int(trace.get("tool_count") or 0),
-            }
-        )
-        if trace.get("error"):
-            st.warning(f"本次运行存在降级或记录异常：{trace['error']}")
-
-
 def render_message(message: dict[str, Any]) -> None:
     role = message["role"]
     content_text = str(message.get("content", ""))
@@ -2091,7 +2065,6 @@ def render_message(message: dict[str, Any]) -> None:
         st.markdown('<div class="analysis-shell">', unsafe_allow_html=True)
         render_analysis_payload(message["payload"])
         st.markdown('</div>', unsafe_allow_html=True)
-        render_audit_trace(message.get("audit_trace"))
         return
 
     if role == "user":
@@ -2115,7 +2088,6 @@ def render_message(message: dict[str, Any]) -> None:
         f'<div class="message-row assistant"><div class="message-avatar assistant">Citrus AI</div><div class="message-bubble">{content}</div></div>',
         unsafe_allow_html=True,
     )
-    render_audit_trace(message.get("audit_trace"))
 
 
 def render_empty_state(api_key: str) -> str | None:
