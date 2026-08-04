@@ -55,35 +55,35 @@ def get_memory_manager() -> agent_memory.MemoryManager:
 
 
 EXAMPLE_PROMPTS = [
-    "我有一批新会茶枝柑，糖度10.5，水分18%，客户是茶饮品牌，帮我按果皮、果肉和副产物拆开判断加工方向并出报告。",
-    "这批果皮完整、颜色偏成熟、无明显霉斑，农残和重金属还没做，适合做陈皮、陈皮丝还是果皮精油/果胶？",
-    "产地赣南，品种脐橙，糖度12.2，酸度0.7，食品加工厂客户，优先看果肉方向，顺便评估整果和果皮利用。",
-    "帮我把当前批次按整果、果肉、果皮、种子、副产物整理成质控复核清单。",
+    "我有一批产地新会、品种茶枝柑的鲜果，共800公斤：糖度10.5°Brix、酸度0.65%、果皮水分18%，果皮完整、颜色成熟，外观初检未见质量异常；农残未超标、重金属未超标、微生物未超标、黄曲霉毒素未检出，客户是茶饮品牌。请完整运行Agent工作流程：抽取批次信息、检索本地文献、比较整果、果肉、果皮、种子和副产物加工路线、评估质控风险，给出首选与备选方案、完整加工流程和可下载报告。",
+    "我有一批产地赣南、品种脐橙的鲜果，共2000公斤：糖度12.2°Brix、酸度0.7%，果实完整、成熟度较一致，外观初检未见质量异常；农残未超标、重金属未超标、微生物未超标，客户是食品加工厂，目标是生产NFC果汁。请完整运行Agent工作流程：检索果汁加工文献和参数，评估原料适配性，生成从验收到榨汁、杀菌、灌装的完整工艺，列出质控风险、待小试参数、副产物利用方案和报告。",
+    "我有一批产地新会、品种茶枝柑的鲜果，共1000公斤：糖度9.8°Brix、酸度0.8%、果皮水分20%，果皮完整但果径大小不一，外观初检未见质量异常；农残未超标、重金属未超标、微生物未超标，客户希望提高果皮价值。请完整运行Agent工作流程：检索本地文献并比较陈皮、果皮精油、果胶和黄酮路线，给出路线分级、完整加工工艺、关键参数证据、质控边界、副产物去向和报告。",
+    "我有一批产地广西、品种沃柑的鲜果，共1500公斤：糖度13.0°Brix、酸度0.6%，外观颜色成熟、少量机械伤，霉变状况尚未人工复核；农残尚未检测、重金属尚未检测、微生物结果未提供，客户是食品加工厂，希望尽快排产果汁和果皮副产物。请完整运行Agent工作流程：检索文献、评估路线和质控风险，明确当前能否进入生产、必须补做的检测、条件性加工方案、完整工艺、人工放行节点和报告。",
 ]
 
 EXAMPLE_CARDS = [
     {
-        "eyebrow": "果皮决策",
-        "title": "新会茶枝柑批次分析",
-        "description": "陈皮、陈皮丝、精油与果胶路线",
+        "eyebrow": "01 · 路线选择",
+        "title": "这批柑橘最适合做什么？",
+        "description": "比较五类加工方向，生成完整决策报告",
         "prompt": EXAMPLE_PROMPTS[0],
     },
     {
-        "eyebrow": "质控边界",
-        "title": "未检批次风险复核",
-        "description": "农残、重金属、霉变与放行条件",
+        "eyebrow": "02 · 果汁生产",
+        "title": "这批脐橙怎样加工成果汁？",
+        "description": "检索工艺参数，输出生产与质控流程",
         "prompt": EXAMPLE_PROMPTS[1],
     },
     {
-        "eyebrow": "果肉加工",
-        "title": "赣南脐橙果汁方向",
-        "description": "NFC、浓缩汁、果粒与整果利用",
+        "eyebrow": "03 · 果皮增值",
+        "title": "这批果皮还能怎么高值利用？",
+        "description": "比较陈皮、精油、果胶与黄酮路线",
         "prompt": EXAMPLE_PROMPTS[2],
     },
     {
-        "eyebrow": "报告草稿",
-        "title": "全链路复核清单",
-        "description": "整果、果肉、果皮、种子、副产物",
+        "eyebrow": "04 · 风险复核",
+        "title": "检测没做齐，能不能安排生产？",
+        "description": "识别风险、补检项目与人工放行节点",
         "prompt": EXAMPLE_PROMPTS[3],
     },
 ]
@@ -2212,7 +2212,7 @@ def render_empty_state(api_key: str) -> str | None:
             <h1>与柑橘产业链对话</h1>
             <p>基于本地文献库、加工路线分级和质控边界，生成可追溯、可复核的批次决策草稿。</p>
         </div>
-        <div class="prompt-grid-label">示例数据（点击后会立即作为一轮演示提交）</div>
+        <div class="prompt-grid-label">一键体验完整 Agent 工作流 · 点击任一场景，将自动完成批次抽取、文献检索、路线评分、质控复核与报告生成</div>
         """,
         unsafe_allow_html=True,
     )
@@ -2225,7 +2225,7 @@ def render_empty_state(api_key: str) -> str | None:
         for row_start in range(0, len(EXAMPLE_CARDS), 2):
             cols = st.columns(2)
             for col, card in zip(cols, EXAMPLE_CARDS[row_start : row_start + 2]):
-                label = f"{card['eyebrow']}\n{card['title']}\n{card['description']}"
+                label = f"{card['eyebrow']}\n{card['title']}\n{card['description']}\n→ 一键运行完整流程"
                 if col.button(label, width="stretch"):
                     selected_prompt = card["prompt"]
     return selected_prompt
