@@ -64,26 +64,26 @@ EXAMPLE_PROMPTS = [
 EXAMPLE_CARDS = [
     {
         "eyebrow": "01 · 路线选择",
-        "title": "这批柑橘适合做什么？",
-        "description": "比较整果、果汁、果皮与副产物",
+        "title": "加工方向选择",
+        "description": "整果、果汁与果皮",
         "prompt": EXAMPLE_PROMPTS[0],
     },
     {
         "eyebrow": "02 · 果汁生产",
-        "title": "脐橙怎样加工成果汁？",
-        "description": "检索参数，生成生产与质控流程",
+        "title": "脐橙果汁生产",
+        "description": "加工与质控流程",
         "prompt": EXAMPLE_PROMPTS[1],
     },
     {
         "eyebrow": "03 · 果皮增值",
-        "title": "果皮如何实现高值利用？",
-        "description": "比较陈皮、精油、果胶与黄酮",
+        "title": "果皮高值利用",
+        "description": "陈皮、精油与果胶",
         "prompt": EXAMPLE_PROMPTS[2],
     },
     {
         "eyebrow": "04 · 风险复核",
-        "title": "检测未齐，能否安排生产？",
-        "description": "识别风险、补检项目与人工放行节点",
+        "title": "生产风险复核",
+        "description": "补检与人工放行",
         "prompt": EXAMPLE_PROMPTS[3],
     },
 ]
@@ -978,8 +978,10 @@ def inject_style() -> None:
         }
         [class*="st-key-example_card_"] div[data-testid="stButton"] > button {
             justify-content: flex-start !important;
-            align-items: flex-start !important;
+            align-items: center !important;
             text-align: left !important;
+            min-height: 4.45rem;
+            padding: 0.62rem 0.9rem;
         }
         div[data-testid="stButton"] > button:hover {
             background: rgba(217, 189, 130, 0.085);
@@ -1009,17 +1011,18 @@ def inject_style() -> None:
             box-shadow: 0 0 0 1px rgba(217, 189, 130, 0.2);
         }
         .hero {
-            max-width: 760px;
+            max-width: 680px;
             margin: 0 auto;
-            padding: 5.8rem 0 1.25rem;
+            padding: 0 0 1.35rem;
+            text-align: center;
         }
         .hero h1 {
             color: var(--agent-text);
-            font-size: clamp(2.75rem, 6.1vw, 5.4rem);
+            font-size: clamp(2.6rem, 5vw, 4.65rem);
             line-height: 1;
             font-weight: 420;
             letter-spacing: 0;
-            margin-bottom: 1.18rem;
+            margin: 0;
         }
         .hero p {
             color: var(--agent-muted);
@@ -1048,6 +1051,21 @@ def inject_style() -> None:
             font-family: var(--agent-font-family) !important;
             font-size: 0.78rem;
             letter-spacing: 0.04em;
+        }
+        [class*="st-key-empty_state_shell"] {
+            display: flex;
+            min-height: calc(100vh - 11rem);
+            align-items: center;
+            justify-content: center;
+        }
+        [class*="st-key-empty_state_shell"] > div[data-testid="stVerticalBlock"] {
+            width: 100%;
+            gap: 0.8rem;
+        }
+        [class*="st-key-empty_state_shell"] [class*="st-key-example_card_"] p,
+        [class*="st-key-empty_state_shell"] [class*="st-key-example_card_"] span {
+            font-size: 0.92rem !important;
+            line-height: 1.34 !important;
         }
         .metric-card {
             background: rgba(17, 21, 29, 0.78);
@@ -1447,7 +1465,11 @@ def inject_style() -> None:
                 padding: 1.45rem 1rem 8.2rem;
             }
             .hero {
-                padding-top: 2.2rem;
+                padding: 1.2rem 0 0.8rem;
+            }
+            [class*="st-key-empty_state_shell"] {
+                min-height: auto;
+                padding: 0 0 2.5rem;
             }
             .message-row.assistant {
                 grid-template-columns: 1fr;
@@ -2208,32 +2230,23 @@ def render_message(message: dict[str, Any]) -> None:
 
 
 def render_empty_state(api_key: str) -> str | None:
-    st.markdown(
-        """
-        <div class="hero">
-            <div class="hero-kicker">CITRUS PROCESSING · RAG · QC REVIEW</div>
-            <h1>与柑橘产业链对话</h1>
-            <p>基于本地文献库、加工路线分级和质控边界，生成可追溯、可复核的批次决策草稿。</p>
-        </div>
-        <div class="prompt-grid-label">一键体验完整 Agent 工作流 · 点击任一场景，将自动完成批次抽取、文献检索、路线评分、质控复核与报告生成</div>
-        """,
-        unsafe_allow_html=True,
-    )
-    if not api_key:
-        st.warning("请先在 agent/llm_config.py 中填入 DeepSeek API Key；未填时仍可运行本地规则工具，但不能生成大模型总结。")
-
     selected_prompt = None
-    left, center, right = st.columns([0.65, 2.7, 0.65])
-    with center:
-        for row_start in range(0, len(EXAMPLE_CARDS), 2):
-            cols = st.columns(2)
-            for card_index, (col, card) in enumerate(
-                zip(cols, EXAMPLE_CARDS[row_start : row_start + 2]),
-                start=row_start,
-            ):
-                label = f"{card['eyebrow']}\n{card['title']}\n{card['description']}\n→ 进入完整流程"
-                if col.button(label, width="stretch", key=f"example_card_{card_index}"):
-                    selected_prompt = card["prompt"]
+    with st.container(key="empty_state_shell"):
+        st.markdown('<div class="hero"><h1>柑橘产业链决策</h1></div>', unsafe_allow_html=True)
+        if not api_key:
+            st.warning("请先在 agent/llm_config.py 中填入 DeepSeek API Key；未填时仍可运行本地规则工具，但不能生成大模型总结。")
+
+        left, center, right = st.columns([1, 2.25, 1])
+        with center:
+            for row_start in range(0, len(EXAMPLE_CARDS), 2):
+                cols = st.columns(2)
+                for card_index, (col, card) in enumerate(
+                    zip(cols, EXAMPLE_CARDS[row_start : row_start + 2]),
+                    start=row_start,
+                ):
+                    label = f"{card['title']}\n{card['description']}"
+                    if col.button(label, width="stretch", key=f"example_card_{card_index}"):
+                        selected_prompt = card["prompt"]
     return selected_prompt
 
 
@@ -3013,9 +3026,6 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-
-
 
 
 
