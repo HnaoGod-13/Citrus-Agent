@@ -64,26 +64,26 @@ EXAMPLE_PROMPTS = [
 EXAMPLE_CARDS = [
     {
         "eyebrow": "01 · 路线选择",
-        "title": "加工方向选择",
-        "description": "整果、果汁与果皮",
+        "title": "评估最佳加工方向",
+        "description": "比较整果、果汁与果皮路线",
         "prompt": EXAMPLE_PROMPTS[0],
     },
     {
         "eyebrow": "02 · 果汁生产",
-        "title": "脐橙果汁生产",
-        "description": "加工与质控流程",
+        "title": "规划脐橙果汁生产",
+        "description": "梳理加工与质控流程",
         "prompt": EXAMPLE_PROMPTS[1],
     },
     {
         "eyebrow": "03 · 果皮增值",
-        "title": "果皮高值利用",
-        "description": "陈皮、精油与果胶",
+        "title": "提升果皮利用价值",
+        "description": "比较陈皮、精油与果胶路线",
         "prompt": EXAMPLE_PROMPTS[2],
     },
     {
         "eyebrow": "04 · 风险复核",
-        "title": "生产风险复核",
-        "description": "补检与人工放行",
+        "title": "复核批次生产风险",
+        "description": "明确补检与人工放行条件",
         "prompt": EXAMPLE_PROMPTS[3],
     },
 ]
@@ -1046,15 +1046,37 @@ def inject_style() -> None:
         }
         .prompt-grid-label {
             max-width: 760px;
-            margin: 2rem auto 0.75rem;
-            color: var(--agent-faint);
+            margin: 0 auto 0.15rem;
+            color: var(--agent-text-soft);
             font-family: var(--agent-font-family) !important;
-            font-size: 0.78rem;
-            letter-spacing: 0.04em;
+            font-size: 0.92rem;
+            line-height: 1.34;
+            letter-spacing: 0;
+            text-align: center;
+        }
+        section[data-testid="stAppScrollToBottomContainer"]:has([class*="st-key-empty_state_shell"]) {
+            align-items: flex-start !important;
+        }
+        .block-container:has([class*="st-key-empty_state_shell"]) {
+            box-sizing: border-box;
+            height: calc(100vh - 8.4rem);
+            height: calc(100dvh - 8.4rem);
+            min-height: calc(100vh - 8.4rem);
+            min-height: calc(100dvh - 8.4rem);
+            padding-block: 2.9rem;
+        }
+        .block-container:has([class*="st-key-empty_state_shell"]) > div[data-testid="stVerticalBlock"] {
+            height: 100%;
+        }
+        [data-testid="stLayoutWrapper"]:has(> [class*="st-key-empty_state_shell"]) {
+            flex: 1 1 auto;
+            min-height: 0;
         }
         [class*="st-key-empty_state_shell"] {
             display: flex;
-            min-height: calc(100vh - 11rem);
+            flex: 1 1 auto;
+            height: 100%;
+            min-height: 0;
             align-items: center;
             justify-content: center;
         }
@@ -1468,8 +1490,12 @@ def inject_style() -> None:
                 padding: 1.2rem 0 0.8rem;
             }
             [class*="st-key-empty_state_shell"] {
-                min-height: auto;
-                padding: 0 0 2.5rem;
+                box-sizing: border-box;
+                min-height: 0;
+                padding: 1rem 0 0;
+            }
+            .block-container:has([class*="st-key-empty_state_shell"]) {
+                padding-block: 1.45rem;
             }
             .message-row.assistant {
                 grid-template-columns: 1fr;
@@ -2238,6 +2264,7 @@ def render_empty_state(api_key: str) -> str | None:
 
         left, center, right = st.columns([1, 2.25, 1])
         with center:
+            st.markdown('<div class="prompt-grid-label">请选择本次需要开展的工作</div>', unsafe_allow_html=True)
             for row_start in range(0, len(EXAMPLE_CARDS), 2):
                 cols = st.columns(2)
                 for card_index, (col, card) in enumerate(
@@ -3026,10 +3053,6 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-
-
-
 
 
 
