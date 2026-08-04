@@ -2,32 +2,32 @@
     color-scheme: dark;
 
     /* Color system */
-    --ui-bg: #151515;
-    --ui-sidebar: #1d1d1f;
-    --ui-panel: #202022;
-    --ui-panel-raised: #29292c;
-    --ui-panel-soft: #252527;
-    --ui-border: #343438;
-    --ui-border-strong: #49494e;
-    --ui-text: #f2f2f2;
-    --ui-text-secondary: #b6b6ba;
-    --ui-text-muted: #7d7d83;
-    --ui-hover: #29292c;
-    --ui-active: #323236;
-    --ui-accent: #f1f1f1;
-    --ui-accent-foreground: #171717;
-    --ui-accent-hover: #ffffff;
-    --ui-header: rgba(21, 21, 21, 0.94);
-    --ui-focus: #626268;
-    --ui-success: #8db79a;
-    --ui-warning: #d2b27c;
-    --ui-error: #d98c8c;
-    --ui-error-border: rgba(217, 140, 140, 0.5);
+    --ui-bg: #0f151d;
+    --ui-sidebar: #131c27;
+    --ui-panel: #182330;
+    --ui-panel-raised: #213043;
+    --ui-panel-soft: #1b2837;
+    --ui-border: #2b3d52;
+    --ui-border-strong: #405a74;
+    --ui-text: #f7f8fa;
+    --ui-text-secondary: #c6ced8;
+    --ui-text-muted: #8795a8;
+    --ui-hover: #203044;
+    --ui-active: #293e54;
+    --ui-accent: #f6a348;
+    --ui-accent-foreground: #211307;
+    --ui-accent-hover: #ffb765;
+    --ui-header: rgba(15, 21, 29, 0.94);
+    --ui-focus: #f6a348;
+    --ui-success: #48c7a0;
+    --ui-warning: #f1c75b;
+    --ui-error: #ef8585;
+    --ui-error-border: rgba(239, 133, 133, 0.5);
 
     /* Type system */
-    --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "PingFang SC", "Hiragino Sans GB", "Heiti SC", sans-serif;
-    --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", "PingFang SC", "Hiragino Sans GB", "Heiti SC", sans-serif;
-    --font-mono: "SFMono-Regular", "SF Mono", Menlo, Monaco, monospace;
+    --font-ui: "Times New Roman", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", serif;
+    --font-display: "Times New Roman", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", serif;
+    --font-mono: "Times New Roman", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", serif;
 
     /* Layout and motion */
     --space-1: 4px;
@@ -240,16 +240,6 @@ header[data-testid="stHeader"] button svg {
     line-height: 1.4;
     text-overflow: ellipsis;
     white-space: nowrap;
-}
-
-.sidebar-note {
-    padding: 12px;
-    color: var(--ui-text-muted);
-    background: var(--ui-panel);
-    border: 1px solid var(--ui-border);
-    border-radius: var(--radius-md);
-    font-size: 12px;
-    line-height: 1.6;
 }
 
 [data-testid="stSidebar"] hr {

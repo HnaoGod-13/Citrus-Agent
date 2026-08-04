@@ -469,12 +469,6 @@ def render_sidebar() -> tuple[str, bool, bytes | None, str]:
             unsafe_allow_html=True,
         )
 
-        st.divider()
-        st.markdown(
-            '<div class="sidebar-note">检测、放行、标签和报价仍需人工复核；Demo 输出仅作为加工决策草稿。</div>',
-            unsafe_allow_html=True,
-        )
-
     image_bytes = prepared_image.data if prepared_image else None
     image_mime_type = prepared_image.mime_type if prepared_image else "image/jpeg"
     return manual_observation, prepared_image is not None, image_bytes, image_mime_type
