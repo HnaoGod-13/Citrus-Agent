@@ -120,6 +120,7 @@ def inject_style() -> None:
     st.markdown(
         """
         <style>
+        @import url("https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@300&family=Inter:wght@400&display=swap");
         :root {
             color-scheme: dark;
             --agent-bg: #111111;
@@ -1652,6 +1653,558 @@ def inject_style() -> None:
                 margin-left: 0;
             }
         }
+
+        /* Editorial light theme derived from Design.md. */
+        :root {
+            color-scheme: light;
+            --agent-bg: #f2f1ed;
+            --agent-bg-elevated: #ffffff;
+            --agent-bg-soft: #ffffff;
+            --agent-bg-softer: #e9e7e1;
+            --agent-line: #dbd7cd;
+            --agent-line-strong: #b8b3a8;
+            --agent-text: #000000;
+            --agent-text-soft: #000000;
+            --agent-muted: #737373;
+            --agent-faint: #999999;
+            --agent-accent: #000000;
+            --agent-accent-soft: #e9e7e1;
+            --agent-shadow: none;
+            --agent-font-family: "Inter", "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
+            --agent-mono-font-family: "Inter", "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
+            --agent-chinese-font-family: "Inter", "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
+            --agent-display-font-family: "Cormorant Garamond", "Iowan Old Style", Baskerville, "Noto Serif SC", "Songti SC", SimSun, Georgia, serif;
+        }
+        html,
+        body,
+        .stApp {
+            background: #f2f1ed !important;
+            color: #000000 !important;
+        }
+        .stApp {
+            background-image: none !important;
+        }
+        body,
+        .stMarkdown,
+        [data-testid="stMarkdownContainer"],
+        [data-testid="stCaptionContainer"],
+        .stCaption,
+        button,
+        input,
+        textarea,
+        select,
+        label,
+        p,
+        li,
+        td,
+        th {
+            font-family: var(--agent-font-family) !important;
+            font-weight: 400 !important;
+            letter-spacing: -0.011em;
+        }
+        h1,
+        h2,
+        h3,
+        h4,
+        h5,
+        h6,
+        .brand-title,
+        .hero h1,
+        .metric-value,
+        .processing-plan-title {
+            font-family: var(--agent-display-font-family) !important;
+            font-weight: 300 !important;
+            letter-spacing: -0.03em !important;
+        }
+        [data-testid="stMarkdownContainer"] strong,
+        strong,
+        b {
+            color: #000000 !important;
+            font-weight: 400 !important;
+        }
+        header[data-testid="stHeader"] {
+            background: rgba(242, 241, 237, 0.92) !important;
+            color: #000000 !important;
+            box-shadow: none !important;
+        }
+        header[data-testid="stHeader"] button {
+            background: transparent !important;
+            border: 1px solid #dbd7cd !important;
+            color: #000000 !important;
+            border-radius: 9999px !important;
+            box-shadow: none !important;
+        }
+        header[data-testid="stHeader"] button svg {
+            fill: #000000 !important;
+            color: #000000 !important;
+        }
+        .block-container {
+            max-width: 1200px;
+            padding: 4.5rem 3rem 9rem;
+        }
+        [data-testid="stSidebar"] {
+            background: #f2f1ed !important;
+            border-right: 1px solid #dbd7cd !important;
+            box-shadow: none !important;
+        }
+        [data-testid="stSidebar"] > div {
+            padding: 2.4rem 1.35rem 1.4rem;
+        }
+        [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p,
+        [data-testid="stSidebar"] label,
+        [data-testid="stSidebar"] .stCaption,
+        [data-testid="stSidebar"] small {
+            color: #737373 !important;
+            font-family: var(--agent-font-family) !important;
+            font-weight: 400 !important;
+        }
+        .sidebar-brand {
+            display: block;
+            padding: 0 0 1.6rem;
+        }
+        .sidebar-brand::before,
+        .sidebar-section-title::before,
+        .hero-kicker::before {
+            display: none !important;
+        }
+        .brand-title {
+            color: #000000;
+            font-size: 1.9rem;
+            line-height: 1;
+            margin-top: 0.55rem;
+        }
+        .brand-subtitle,
+        .sidebar-section-title,
+        .hero-kicker,
+        .prompt-grid-label,
+        .metric-label,
+        .processing-plan-kicker {
+            color: #737373 !important;
+            font-family: var(--agent-font-family) !important;
+            font-weight: 400 !important;
+            letter-spacing: 0.04em !important;
+            text-transform: uppercase;
+        }
+        .sidebar-section-title {
+            font-size: 0.74rem;
+            margin: 1.7rem 0 0.75rem;
+        }
+        .status-list,
+        .sidebar-note {
+            background: #ffffff !important;
+            border: 0 !important;
+            border-radius: 24px !important;
+            box-shadow: none !important;
+        }
+        .status-list {
+            padding: 0.45rem 0.85rem;
+        }
+        .status-row {
+            color: #000000;
+            border-bottom: 1px solid #dbd7cd;
+            padding: 0.75rem 0;
+        }
+        .status-row::before {
+            display: none;
+        }
+        .status-pill {
+            color: #737373;
+            background: transparent;
+            font-size: 0.72rem;
+        }
+        .sidebar-note {
+            color: #737373;
+            line-height: 1.65;
+            padding: 1.15rem 1.2rem;
+        }
+        [data-testid="stSidebar"] hr {
+            border-color: #dbd7cd !important;
+        }
+        div[data-testid="stButton"] > button,
+        .stDownloadButton button,
+        [data-testid="stFileUploader"] button {
+            background: #ffffff !important;
+            border: 1px solid #dbd7cd !important;
+            border-radius: 9999px !important;
+            color: #000000 !important;
+            font-family: var(--agent-font-family) !important;
+            font-weight: 400 !important;
+            box-shadow: none !important;
+            transform: none !important;
+        }
+        div[data-testid="stButton"] > button:hover,
+        .stDownloadButton button:hover,
+        [data-testid="stFileUploader"] button:hover {
+            background: #e9e7e1 !important;
+            border-color: #b8b3a8 !important;
+            color: #000000 !important;
+            transform: none !important;
+        }
+        [class*="st-key-new_conversation"] div[data-testid="stButton"] > button,
+        .stDownloadButton button {
+            background: #000000 !important;
+            border-color: #000000 !important;
+            color: #ffffff !important;
+        }
+        [class*="st-key-new_conversation"] div[data-testid="stButton"] > button p,
+        [class*="st-key-new_conversation"] div[data-testid="stButton"] > button span,
+        .stDownloadButton button p,
+        .stDownloadButton button span {
+            color: #ffffff !important;
+        }
+        div[data-testid="stButton"] > button:focus-visible,
+        .stDownloadButton button:focus-visible,
+        input:focus-visible,
+        textarea:focus-visible {
+            outline: 2px solid #000000 !important;
+            outline-offset: 2px !important;
+            box-shadow: none !important;
+        }
+        [data-testid="stFileUploader"] section {
+            min-height: 5.2rem;
+            padding: 1rem;
+            background: #ffffff !important;
+            border: 1px solid #dbd7cd !important;
+            border-radius: 24px !important;
+            box-shadow: none !important;
+        }
+        [data-testid="stTextArea"] div[data-baseweb="textarea"],
+        [data-testid="stTextArea"] div[data-baseweb="base-input"],
+        [data-testid="stTextAreaRootElement"],
+        textarea,
+        input {
+            background: #ffffff !important;
+            border-color: #dbd7cd !important;
+            border-radius: 8px !important;
+            color: #000000 !important;
+            box-shadow: none !important;
+        }
+        textarea::placeholder,
+        input::placeholder {
+            color: #999999 !important;
+        }
+        .hero {
+            max-width: 880px;
+            margin: 0 auto;
+            padding: 6.2rem 0 2.25rem;
+            text-align: center;
+        }
+        .hero-kicker {
+            display: block;
+            width: auto;
+            margin: 0 0 1.5rem;
+            padding: 0;
+            background: transparent !important;
+            border: 0 !important;
+            font-size: 0.72rem;
+        }
+        .hero h1 {
+            color: #000000;
+            font-size: clamp(3.7rem, 7.4vw, 6.2rem);
+            line-height: 0.98;
+            margin: 0 auto 1.55rem;
+        }
+        .hero p {
+            max-width: 680px;
+            margin: 0 auto;
+            color: #000000;
+            font-family: var(--agent-font-family) !important;
+            font-size: 1rem;
+            line-height: 1.5;
+            letter-spacing: -0.009em;
+            text-align: center;
+        }
+        .prompt-grid-label {
+            max-width: 880px;
+            margin: 2.5rem auto 1rem;
+            font-size: 0.74rem;
+            text-align: center;
+        }
+        [class*="st-key-example_card_"] div[data-testid="stButton"] > button {
+            min-height: 10.5rem;
+            padding: 1.75rem 1.9rem !important;
+            background: #ffffff !important;
+            border: 0 !important;
+            border-radius: 28px !important;
+            align-items: flex-start !important;
+            text-align: left !important;
+        }
+        [class*="st-key-example_card_"] div[data-testid="stButton"] > button:hover {
+            background: #e9e7e1 !important;
+        }
+        [class*="st-key-example_card_"] div[data-testid="stButton"] > button p,
+        [class*="st-key-example_card_"] div[data-testid="stButton"] > button span {
+            color: #000000 !important;
+            font-family: var(--agent-font-family) !important;
+            font-weight: 400 !important;
+            line-height: 1.5 !important;
+            letter-spacing: -0.011em !important;
+        }
+        .metric-card,
+        .recommendation-card {
+            background: #ffffff !important;
+            border: 0 !important;
+            border-radius: 28px !important;
+            box-shadow: none !important;
+        }
+        .metric-value {
+            color: #000000;
+            font-size: clamp(1.9rem, 3vw, 2.8rem);
+            line-height: 1;
+        }
+        .processing-plan {
+            background: #ffffff !important;
+            border: 0 !important;
+            border-radius: 32px !important;
+            box-shadow: none !important;
+            padding: 2rem !important;
+        }
+        .processing-plan-title {
+            color: #000000;
+            font-size: clamp(1.8rem, 3vw, 2.65rem);
+            line-height: 1;
+        }
+        .processing-plan-status {
+            color: #ffffff;
+            background: #000000;
+            border: 0;
+            border-radius: 9999px;
+            padding: 0.55rem 0.85rem;
+        }
+        .processing-flow-step {
+            color: #000000;
+            background: #f2f1ed;
+            border: 0;
+            border-radius: 9999px;
+            padding: 0.48rem 0.72rem;
+        }
+        .processing-flow-arrow {
+            color: #737373;
+        }
+        .processing-stage {
+            background: #f2f1ed;
+            border: 0;
+            border-radius: 24px;
+            padding: 1.25rem 1.3rem;
+        }
+        .processing-stage h4 {
+            color: #000000;
+            font-family: var(--agent-display-font-family) !important;
+            font-size: 1.35rem;
+            font-weight: 300 !important;
+            letter-spacing: -0.03em;
+        }
+        .processing-stage p,
+        .processing-plan-note {
+            color: #737373;
+        }
+        .processing-plan-note {
+            background: transparent;
+            border-left: 1px solid #dbd7cd;
+            padding: 0.7rem 0.9rem;
+        }
+        .chat-transcript-start {
+            height: 1rem;
+        }
+        .message-row.user .message-bubble,
+        .user-attachment {
+            background: #ffffff !important;
+            border: 0 !important;
+            border-radius: 24px !important;
+            color: #000000 !important;
+            box-shadow: none !important;
+        }
+        .message-row.assistant .message-avatar {
+            color: #737373;
+            border-right: 1px solid #dbd7cd;
+            font-family: var(--agent-display-font-family) !important;
+            font-size: 1rem;
+            font-style: normal;
+            font-weight: 300 !important;
+            letter-spacing: -0.03em;
+        }
+        .message-row.assistant .message-bubble {
+            color: #000000;
+            font-family: var(--agent-font-family) !important;
+            font-size: 1rem;
+            line-height: 1.7;
+        }
+        code,
+        pre,
+        kbd,
+        samp,
+        [data-testid="stMarkdownContainer"] code {
+            color: #000000 !important;
+            background: #e9e7e1 !important;
+            border: 0 !important;
+            font-family: var(--agent-mono-font-family) !important;
+        }
+        div[data-testid="stAlert"] {
+            background: #ffffff !important;
+            border: 1px solid #dbd7cd !important;
+            border-radius: 24px !important;
+            color: #000000 !important;
+            box-shadow: none !important;
+        }
+        div[data-testid="stAlert"] svg,
+        div[data-testid="stAlert"] * {
+            color: #000000 !important;
+            fill: #000000 !important;
+        }
+        div[data-testid="stExpander"],
+        div[data-testid="stExpander"]:has(.score-bars),
+        div[data-testid="stExpander"]:has(.tool-steps),
+        div[data-testid="stExpander"]:has(.report-anchor) {
+            background: #ffffff !important;
+            border: 0 !important;
+            border-radius: 24px !important;
+            box-shadow: none !important;
+        }
+        div[data-testid="stExpander"] summary,
+        div[data-testid="stExpander"] details,
+        div[data-testid="stExpander"] div[role="region"],
+        div[data-testid="stExpander"] summary:hover,
+        div[data-testid="stExpander"] details[open] > summary,
+        div[data-testid="stExpander"]:has(.score-bars) summary {
+            background: #ffffff !important;
+            color: #000000 !important;
+            border-bottom-color: #dbd7cd !important;
+        }
+        div[data-testid="stExpander"] summary * {
+            color: #000000 !important;
+        }
+        div[data-testid="stExpander"]:has(.report-anchor) [data-testid="stMarkdownContainer"] h1,
+        div[data-testid="stExpander"]:has(.report-anchor) [data-testid="stMarkdownContainer"] h2,
+        div[data-testid="stExpander"]:has(.report-anchor) [data-testid="stMarkdownContainer"] h3 {
+            color: #000000 !important;
+            font-family: var(--agent-display-font-family) !important;
+            font-weight: 300 !important;
+            letter-spacing: -0.03em !important;
+        }
+        div[data-testid="stExpander"]:has(.report-anchor) [data-testid="stMarkdownContainer"] h2 {
+            border-top-color: #dbd7cd;
+        }
+        .score-row,
+        .tool-step,
+        .risk-item,
+        .risk-empty {
+            background: #f2f1ed !important;
+            border: 0 !important;
+            border-radius: 24px !important;
+            color: #000000 !important;
+        }
+        .score-name,
+        .score-value,
+        .score-detail,
+        .score-detail strong,
+        .tool-step-title,
+        .tool-step-note,
+        .risk-level {
+            color: #000000 !important;
+        }
+        .score-track {
+            background: #dbd7cd;
+        }
+        .score-fill {
+            background: #000000;
+        }
+        .tool-step-index {
+            color: #ffffff !important;
+            background: #000000;
+            border: 0;
+        }
+        .tool-chip {
+            color: #737373;
+            background: #ffffff;
+            border: 1px solid #dbd7cd;
+        }
+        .risk-item.high {
+            color: #ffffff !important;
+            background: #000000 !important;
+            border: 0 !important;
+        }
+        .risk-item.high .risk-level {
+            color: #ffffff !important;
+        }
+        div[data-testid="stDataFrame"] {
+            background: #ffffff;
+            border: 0;
+            border-radius: 24px;
+            box-shadow: none !important;
+        }
+        [data-testid="stBottom"],
+        [data-testid="stBottomBlockContainer"] {
+            background: rgba(242, 241, 237, 0.96) !important;
+            border-top: 1px solid #dbd7cd !important;
+            box-shadow: none !important;
+        }
+        [data-testid="stChatInput"] textarea,
+        [data-testid="stChatInput"] input {
+            min-height: 3.7rem !important;
+            background: #ffffff !important;
+            border: 1px solid #dbd7cd !important;
+            border-radius: 24px !important;
+            color: #000000 !important;
+            box-shadow: none !important;
+        }
+        [data-testid="stChatInput"] textarea::placeholder,
+        [data-testid="stChatInput"] input::placeholder {
+            color: #999999 !important;
+        }
+        [data-testid="stChatInput"] textarea:focus,
+        [data-testid="stChatInput"] input:focus {
+            border-color: #000000 !important;
+            box-shadow: none !important;
+        }
+        [data-testid="stChatInput"] button {
+            background: #000000 !important;
+            color: #ffffff !important;
+            border-radius: 9999px !important;
+            box-shadow: none !important;
+        }
+        [data-testid="stChatInput"] button svg {
+            fill: #ffffff !important;
+            color: #ffffff !important;
+        }
+        .agent-live-progress {
+            background: #ffffff;
+            border: 0;
+            border-radius: 24px;
+            color: #000000;
+            box-shadow: none;
+        }
+        .agent-live-spinner {
+            border-color: #dbd7cd;
+            border-top-color: #000000;
+            border-right-color: #737373;
+        }
+        .agent-live-dot {
+            background: #000000;
+        }
+        .agent-live-title {
+            color: #000000;
+        }
+        .agent-live-subtitle {
+            color: #737373;
+        }
+        @media (max-width: 860px) {
+            .block-container {
+                padding: 2.6rem 1rem 8.5rem;
+            }
+            .hero {
+                padding-top: 3.8rem;
+            }
+            .hero h1 {
+                font-size: clamp(3.1rem, 15vw, 4.8rem);
+            }
+            .message-row.assistant .message-avatar {
+                border-right: 0;
+                border-bottom: 1px solid #dbd7cd;
+            }
+            .processing-plan {
+                padding: 1.35rem !important;
+            }
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -1939,8 +2492,8 @@ def render_sidebar() -> tuple[str, bool, bytes | None, str]:
             f"""
             <div class="sidebar-brand">
                 <div>
-                    <div class="brand-subtitle">CITRUS AI · DECISION LAB</div>
-                    <div class="brand-title">Citrus Assistant</div>
+                    <div class="brand-subtitle">CITRUS · DECISION WORKSPACE</div>
+                    <div class="brand-title">Citrus Workroom</div>
                 </div>
             </div>
             """,
@@ -1950,10 +2503,11 @@ def render_sidebar() -> tuple[str, bool, bytes | None, str]:
         st.button(
             "＋ 新建对话",
             width="stretch",
+            key="new_conversation",
             on_click=start_new_conversation,
         )
 
-        st.markdown('<div class="sidebar-section-title">视觉输入</div>', unsafe_allow_html=True)
+        st.markdown('<div class="sidebar-section-title">批次图片</div>', unsafe_allow_html=True)
         uploader_version = int(st.session_state.image_uploader_version)
         uploaded_image = st.file_uploader(
             "上传柑橘图片",
@@ -1991,7 +2545,7 @@ def render_sidebar() -> tuple[str, bool, bytes | None, str]:
 
         st.markdown(
             f"""
-            <div class="sidebar-section-title">语言模型</div>
+            <div class="sidebar-section-title">服务状态</div>
             <div class="status-list">
                 <div class="status-row"><span>DeepSeek</span><span class="status-pill">{DEEPSEEK_MODEL}</span></div>
                 <div class="status-row"><span>Qwen Vision</span><span class="status-pill">{get_vision_model()}</span></div>
@@ -2372,7 +2926,7 @@ def render_message(message: dict[str, Any]) -> None:
     content_text = str(message.get("content", ""))
     if message.get("kind") == "analysis":
         st.markdown(
-            '<div class="message-row assistant"><div class="message-avatar assistant">Citrus AI</div><div class="message-bubble">已完成批次分析，工具调用结果如下。</div></div>',
+            '<div class="message-row assistant"><div class="message-avatar assistant">Citrus</div><div class="message-bubble">批次分析已经完成，下面是依据与建议。</div></div>',
             unsafe_allow_html=True,
         )
         st.markdown('<div class="analysis-shell">', unsafe_allow_html=True)
@@ -2398,7 +2952,7 @@ def render_message(message: dict[str, Any]) -> None:
 
     content = html.escape(clean_assistant_text(content_text)).replace("\n", "<br>")
     st.markdown(
-        f'<div class="message-row assistant"><div class="message-avatar assistant">Citrus AI</div><div class="message-bubble">{content}</div></div>',
+        f'<div class="message-row assistant"><div class="message-avatar assistant">Citrus</div><div class="message-bubble">{content}</div></div>',
         unsafe_allow_html=True,
     )
 
@@ -2407,11 +2961,11 @@ def render_empty_state(api_key: str) -> str | None:
     st.markdown(
         """
         <div class="hero">
-            <div class="hero-kicker">CITRUS PROCESSING · RAG · QC REVIEW</div>
-            <h1>与柑橘产业链对话</h1>
-            <p>基于本地文献库、加工路线分级和质控边界，生成可追溯、可复核的批次决策草稿。</p>
+            <div class="hero-kicker">CITRUS PROCESSING · LITERATURE · QUALITY</div>
+            <h1>柑橘加工，始于证据</h1>
+            <p>以文献、工艺与质量边界，梳理每一批原料的可行方向。</p>
         </div>
-        <div class="prompt-grid-label">一键体验完整 Agent 工作流 · 点击任一场景，将自动完成批次抽取、文献检索、路线评分、质控复核与报告生成</div>
+        <div class="prompt-grid-label">从一个实际场景开始</div>
         """,
         unsafe_allow_html=True,
     )
@@ -2427,7 +2981,7 @@ def render_empty_state(api_key: str) -> str | None:
                 zip(cols, EXAMPLE_CARDS[row_start : row_start + 2]),
                 start=row_start,
             ):
-                label = f"{card['eyebrow']}\n{card['title']}\n{card['description']}\n→ 进入完整流程"
+                label = f"{card['eyebrow']}\n{card['title']}\n{card['description']}\n→ 查看处理建议"
                 if col.button(label, width="stretch", key=f"example_card_{card_index}"):
                     selected_prompt = card["prompt"]
     return selected_prompt
@@ -2442,7 +2996,7 @@ def render_agent_progress(slot: Any, message: str) -> None:
             <div class="agent-live-copy">
                 <div class="agent-live-title">{safe_message}</div>
                 <div class="agent-live-subtitle">
-                    <span>Agent 正在运行</span>
+                    <span>正在整理证据与方案</span>
                     <span class="agent-live-dot"></span>
                     <span class="agent-live-dot"></span>
                     <span class="agent-live-dot"></span>
@@ -3184,7 +3738,7 @@ def handle_prompt(
 
 
 def main() -> None:
-    st.set_page_config(page_title="柑橘产业链 Agent", layout="wide")
+    st.set_page_config(page_title="柑橘加工决策室", layout="wide")
     inject_style()
     init_state()
     restore_scroll_position = bool(st.session_state.pop("restore_main_scroll_position", False))
@@ -3200,7 +3754,7 @@ def main() -> None:
         for message in st.session_state.agent_messages:
             render_message(message)
 
-    typed_prompt = st.chat_input("输入问题，或粘贴批次信息开始分析...")
+    typed_prompt = st.chat_input("描述这批原料，或提出一个加工问题...")
     render_scroll_position_manager(restore=restore_scroll_position)
     prompt = typed_prompt or selected_prompt
     if prompt:
