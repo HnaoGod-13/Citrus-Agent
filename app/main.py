@@ -64,25 +64,25 @@ EXAMPLE_PROMPTS = [
 EXAMPLE_CARDS = [
     {
         "eyebrow": "01 · 路线选择",
-        "title": "这批柑橘最适合做什么？",
-        "description": "比较五类加工方向，生成完整决策报告",
+        "title": "这批柑橘适合做什么？",
+        "description": "比较整果、果汁、果皮与副产物",
         "prompt": EXAMPLE_PROMPTS[0],
     },
     {
         "eyebrow": "02 · 果汁生产",
-        "title": "这批脐橙怎样加工成果汁？",
-        "description": "检索工艺参数，输出生产与质控流程",
+        "title": "脐橙怎样加工成果汁？",
+        "description": "检索参数，生成生产与质控流程",
         "prompt": EXAMPLE_PROMPTS[1],
     },
     {
         "eyebrow": "03 · 果皮增值",
-        "title": "这批果皮还能怎么高值利用？",
-        "description": "比较陈皮、精油、果胶与黄酮路线",
+        "title": "果皮如何实现高值利用？",
+        "description": "比较陈皮、精油、果胶与黄酮",
         "prompt": EXAMPLE_PROMPTS[2],
     },
     {
         "eyebrow": "04 · 风险复核",
-        "title": "检测没做齐，能不能安排生产？",
+        "title": "检测未齐，能否安排生产？",
         "description": "识别风险、补检项目与人工放行节点",
         "prompt": EXAMPLE_PROMPTS[3],
     },
@@ -976,6 +976,11 @@ def inject_style() -> None:
             white-space: pre-wrap;
             box-shadow: none;
         }
+        [class*="st-key-example_card_"] div[data-testid="stButton"] > button {
+            justify-content: flex-start !important;
+            align-items: flex-start !important;
+            text-align: left !important;
+        }
         div[data-testid="stButton"] > button:hover {
             background: rgba(217, 189, 130, 0.085);
             border-color: rgba(217, 189, 130, 0.42);
@@ -990,6 +995,10 @@ def inject_style() -> None:
             line-height: 1.45 !important;
             margin: 0 !important;
             text-align: left !important;
+        }
+        [class*="st-key-example_card_"] div[data-testid="stButton"] > button p,
+        [class*="st-key-example_card_"] div[data-testid="stButton"] > button span {
+            width: 100% !important;
         }
         div[data-testid="stButton"] > button:hover p,
         div[data-testid="stButton"] > button:hover span {
@@ -1036,7 +1045,7 @@ def inject_style() -> None:
             max-width: 760px;
             margin: 2rem auto 0.75rem;
             color: var(--agent-faint);
-            font-family: var(--agent-chinese-font-family) !important;
+            font-family: var(--agent-font-family) !important;
             font-size: 0.78rem;
             letter-spacing: 0.04em;
         }
@@ -2224,9 +2233,12 @@ def render_empty_state(api_key: str) -> str | None:
     with center:
         for row_start in range(0, len(EXAMPLE_CARDS), 2):
             cols = st.columns(2)
-            for col, card in zip(cols, EXAMPLE_CARDS[row_start : row_start + 2]):
-                label = f"{card['eyebrow']}\n{card['title']}\n{card['description']}\n→ 一键运行完整流程"
-                if col.button(label, width="stretch"):
+            for card_index, (col, card) in enumerate(
+                zip(cols, EXAMPLE_CARDS[row_start : row_start + 2]),
+                start=row_start,
+            ):
+                label = f"{card['eyebrow']}\n{card['title']}\n{card['description']}\n→ 进入完整流程"
+                if col.button(label, width="stretch", key=f"example_card_{card_index}"):
                     selected_prompt = card["prompt"]
     return selected_prompt
 
