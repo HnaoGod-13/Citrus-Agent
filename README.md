@@ -46,7 +46,7 @@ http://localhost:8501
 也可以在已安装依赖的环境中手动启动：
 
 ```powershell
-.\.venv\Scripts\python.exe -m streamlit run app\main.py
+.\.venv\Scripts\streamlit.exe run app\main.py
 ```
 
 ## 模型配置
@@ -96,7 +96,6 @@ deepseek-v4-pro
 柑橘Agent/
   app/
     main.py                         # Streamlit 统一 Agent 工作台入口
-    theme.css                       # 深色设计令牌、组件样式与响应式规则
 
   agent/
     orchestrator.py                 # 对话入口与工具调用编排
@@ -324,7 +323,6 @@ deepseek-v4-pro
 ## 主要开发入口
 
 - `app/main.py`：调整统一对话式工作台、消息展示、图片上传和结果展开区。
-- `app/theme.css`：维护页面配色、字体、间距、圆角、组件状态和响应式布局。
 - `agent/orchestrator.py`：调整用户意图判断、批次字段抽取、工具调用顺序和同一轮对话输出。
 - `agent/workflow.py`：调整受控 Agent 主流程、工具轨迹和下一步动作。
 - `agent/planner.py`：调整 Planning 步骤、必需工具顺序和任务拆解。
