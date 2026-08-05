@@ -4,7 +4,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 from app import main as app_main
 from agent.memory import MemoryManager, MemoryValidationError, _normalize_message_content
@@ -142,6 +142,35 @@ class MessagePersistenceFormattingTests(unittest.TestCase):
                     "  \t\n\r\n    ",
                     message_id="assistant-whitespace",
                 )
+
+
+class MemoryManagerCacheVersionTests(unittest.TestCase):
+    def test_get_memory_manager_passes_message_storage_version_to_cache_factory(self) -> None:
+        manager = object()
+        with patch.object(app_main, "_get_memory_manager", return_value=manager) as factory:
+            restored = app_main.get_memory_manager()
+
+        self.assertIs(restored, manager)
+        factory.assert_called_once_with(app_main.agent_memory.MESSAGE_STORAGE_VERSION)
+
+    def test_message_storage_version_change_creates_a_different_cache_key(self) -> None:
+        current_version = app_main.agent_memory.MESSAGE_STORAGE_VERSION
+        next_version = current_version + 1
+        with patch.object(app_main, "_get_memory_manager") as factory:
+            with patch.object(
+                app_main.agent_memory,
+                "MESSAGE_STORAGE_VERSION",
+                current_version,
+            ):
+                app_main.get_memory_manager()
+            with patch.object(
+                app_main.agent_memory,
+                "MESSAGE_STORAGE_VERSION",
+                next_version,
+            ):
+                app_main.get_memory_manager()
+
+        self.assertEqual(factory.call_args_list, [call(current_version), call(next_version)])
 
 
 class AssistantMarkdownRenderingTests(unittest.TestCase):

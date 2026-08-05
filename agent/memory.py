@@ -30,6 +30,7 @@ from .rag import LITERATURE_DB_PATH, database_stats
 
 ROOT = Path(__file__).resolve().parents[1]
 LITERATURE_PATH = ROOT / "data" / "literature" / "chunks.jsonl"
+MESSAGE_STORAGE_VERSION = 2
 WORKING_MEMORY_FIELDS = {
     "current_goal",
     "current_stage",

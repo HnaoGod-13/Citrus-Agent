@@ -51,8 +51,13 @@ SUPPORTED_UPLOAD_EXTENSIONS = vision_client.SUPPORTED_UPLOAD_EXTENSIONS
 
 
 @st.cache_resource(show_spinner=False)
-def get_memory_manager() -> agent_memory.MemoryManager:
+def _get_memory_manager(storage_version: int) -> agent_memory.MemoryManager:
+    del storage_version
     return agent_memory.MemoryManager()
+
+
+def get_memory_manager() -> agent_memory.MemoryManager:
+    return _get_memory_manager(agent_memory.MESSAGE_STORAGE_VERSION)
 
 
 EXAMPLE_PROMPTS = [
