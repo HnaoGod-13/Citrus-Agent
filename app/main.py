@@ -1046,7 +1046,7 @@ def inject_style() -> None:
         }
         .prompt-grid-label {
             max-width: 760px;
-            margin: 0 auto 0.15rem;
+            margin: 0 auto 0.75rem;
             color: var(--agent-text-soft);
             font-family: var(--agent-font-family) !important;
             font-size: 0.92rem;
@@ -1460,6 +1460,7 @@ def inject_style() -> None:
         }
         [data-testid="stChatInput"] textarea,
         [data-testid="stChatInput"] input {
+            box-sizing: border-box !important;
             min-height: 3.85rem !important;
             background: rgba(17, 21, 29, 0.98) !important;
             border: 1px solid rgba(217, 189, 130, 0.2) !important;
@@ -1467,6 +1468,8 @@ def inject_style() -> None:
             color: var(--agent-text) !important;
             box-shadow: 0 24px 76px rgba(0, 0, 0, 0.46);
             font-size: 1rem !important;
+            line-height: 1.5rem !important;
+            padding: 1.1rem 4.1rem 1.1rem 1rem !important;
         }
         [data-testid="stChatInput"] textarea::placeholder,
         [data-testid="stChatInput"] input::placeholder {
@@ -3053,7 +3056,6 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
 
 
 
