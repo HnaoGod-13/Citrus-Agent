@@ -9,6 +9,7 @@ import os
 import re
 import sqlite3
 import sys
+from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -93,6 +94,130 @@ def item_value(item: Any, name: str, default: Any = "") -> Any:
     if isinstance(item, dict):
         return item.get(name, default)
     return getattr(item, name, default)
+
+
+ANALYSIS_PAYLOAD_VERSION = 1
+
+
+def _json_serializable(value: Any) -> Any:
+    if is_dataclass(value) and not isinstance(value, type):
+        return _json_serializable(asdict(value))
+    if isinstance(value, dict):
+        return {str(key): _json_serializable(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_json_serializable(item) for item in value]
+    if isinstance(value, Path):
+        return str(value)
+    try:
+        json.dumps(value, ensure_ascii=False)
+    except (TypeError, ValueError):
+        return str(value)
+    return value
+
+
+def _without_raw_model_output(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            str(key): _without_raw_model_output(item)
+            for key, item in value.items()
+            if str(key) != "_raw_model_output"
+        }
+    if isinstance(value, (list, tuple)):
+        return [_without_raw_model_output(item) for item in value]
+    return _json_serializable(value)
+
+
+def build_persisted_analysis_payload(payload: dict[str, Any] | None) -> dict[str, Any]:
+    """Build the versioned, JSON-safe snapshot used to restore analysis UI."""
+    source = payload or {}
+    result = source.get("result") or {}
+    try:
+        serialized_result = workflow.serialize_result(result)
+    except (KeyError, TypeError, ValueError):
+        serialized_result = result
+    serialized_result = _json_serializable(serialized_result)
+    if not isinstance(serialized_result, dict):
+        serialized_result = {}
+    batch = source.get("batch") or serialized_result.get("batch") or {}
+    answer = str(
+        source.get("answer")
+        or source.get("llm_answer")
+        or source.get("summary")
+        or ""
+    ).strip()
+    return {
+        "version": ANALYSIS_PAYLOAD_VERSION,
+        "result": serialized_result,
+        "batch": _json_serializable(batch),
+        "report_path": str(
+            source.get("report_path") or serialized_result.get("report_path") or ""
+        ),
+        "summary": str(source.get("summary") or ""),
+        "answer": answer,
+        "vision_result": _without_raw_model_output(source.get("vision_result") or {}),
+    }
+
+
+def restore_ui_messages(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Restore persisted chat rows without rendering tool or audit records."""
+    restored: list[dict[str, Any]] = []
+    seen_message_ids: set[str] = set()
+    for row in rows:
+        role = str(row.get("role") or "")
+        message_type = str(row.get("message_type") or "chat")
+        if role not in {"user", "assistant"} or message_type not in {"chat", "analysis"}:
+            continue
+        message_id = str(row.get("message_id") or "")
+        if message_id and message_id in seen_message_ids:
+            continue
+        if message_id:
+            seen_message_ids.add(message_id)
+        metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+        message: dict[str, Any] = {
+            "role": role,
+            "content": str(row.get("content") or ""),
+            "message_id": message_id,
+            "message_type": message_type,
+            "audit_trace": metadata.get("audit_trace"),
+        }
+        if role == "assistant" and message_type == "analysis":
+            snapshot = metadata.get("analysis_payload")
+            try:
+                snapshot_version = int(snapshot.get("version") or 0)
+            except (AttributeError, TypeError, ValueError):
+                snapshot_version = 0
+            if (
+                isinstance(snapshot, dict)
+                and isinstance(snapshot.get("result"), dict)
+                and snapshot_version >= 1
+            ):
+                message["kind"] = "analysis"
+                message["payload"] = snapshot
+            else:
+                message["kind"] = "analysis_summary"
+        restored.append(message)
+    return restored
+
+
+def restore_latest_analysis_state(
+    messages: list[dict[str, Any]],
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None, dict[str, str] | None]:
+    """Recover the latest batch context required by follow-up questions."""
+    for message in reversed(messages):
+        if message.get("kind") != "analysis" or not isinstance(message.get("payload"), dict):
+            continue
+        payload = message["payload"]
+        result = payload.get("result")
+        if not isinstance(result, dict):
+            continue
+        batch = payload.get("batch") or result.get("batch")
+        if not isinstance(batch, dict):
+            batch = None
+        vision_context = (
+            orchestrator.build_vision_memory(payload) if payload.get("vision_result") else {}
+        )
+        return batch, result, vision_context or None
+    return None, None, None
 
 
 def persist_uploaded_image(
@@ -1528,9 +1653,9 @@ def inject_style() -> None:
     )
 
 
-def render_scroll_position_manager(*, restore: bool) -> None:
-    """Preserve the reader's main-page position across the final answer rerun."""
-    restore_requested = "true" if restore else "false"
+def render_scroll_position_manager(*, target_message_id: str = "") -> None:
+    """Keep the latest submitted question in view after the answer rerun."""
+    target_id_json = json.dumps(str(target_message_id or ""), ensure_ascii=False)
     st.iframe(
         f"""
         <style>
@@ -1562,94 +1687,63 @@ def render_scroll_position_manager(*, restore: bool) -> None:
 
             const storageKey = "citrus-agent:main-scroll-top";
             const managerKey = "__citrusAgentScrollManager";
+            const targetId = {target_id_json};
             let manager = host[managerKey];
 
-            if (!manager || manager.version !== 1) {{
+            try {{
+                host.sessionStorage.removeItem(storageKey);
+            }} catch (_) {{
+                // Legacy scroll storage is optional and is no longer used.
+            }}
+
+            if (!manager || manager.version !== 2) {{
                 manager = {{
-                    version: 1,
-                    restoring: false,
-                    userScrollUntil: 0,
+                    version: 2,
+                    cancelled: false,
                     scroller: null,
                     boundScroller: null,
                 }};
                 host[managerKey] = manager;
 
-                manager.remember = () => {{
-                    if (manager.restoring || !manager.scroller) return;
-                    try {{
-                        host.sessionStorage.setItem(storageKey, String(manager.scroller.scrollTop));
-                    }} catch (_) {{
-                        // Storage may be unavailable in a hardened browser; scrolling still works normally.
-                    }}
-                }};
-                manager.markUserScroll = () => {{
-                    manager.userScrollUntil = Date.now() + 1200;
-                }};
-
-                doc.addEventListener("pointerdown", (event) => {{
-                    manager.markUserScroll();
-                    const target = event.target;
-                    if (target && typeof target.closest === "function" && target.closest("button")) {{
-                        manager.remember();
-                    }}
-                }}, true);
+                manager.cancelAutoScroll = () => {{ manager.cancelled = true; }};
+                doc.addEventListener("pointerdown", manager.cancelAutoScroll, true);
 
                 doc.addEventListener("keydown", (event) => {{
-                    const target = event.target;
-                    const isChatSubmit = event.key === "Enter"
-                        && !event.shiftKey
-                        && target
-                        && typeof target.matches === "function"
-                        && target.matches('[data-testid="stChatInputTextArea"]');
-                    if (isChatSubmit) manager.remember();
-
                     if (["PageUp", "PageDown", "Home", "End", "ArrowUp", "ArrowDown", " "].includes(event.key)) {{
-                        manager.markUserScroll();
-                        host.setTimeout(manager.remember, 0);
+                        manager.cancelAutoScroll();
                     }}
                 }}, true);
             }}
 
             manager.scroller = scroller;
             if (manager.boundScroller !== scroller) {{
-                scroller.addEventListener("wheel", manager.markUserScroll, {{ passive: true }});
-                scroller.addEventListener("touchstart", manager.markUserScroll, {{ passive: true }});
-                scroller.addEventListener("scroll", () => {{
-                    if (!manager.restoring && Date.now() <= manager.userScrollUntil) manager.remember();
-                }}, {{ passive: true }});
+                scroller.addEventListener("wheel", manager.cancelAutoScroll, {{ passive: true }});
+                scroller.addEventListener("touchstart", manager.cancelAutoScroll, {{ passive: true }});
                 manager.boundScroller = scroller;
             }}
-            let hasSavedPosition = false;
-            try {{
-                hasSavedPosition = host.sessionStorage.getItem(storageKey) !== null;
-            }} catch (_) {{
-                // Storage availability is checked again by manager.remember().
-            }}
-            if (!hasSavedPosition) manager.remember();
 
-            if ({restore_requested}) {{
-                let savedPosition = Number.NaN;
-                try {{
-                    savedPosition = Number(host.sessionStorage.getItem(storageKey));
-                }} catch (_) {{
-                    // Ignore unavailable storage and retain Streamlit's default behavior.
-                }}
-                if (Number.isFinite(savedPosition)) {{
-                    manager.restoring = true;
-                    scroller.dispatchEvent(new WheelEvent("wheel", {{ bubbles: true, deltaY: -1 }}));
-                    const restorePosition = () => {{
-                        scroller.scrollTo({{
-                            top: savedPosition,
-                            left: scroller.scrollLeft,
-                            behavior: "auto",
-                        }});
-                    }};
-                    [0, 40, 120, 280, 600, 1000].forEach((delay) => host.setTimeout(restorePosition, delay));
-                    host.setTimeout(() => {{
-                        manager.restoring = false;
-                        manager.remember();
-                    }}, 1200);
-                }}
+            if (targetId) {{
+                manager.cancelled = false;
+                const target = Array.from(
+                    doc.querySelectorAll('.message-row.user[data-message-id]')
+                ).find((element) => element.dataset.messageId === targetId);
+                if (!target) return;
+
+                const scrollToTarget = () => {{
+                    if (manager.cancelled || manager.scroller !== scroller) return;
+                    const scrollerRect = scroller.getBoundingClientRect();
+                    const targetRect = target.getBoundingClientRect();
+                    const top = scroller.scrollTop + targetRect.top - scrollerRect.top - 24;
+                    scroller.scrollTo({{
+                        top: Math.max(0, top),
+                        left: scroller.scrollLeft,
+                        behavior: "auto",
+                    }});
+                }};
+                host.requestAnimationFrame(() => {{
+                    scrollToTarget();
+                    host.setTimeout(scrollToTarget, 120);
+                }});
             }}
         }})();
         </script>
@@ -1759,17 +1853,15 @@ def initialize_memory_identity() -> None:
 
     if st.session_state.get("memory_restored_session") != session_id:
         if not st.session_state.agent_messages:
-            restored = manager.restore_session_messages(user_id, session_id, project_id)
-            st.session_state.agent_messages = [
-                {
-                    "role": item["role"],
-                    "content": item["content"],
-                    "message_id": item["message_id"],
-                    "audit_trace": (item.get("metadata") or {}).get("audit_trace"),
-                }
-                for item in restored
-                if item["role"] in {"user", "assistant"}
-            ]
+            rows = manager.restore_session_messages(user_id, session_id, project_id)
+            restored = restore_ui_messages(rows)
+            st.session_state.agent_messages = restored
+            current_batch, last_result, last_vision_context = restore_latest_analysis_state(
+                restored
+            )
+            st.session_state.current_batch = current_batch
+            st.session_state.last_result = last_result
+            st.session_state.last_vision_context = last_vision_context
         st.session_state.memory_restored_session = session_id
 
 
@@ -1787,6 +1879,8 @@ def start_new_conversation() -> None:
     st.session_state.current_batch = None
     st.session_state.last_result = None
     st.session_state.last_vision_context = None
+    st.session_state.pop("scroll_target_message_id", None)
+    st.session_state.pop("restore_main_scroll_position", None)
     reset_sidebar_inputs()
 
 
@@ -2234,14 +2328,25 @@ def render_analysis_payload(payload: dict[str, Any]) -> None:
 def render_message(message: dict[str, Any]) -> None:
     role = message["role"]
     content_text = str(message.get("content", ""))
+    message_id = html.escape(str(message.get("message_id") or ""), quote=True)
+    message_id_attr = f' data-message-id="{message_id}"' if message_id else ""
     if message.get("kind") == "analysis":
         st.markdown(
-            '<div class="message-row assistant"><div class="message-avatar assistant">Citrus AI</div><div class="message-bubble">已完成批次分析，工具调用结果如下。</div></div>',
+            f'<div class="message-row assistant"{message_id_attr}><div class="message-avatar assistant">Citrus AI</div><div class="message-bubble">已完成批次分析，工具调用结果如下。</div></div>',
             unsafe_allow_html=True,
         )
         st.markdown('<div class="analysis-shell">', unsafe_allow_html=True)
         render_analysis_payload(message["payload"])
         st.markdown('</div>', unsafe_allow_html=True)
+        return
+
+    if message.get("kind") == "analysis_summary":
+        st.markdown(
+            f'<div class="message-row assistant"{message_id_attr}><div class="message-avatar assistant">Citrus AI</div><div class="message-bubble">旧版批次分析已折叠。该记录保存于结构化恢复功能上线前，展开后可查看原始文本。</div></div>',
+            unsafe_allow_html=True,
+        )
+        with st.expander("查看旧版分析文本（记录可能不完整）", expanded=False):
+            st.markdown(clean_assistant_text(content_text) or "该记录没有可显示的文本。")
         return
 
     if role == "user":
@@ -2255,14 +2360,14 @@ def render_message(message: dict[str, Any]) -> None:
             )
         content = html.escape(content_text).replace("\n", "<br>")
         st.markdown(
-            f'<div class="message-row user"><div class="message-bubble">{content}</div></div>',
+            f'<div class="message-row user"{message_id_attr}><div class="message-bubble">{content}</div></div>',
             unsafe_allow_html=True,
         )
         return
 
     content = html.escape(clean_assistant_text(content_text)).replace("\n", "<br>")
     st.markdown(
-        f'<div class="message-row assistant"><div class="message-avatar assistant">Citrus AI</div><div class="message-bubble">{content}</div></div>',
+        f'<div class="message-row assistant"{message_id_attr}><div class="message-avatar assistant">Citrus AI</div><div class="message-bubble">{content}</div></div>',
         unsafe_allow_html=True,
     )
 
@@ -2710,6 +2815,9 @@ def finalize_memory_turn(
     assistant_message["message_id"] = f"msg_{uuid4().hex}"
     assistant_message["run_id"] = run_id
     assistant_message["audit_trace"] = audit_trace
+    message_metadata: dict[str, Any] = {"run_id": run_id, "audit_trace": audit_trace}
+    if mode == "analysis":
+        message_metadata["analysis_payload"] = build_persisted_analysis_payload(payload)
 
     try:
         manager.record_message(
@@ -2720,7 +2828,7 @@ def finalize_memory_turn(
             assistant_text,
             message_id=assistant_message["message_id"],
             message_type="analysis" if mode == "analysis" else "chat",
-            metadata={"run_id": run_id, "audit_trace": audit_trace},
+            metadata=message_metadata,
         )
         manager.summarize_history(
             session_id,
@@ -3038,7 +3146,7 @@ def handle_prompt(
     )
 
     st.session_state.clear_sidebar_inputs = True
-    st.session_state.restore_main_scroll_position = True
+    st.session_state.scroll_target_message_id = user_message_id
     st.rerun()
 
 
@@ -3046,7 +3154,10 @@ def main() -> None:
     st.set_page_config(page_title="柑橘产业链 Agent", layout="wide")
     inject_style()
     init_state()
-    restore_scroll_position = bool(st.session_state.pop("restore_main_scroll_position", False))
+    scroll_target_message_id = str(
+        st.session_state.pop("scroll_target_message_id", "") or ""
+    )
+    st.session_state.pop("restore_main_scroll_position", None)
 
     api_key = get_deepseek_api_key()
     manual_observation, has_image, image_bytes, image_mime_type = render_sidebar()
@@ -3061,7 +3172,7 @@ def main() -> None:
             render_message(message)
 
     typed_prompt = st.chat_input("输入问题，或粘贴批次信息开始分析...")
-    render_scroll_position_manager(restore=restore_scroll_position)
+    render_scroll_position_manager(target_message_id=scroll_target_message_id)
     prompt = typed_prompt or selected_prompt
     if prompt:
         handle_prompt(
@@ -3077,10 +3188,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-
-
-
-
-
-
