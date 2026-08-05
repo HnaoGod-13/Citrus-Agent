@@ -165,6 +165,12 @@ def _normalize_text(value: Any, limit: int = MEMORY_MAX_CONTENT_CHARS) -> str:
     return text[:limit]
 
 
+def _normalize_message_content(value: Any) -> str:
+    """Preserve display formatting while still redacting stored message text."""
+    text = _redact_text(str(value or ""))
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
 def _normalize_keywords(values: Iterable[Any] | None, content: str = "") -> list[str]:
     keywords: list[str] = []
     for value in values or []:
@@ -645,8 +651,8 @@ class MemoryManager:
         self.ensure_session(user_id, session_id, project_id)
         if role not in {"system", "user", "assistant", "tool"}:
             raise MemoryValidationError(f"不支持的消息角色：{role}")
-        normalized = _normalize_text(content)
-        if not normalized:
+        normalized = _normalize_message_content(content)
+        if not normalized.strip():
             raise MemoryValidationError("不能保存空消息。")
         resolved_id = _normalize_text(message_id or f"msg_{uuid4().hex}", 160)
         now = utc_now()
@@ -1607,7 +1613,7 @@ class MemoryManager:
                     _safe_json(sanitized.get("retrieved_sample_ids") or []),
                     _safe_json(sanitized.get("tool_calls") or []),
                     _normalize_text(sanitized.get("model_raw_output"), MEMORY_MAX_CONTENT_CHARS),
-                    _normalize_text(sanitized.get("final_output"), MEMORY_MAX_CONTENT_CHARS),
+                    _normalize_message_content(sanitized.get("final_output")),
                     _safe_json(sanitized.get("state_updates") or {}),
                     _normalize_text(sanitized.get("error"), 3000),
                     utc_now(),

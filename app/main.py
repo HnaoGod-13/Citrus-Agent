@@ -128,7 +128,7 @@ def _without_raw_model_output(value: Any) -> Any:
 
 
 def build_persisted_analysis_payload(payload: dict[str, Any] | None) -> dict[str, Any]:
-    """Build the versioned, JSON-safe snapshot used to restore analysis UI."""
+    """Serialize enough of an analysis turn to render it identically after a rerun."""
     source = payload or {}
     result = source.get("result") or {}
     try:
@@ -139,12 +139,6 @@ def build_persisted_analysis_payload(payload: dict[str, Any] | None) -> dict[str
     if not isinstance(serialized_result, dict):
         serialized_result = {}
     batch = source.get("batch") or serialized_result.get("batch") or {}
-    answer = str(
-        source.get("answer")
-        or source.get("llm_answer")
-        or source.get("summary")
-        or ""
-    ).strip()
     return {
         "version": ANALYSIS_PAYLOAD_VERSION,
         "result": serialized_result,
@@ -153,13 +147,95 @@ def build_persisted_analysis_payload(payload: dict[str, Any] | None) -> dict[str
             source.get("report_path") or serialized_result.get("report_path") or ""
         ),
         "summary": str(source.get("summary") or ""),
-        "answer": answer,
+        "answer": str(
+            source.get("answer")
+            or source.get("llm_answer")
+            or source.get("summary")
+            or ""
+        ).strip(),
         "vision_result": _without_raw_model_output(source.get("vision_result") or {}),
     }
 
 
+def is_valid_persisted_analysis_payload(value: Any) -> bool:
+    if not isinstance(value, dict):
+        return False
+    try:
+        version = int(value.get("version") or 0)
+    except (TypeError, ValueError):
+        return False
+    result = value.get("result")
+    report_path = value.get("report_path")
+    if (
+        version != ANALYSIS_PAYLOAD_VERSION
+        or not isinstance(result, dict)
+        or not isinstance(result.get("report"), str)
+        or not isinstance(report_path, str)
+        or not report_path.strip()
+    ):
+        return False
+    for key in ("batch", "vision_result"):
+        if key in value and not isinstance(value[key], dict):
+            return False
+    for key in ("agent_steps", "scores", "quality_risks", "evidence", "parameter_groups"):
+        if key in result and not isinstance(result[key], list):
+            return False
+    for key in ("processing_plan", "parameterized_plan", "processing_intent", "batch"):
+        if key in result and not isinstance(result[key], dict):
+            return False
+    return True
+
+
+def restore_flattened_markdown(value: Any) -> str:
+    """Recover readable blocks from legacy rows whose whitespace was collapsed."""
+    text = str(value or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    if text.count("\n") >= 2:
+        return text
+
+    text = re.sub(r"\s*(<!--.*?-->)\s*", r"\n\n\1\n\n", text)
+    text = re.sub(r"\s+(?=#{1,6}\s)", "\n\n", text)
+    heading_titles = [
+        "综合结论",
+        "完整加工流程（方案）",
+        "加工目标与适用性判断",
+        "推荐工艺流程",
+        "详细操作参数",
+        "设备需求及替代设备",
+        "质量控制、包装储藏与副产物",
+        "当前批次事实",
+        "文献证据及其适用边界",
+        "推荐与备选方向",
+        "质控风险与下一步",
+        "本次引用文献",
+    ]
+    titles_pattern = "|".join(re.escape(title) for title in heading_titles)
+    text = re.sub(
+        rf"(?m)^(#{{1,6}}\s+(?:\d+(?:\.\d+)*\s+)?(?:{titles_pattern}))\s+",
+        r"\1\n\n",
+        text,
+    )
+    text = re.sub(
+        r"(?m)^(####\s+\d{2}\s+[^#\n]+?)\s+(?=-\s)",
+        r"\1\n\n",
+        text,
+    )
+    text = re.sub(
+        r"\s+(?=-\s+(?:\*\*|\[[^\]\n]+\]|[\u3400-\u9fffA-Za-z]))",
+        "\n",
+        text,
+    )
+    text = re.sub(r"(?<!-)\s+(?=\*\*[^*\n]{1,80}\*\*[：:])", "\n", text)
+    text = re.sub(r"\s+(?=\|(?:[^|\n]+\|){2,}\s+\|\s*:?-{3})", "\n", text)
+    text = re.sub(r"\|\s+\|(?=\s*(?:---|[^|\s]))", "|\n|", text)
+    text = re.sub(
+        r"\s+(参数设置理由与变化影响：)\s*",
+        r"\n\n\1\n",
+        text,
+    )
+    return re.sub(r"\n{3,}", "\n\n", text).strip()
+
+
 def restore_ui_messages(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Restore persisted chat rows without rendering tool or audit records."""
     restored: list[dict[str, Any]] = []
     seen_message_ids: set[str] = set()
     for row in rows:
@@ -178,31 +254,111 @@ def restore_ui_messages(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "content": str(row.get("content") or ""),
             "message_id": message_id,
             "message_type": message_type,
+            "run_id": metadata.get("run_id"),
             "audit_trace": metadata.get("audit_trace"),
         }
         if role == "assistant" and message_type == "analysis":
             snapshot = metadata.get("analysis_payload")
-            try:
-                snapshot_version = int(snapshot.get("version") or 0)
-            except (AttributeError, TypeError, ValueError):
-                snapshot_version = 0
-            if (
-                isinstance(snapshot, dict)
-                and isinstance(snapshot.get("result"), dict)
-                and snapshot_version >= 1
-            ):
+            if is_valid_persisted_analysis_payload(snapshot):
                 message["kind"] = "analysis"
                 message["payload"] = snapshot
             else:
-                message["kind"] = "analysis_summary"
+                message["kind"] = "analysis_legacy"
+                message["content"] = restore_flattened_markdown(message["content"])
         restored.append(message)
     return restored
+
+
+def recover_legacy_analysis_payload(
+    manager: agent_memory.MemoryManager,
+    user_id: str,
+    project_id: str,
+    message: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Rebuild an old analysis UI from its audited tool result when available."""
+    run_id = str(
+        message.get("run_id")
+        or (message.get("audit_trace") or {}).get("run_id")
+        or ""
+    ).strip()
+    if not run_id:
+        return None
+    try:
+        run = manager.get_agent_run(run_id, user_id=user_id, project_id=project_id)
+    except agent_memory.MemoryManagerError:
+        return None
+    if not isinstance(run, dict):
+        return None
+
+    report_root = workflow.REPORT_DIR.resolve()
+    tool_calls = run.get("tool_calls")
+    if not isinstance(tool_calls, list):
+        return None
+    for call in tool_calls:
+        if not isinstance(call, dict):
+            continue
+        result_name = Path(str(call.get("result_ref") or "")).name
+        if not result_name.endswith(".tools.json"):
+            continue
+        result_path = (report_root / result_name).resolve()
+        if result_path.parent != report_root or not result_path.is_file():
+            continue
+        try:
+            if result_path.stat().st_size > 5_000_000:
+                continue
+            result = json.loads(result_path.read_text(encoding="utf-8"))
+        except (OSError, TypeError, ValueError, json.JSONDecodeError):
+            continue
+        if not isinstance(result, dict) or not isinstance(result.get("report"), str):
+            continue
+        report_name = result_name.removesuffix(".tools.json") + ".md"
+        report_path = (report_root / report_name).resolve()
+        state_updates = run.get("state_updates")
+        referenced_files = (
+            state_updates.get("referenced_files")
+            if isinstance(state_updates, dict)
+            else None
+        )
+        references = (
+            referenced_files.get("add")
+            if isinstance(referenced_files, dict)
+            else None
+        )
+        if isinstance(references, list):
+            for reference in references:
+                candidate = Path(str(reference)).resolve()
+                if candidate.suffix.lower() == ".md" and candidate.parent == report_root:
+                    report_path = candidate
+                    break
+        try:
+            if str(run.get("model_name") or "") == "controlled-local":
+                answer = orchestrator.build_evidence_grounded_fallback(result, report_path, [])
+                answer = orchestrator.ensure_primary_processing_flow(result, answer)
+                answer = orchestrator.append_used_reference_index(
+                    answer,
+                    result.get("evidence", []),
+                )
+                answer = orchestrator.ensure_vision_status_consistency(answer, None)
+            else:
+                answer = restore_flattened_markdown(message.get("content") or "")
+        except (AttributeError, KeyError, OSError, TypeError, ValueError):
+            continue
+        result["answer"] = answer
+        return build_persisted_analysis_payload(
+            {
+                "result": result,
+                "batch": result.get("batch") or {},
+                "report_path": report_path,
+                "summary": answer,
+                "answer": answer,
+            }
+        )
+    return None
 
 
 def restore_latest_analysis_state(
     messages: list[dict[str, Any]],
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None, dict[str, str] | None]:
-    """Recover the latest batch context required by follow-up questions."""
     for message in reversed(messages):
         if message.get("kind") != "analysis" or not isinstance(message.get("payload"), dict):
             continue
@@ -1476,6 +1632,29 @@ def inject_style() -> None:
             font-size: 1.08rem;
             line-height: 1.78;
         }
+        div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label) {
+            align-items: flex-start;
+            gap: 1.45rem;
+            margin: 0 0 1.8rem;
+        }
+        .assistant-markdown-label {
+            min-height: 2.1rem;
+            padding: 0.66rem 1.2rem 0.45rem 0;
+            border-right: 1px solid rgba(217, 189, 130, 0.16);
+            color: var(--agent-accent);
+            font-size: 0.86rem;
+            font-style: italic;
+            font-weight: 420;
+            line-height: 1.2;
+            white-space: nowrap;
+        }
+        div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label)
+        > div[data-testid="stColumn"]:last-child [data-testid="stMarkdownContainer"] {
+            color: var(--agent-text);
+            font-size: 1.08rem;
+            line-height: 1.78;
+            overflow-wrap: anywhere;
+        }
         .analysis-shell {
             margin: 0 0 1.9rem 8.25rem;
             padding-top: 0;
@@ -1643,6 +1822,20 @@ def inject_style() -> None:
                 border-bottom: 1px solid rgba(217, 189, 130, 0.16);
                 padding-bottom: 0.45rem;
             }
+            div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label) {
+                flex-direction: column;
+                gap: 0.65rem;
+            }
+            div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label)
+            > div[data-testid="stColumn"] {
+                width: 100%;
+                flex: 1 1 auto;
+            }
+            .assistant-markdown-label {
+                width: 100%;
+                border-right: 0;
+                border-bottom: 1px solid rgba(217, 189, 130, 0.16);
+            }
             .analysis-shell {
                 margin-left: 0;
             }
@@ -1653,9 +1846,9 @@ def inject_style() -> None:
     )
 
 
-def render_scroll_position_manager(*, target_message_id: str = "") -> None:
-    """Keep the latest submitted question in view after the answer rerun."""
-    target_id_json = json.dumps(str(target_message_id or ""), ensure_ascii=False)
+def render_scroll_position_manager(*, restore: bool) -> None:
+    """Preserve the reader's main-page position across the final answer rerun."""
+    restore_requested = "true" if restore else "false"
     st.iframe(
         f"""
         <style>
@@ -1687,63 +1880,94 @@ def render_scroll_position_manager(*, target_message_id: str = "") -> None:
 
             const storageKey = "citrus-agent:main-scroll-top";
             const managerKey = "__citrusAgentScrollManager";
-            const targetId = {target_id_json};
             let manager = host[managerKey];
 
-            try {{
-                host.sessionStorage.removeItem(storageKey);
-            }} catch (_) {{
-                // Legacy scroll storage is optional and is no longer used.
-            }}
-
-            if (!manager || manager.version !== 2) {{
+            if (!manager || manager.version !== 1) {{
                 manager = {{
-                    version: 2,
-                    cancelled: false,
+                    version: 1,
+                    restoring: false,
+                    userScrollUntil: 0,
                     scroller: null,
                     boundScroller: null,
                 }};
                 host[managerKey] = manager;
 
-                manager.cancelAutoScroll = () => {{ manager.cancelled = true; }};
-                doc.addEventListener("pointerdown", manager.cancelAutoScroll, true);
+                manager.remember = () => {{
+                    if (manager.restoring || !manager.scroller) return;
+                    try {{
+                        host.sessionStorage.setItem(storageKey, String(manager.scroller.scrollTop));
+                    }} catch (_) {{
+                        // Storage may be unavailable in a hardened browser; scrolling still works normally.
+                    }}
+                }};
+                manager.markUserScroll = () => {{
+                    manager.userScrollUntil = Date.now() + 1200;
+                }};
+
+                doc.addEventListener("pointerdown", (event) => {{
+                    manager.markUserScroll();
+                    const target = event.target;
+                    if (target && typeof target.closest === "function" && target.closest("button")) {{
+                        manager.remember();
+                    }}
+                }}, true);
 
                 doc.addEventListener("keydown", (event) => {{
+                    const target = event.target;
+                    const isChatSubmit = event.key === "Enter"
+                        && !event.shiftKey
+                        && target
+                        && typeof target.matches === "function"
+                        && target.matches('[data-testid="stChatInputTextArea"]');
+                    if (isChatSubmit) manager.remember();
+
                     if (["PageUp", "PageDown", "Home", "End", "ArrowUp", "ArrowDown", " "].includes(event.key)) {{
-                        manager.cancelAutoScroll();
+                        manager.markUserScroll();
+                        host.setTimeout(manager.remember, 0);
                     }}
                 }}, true);
             }}
 
             manager.scroller = scroller;
             if (manager.boundScroller !== scroller) {{
-                scroller.addEventListener("wheel", manager.cancelAutoScroll, {{ passive: true }});
-                scroller.addEventListener("touchstart", manager.cancelAutoScroll, {{ passive: true }});
+                scroller.addEventListener("wheel", manager.markUserScroll, {{ passive: true }});
+                scroller.addEventListener("touchstart", manager.markUserScroll, {{ passive: true }});
+                scroller.addEventListener("scroll", () => {{
+                    if (!manager.restoring && Date.now() <= manager.userScrollUntil) manager.remember();
+                }}, {{ passive: true }});
                 manager.boundScroller = scroller;
             }}
+            let hasSavedPosition = false;
+            try {{
+                hasSavedPosition = host.sessionStorage.getItem(storageKey) !== null;
+            }} catch (_) {{
+                // Storage availability is checked again by manager.remember().
+            }}
+            if (!hasSavedPosition) manager.remember();
 
-            if (targetId) {{
-                manager.cancelled = false;
-                const target = Array.from(
-                    doc.querySelectorAll('.message-row.user[data-message-id]')
-                ).find((element) => element.dataset.messageId === targetId);
-                if (!target) return;
-
-                const scrollToTarget = () => {{
-                    if (manager.cancelled || manager.scroller !== scroller) return;
-                    const scrollerRect = scroller.getBoundingClientRect();
-                    const targetRect = target.getBoundingClientRect();
-                    const top = scroller.scrollTop + targetRect.top - scrollerRect.top - 24;
-                    scroller.scrollTo({{
-                        top: Math.max(0, top),
-                        left: scroller.scrollLeft,
-                        behavior: "auto",
-                    }});
-                }};
-                host.requestAnimationFrame(() => {{
-                    scrollToTarget();
-                    host.setTimeout(scrollToTarget, 120);
-                }});
+            if ({restore_requested}) {{
+                let savedPosition = Number.NaN;
+                try {{
+                    savedPosition = Number(host.sessionStorage.getItem(storageKey));
+                }} catch (_) {{
+                    // Ignore unavailable storage and retain Streamlit's default behavior.
+                }}
+                if (Number.isFinite(savedPosition)) {{
+                    manager.restoring = true;
+                    scroller.dispatchEvent(new WheelEvent("wheel", {{ bubbles: true, deltaY: -1 }}));
+                    const restorePosition = () => {{
+                        scroller.scrollTo({{
+                            top: savedPosition,
+                            left: scroller.scrollLeft,
+                            behavior: "auto",
+                        }});
+                    }};
+                    [0, 40, 120, 280, 600, 1000].forEach((delay) => host.setTimeout(restorePosition, delay));
+                    host.setTimeout(() => {{
+                        manager.restoring = false;
+                        manager.remember();
+                    }}, 1200);
+                }}
             }}
         }})();
         </script>
@@ -1855,6 +2079,21 @@ def initialize_memory_identity() -> None:
         if not st.session_state.agent_messages:
             rows = manager.restore_session_messages(user_id, session_id, project_id)
             restored = restore_ui_messages(rows)
+            for message in restored:
+                if message.get("kind") != "analysis_legacy":
+                    continue
+                try:
+                    recovered_payload = recover_legacy_analysis_payload(
+                        manager,
+                        user_id,
+                        project_id,
+                        message,
+                    )
+                except (agent_memory.MemoryManagerError, OSError, TypeError, ValueError):
+                    recovered_payload = None
+                if recovered_payload:
+                    message["kind"] = "analysis"
+                    message["payload"] = recovered_payload
             st.session_state.agent_messages = restored
             current_batch, last_result, last_vision_context = restore_latest_analysis_state(
                 restored
@@ -1879,8 +2118,6 @@ def start_new_conversation() -> None:
     st.session_state.current_batch = None
     st.session_state.last_result = None
     st.session_state.last_vision_context = None
-    st.session_state.pop("scroll_target_message_id", None)
-    st.session_state.pop("restore_main_scroll_position", None)
     reset_sidebar_inputs()
 
 
@@ -2061,19 +2298,6 @@ def render_score_bars(scores: list[Any], limit: int = 8) -> None:
 
     if rows:
         st.markdown("<div class=\"score-bars\">" + "".join(rows) + "</div>", unsafe_allow_html=True)
-
-
-def clean_assistant_text(text: str) -> str:
-    text = str(text or "").replace("\r\n", "\n").replace("\r", "\n")
-    text = re.sub(r"(?m)^\s{0,3}#{1,6}\s*", "", text)
-    text = re.sub(r"(?m)^\s*[-*+]\s+", "", text)
-    text = re.sub(r"(?m)^(\s*\d+)[.)]\s+", r"\1. ", text)
-    text = re.sub(r"\*\*(.*?)\*\*", r"\1", text)
-    text = re.sub(r"__(.*?)__", r"\1", text)
-    text = re.sub(r"(?<!\*)\*(?!\*)(.*?)\*(?!\*)", r"\1", text)
-    text = re.sub(r"`([^`]*)`", r"\1", text)
-    text = re.sub(r"\n{3,}", "\n\n", text)
-    return text.strip()
 
 
 def render_processing_plan(plan: dict[str, Any]) -> None:
@@ -2328,11 +2552,9 @@ def render_analysis_payload(payload: dict[str, Any]) -> None:
 def render_message(message: dict[str, Any]) -> None:
     role = message["role"]
     content_text = str(message.get("content", ""))
-    message_id = html.escape(str(message.get("message_id") or ""), quote=True)
-    message_id_attr = f' data-message-id="{message_id}"' if message_id else ""
     if message.get("kind") == "analysis":
         st.markdown(
-            f'<div class="message-row assistant"{message_id_attr}><div class="message-avatar assistant">Citrus AI</div><div class="message-bubble">已完成批次分析，工具调用结果如下。</div></div>',
+            '<div class="message-row assistant"><div class="message-avatar assistant">Citrus AI</div><div class="message-bubble">已完成批次分析，工具调用结果如下。</div></div>',
             unsafe_allow_html=True,
         )
         st.markdown('<div class="analysis-shell">', unsafe_allow_html=True)
@@ -2340,13 +2562,14 @@ def render_message(message: dict[str, Any]) -> None:
         st.markdown('</div>', unsafe_allow_html=True)
         return
 
-    if message.get("kind") == "analysis_summary":
+    if message.get("kind") == "analysis_legacy":
         st.markdown(
-            f'<div class="message-row assistant"{message_id_attr}><div class="message-avatar assistant">Citrus AI</div><div class="message-bubble">旧版批次分析已折叠。该记录保存于结构化恢复功能上线前，展开后可查看原始文本。</div></div>',
+            '<div class="message-row assistant"><div class="message-avatar assistant">Citrus AI</div><div class="message-bubble">已完成批次分析，工具调用结果如下。</div></div>',
             unsafe_allow_html=True,
         )
-        with st.expander("查看旧版分析文本（记录可能不完整）", expanded=False):
-            st.markdown(clean_assistant_text(content_text) or "该记录没有可显示的文本。")
+        st.markdown('<div class="analysis-shell">', unsafe_allow_html=True)
+        st.markdown(restore_flattened_markdown(content_text))
+        st.markdown('</div>', unsafe_allow_html=True)
         return
 
     if role == "user":
@@ -2360,16 +2583,19 @@ def render_message(message: dict[str, Any]) -> None:
             )
         content = html.escape(content_text).replace("\n", "<br>")
         st.markdown(
-            f'<div class="message-row user"{message_id_attr}><div class="message-bubble">{content}</div></div>',
+            f'<div class="message-row user"><div class="message-bubble">{content}</div></div>',
             unsafe_allow_html=True,
         )
         return
 
-    content = html.escape(clean_assistant_text(content_text)).replace("\n", "<br>")
-    st.markdown(
-        f'<div class="message-row assistant"{message_id_attr}><div class="message-avatar assistant">Citrus AI</div><div class="message-bubble">{content}</div></div>',
-        unsafe_allow_html=True,
-    )
+    label_column, content_column = st.columns([1.15, 8.85], gap="medium")
+    with label_column:
+        st.markdown(
+            '<div class="assistant-markdown-label">Citrus AI</div>',
+            unsafe_allow_html=True,
+        )
+    with content_column:
+        st.markdown(content_text)
 
 
 def render_empty_state(api_key: str) -> tuple[str | None, Any]:
@@ -3146,7 +3372,7 @@ def handle_prompt(
     )
 
     st.session_state.clear_sidebar_inputs = True
-    st.session_state.scroll_target_message_id = user_message_id
+    st.session_state.restore_main_scroll_position = True
     st.rerun()
 
 
@@ -3154,10 +3380,7 @@ def main() -> None:
     st.set_page_config(page_title="柑橘产业链 Agent", layout="wide")
     inject_style()
     init_state()
-    scroll_target_message_id = str(
-        st.session_state.pop("scroll_target_message_id", "") or ""
-    )
-    st.session_state.pop("restore_main_scroll_position", None)
+    restore_scroll_position = bool(st.session_state.pop("restore_main_scroll_position", False))
 
     api_key = get_deepseek_api_key()
     manual_observation, has_image, image_bytes, image_mime_type = render_sidebar()
@@ -3172,7 +3395,7 @@ def main() -> None:
             render_message(message)
 
     typed_prompt = st.chat_input("输入问题，或粘贴批次信息开始分析...")
-    render_scroll_position_manager(target_message_id=scroll_target_message_id)
+    render_scroll_position_manager(restore=restore_scroll_position)
     prompt = typed_prompt or selected_prompt
     if prompt:
         handle_prompt(
