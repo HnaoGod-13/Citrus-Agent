@@ -1084,6 +1084,11 @@ def inject_style() -> None:
             width: 100%;
             gap: 0.8rem;
         }
+        [class*="st-key-empty_state_shell"] .agent-live-progress {
+            width: min(1120px, calc(100% + 1.6rem));
+            margin: 0.15rem 0 1.2rem 50%;
+            transform: translateX(-50%);
+        }
         [class*="st-key-empty_state_shell"] [class*="st-key-example_card_"] p,
         [class*="st-key-empty_state_shell"] [class*="st-key-example_card_"] span {
             font-size: 0.92rem !important;
@@ -1499,6 +1504,10 @@ def inject_style() -> None:
             }
             .block-container:has([class*="st-key-empty_state_shell"]) {
                 padding-block: 1.45rem;
+            }
+            [class*="st-key-empty_state_shell"] .agent-live-progress {
+                width: calc(100% - 2.8rem);
+                transform: translate(-50%, -1rem);
             }
             .message-row.assistant {
                 grid-template-columns: 1fr;
@@ -2258,7 +2267,7 @@ def render_message(message: dict[str, Any]) -> None:
     )
 
 
-def render_empty_state(api_key: str) -> str | None:
+def render_empty_state(api_key: str) -> tuple[str | None, Any]:
     selected_prompt = None
     with st.container(key="empty_state_shell"):
         st.markdown('<div class="hero"><h1>柑橘产业链决策</h1></div>', unsafe_allow_html=True)
@@ -2277,7 +2286,8 @@ def render_empty_state(api_key: str) -> str | None:
                     label = f"{card['title']}\n{card['description']}"
                     if col.button(label, width="stretch", key=f"example_card_{card_index}"):
                         selected_prompt = card["prompt"]
-    return selected_prompt
+        progress_slot = st.empty()
+    return selected_prompt, progress_slot
 
 
 def render_agent_progress(slot: Any, message: str) -> None:
@@ -2751,6 +2761,7 @@ def handle_prompt(
     has_image: bool,
     image_bytes: bytes | None,
     image_mime_type: str,
+    progress_slot: Any | None = None,
 ) -> None:
     manager = get_memory_manager()
     user_id = str(st.session_state.memory_user_id)
@@ -2803,7 +2814,8 @@ def handle_prompt(
 
     importlib.reload(workflow)
     live_orchestrator = importlib.reload(orchestrator)
-    progress_slot = st.empty()
+    if progress_slot is None:
+        progress_slot = st.empty()
     vision_memory = st.session_state.last_vision_context or live_orchestrator.recover_vision_memory_from_messages(
         st.session_state.agent_messages
     )
@@ -3040,9 +3052,10 @@ def main() -> None:
     manual_observation, has_image, image_bytes, image_mime_type = render_sidebar()
 
     if not st.session_state.agent_messages:
-        selected_prompt = render_empty_state(api_key)
+        selected_prompt, progress_slot = render_empty_state(api_key)
     else:
         selected_prompt = None
+        progress_slot = None
         st.markdown('<div class="chat-transcript-start"></div>', unsafe_allow_html=True)
         for message in st.session_state.agent_messages:
             render_message(message)
@@ -3051,14 +3064,19 @@ def main() -> None:
     render_scroll_position_manager(restore=restore_scroll_position)
     prompt = typed_prompt or selected_prompt
     if prompt:
-        handle_prompt(prompt, api_key, manual_observation, has_image, image_bytes, image_mime_type)
+        handle_prompt(
+            prompt,
+            api_key,
+            manual_observation,
+            has_image,
+            image_bytes,
+            image_mime_type,
+            progress_slot=progress_slot,
+        )
 
 
 if __name__ == "__main__":
     main()
-
-
-
 
 
 
