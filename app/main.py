@@ -1639,7 +1639,7 @@ def inject_style() -> None:
             border-radius: 0;
             color: var(--agent-accent);
             box-shadow: none;
-            font-size: 0.86rem;
+            font-size: 0.96rem;
             line-height: 1.2;
             font-style: italic;
             font-weight: 420;
@@ -1664,7 +1664,7 @@ def inject_style() -> None:
             padding: 0.66rem 1.2rem 0.45rem 0;
             border-right: 1px solid rgba(217, 189, 130, 0.16);
             color: var(--agent-accent);
-            font-size: 0.86rem;
+            font-size: 0.96rem;
             font-style: italic;
             font-weight: 420;
             line-height: 1.2;
