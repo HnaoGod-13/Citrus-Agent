@@ -1262,7 +1262,7 @@ def inject_style() -> None:
             white-space: pre-wrap;
             box-shadow: none;
         }
-        [class*="st-key-example_card_"] button {
+        [class*="st-key-example_card_"][class*="st-key-example_card_"] button {
             display: flex !important;
             width: 100% !important;
             justify-content: center !important;
@@ -1286,13 +1286,15 @@ def inject_style() -> None:
             margin: 0 !important;
             text-align: left !important;
         }
-        [class*="st-key-example_card_"] button [data-testid="stMarkdownContainer"] {
+        [class*="st-key-example_card_"][class*="st-key-example_card_"] button [data-testid="stMarkdownContainer"] {
+            flex: 1 1 100% !important;
             width: 100% !important;
             min-width: 0 !important;
             text-align: center !important;
         }
-        [class*="st-key-example_card_"] button p,
-        [class*="st-key-example_card_"] button span {
+        [class*="st-key-example_card_"][class*="st-key-example_card_"] button p,
+        [class*="st-key-example_card_"][class*="st-key-example_card_"] button span {
+            display: block !important;
             width: 100% !important;
             text-align: center !important;
         }
