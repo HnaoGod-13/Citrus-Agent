@@ -1,0 +1,274 @@
+[data-testid="stChatInput"],
+[data-testid="stChatInput"] > div {
+    width: 100%;
+    padding: 0 !important;
+    background: transparent !important;
+    border: 0 !important;
+    box-shadow: none !important;
+}
+
+[data-testid="stChatInput"] textarea,
+[data-testid="stChatInput"] input {
+    box-sizing: border-box !important;
+    min-height: 58px !important;
+    max-height: 200px !important;
+    padding: 16px 58px 16px 16px !important;
+    color: var(--text-primary) !important;
+    background: var(--bg-input) !important;
+    border: 1px solid var(--border-default) !important;
+    border-radius: 12px !important;
+    box-shadow: var(--shadow-float) !important;
+    font-size: 15px !important;
+    line-height: 24px !important;
+    resize: none !important;
+}
+
+[data-testid="stChatInput"] textarea::placeholder,
+[data-testid="stChatInput"] input::placeholder {
+    color: var(--text-muted) !important;
+    opacity: 1 !important;
+}
+
+[data-testid="stChatInput"] textarea:focus,
+[data-testid="stChatInput"] input:focus {
+    border-color: rgba(217, 144, 54, 0.72) !important;
+    box-shadow: 0 0 0 3px rgba(217, 144, 54, 0.10), var(--shadow-float) !important;
+    outline: 0 !important;
+}
+
+[data-testid="stChatInput"] button {
+    width: 40px !important;
+    height: 40px !important;
+    min-width: 40px !important;
+    min-height: 40px !important;
+    color: #15191f !important;
+    background: var(--accent) !important;
+    border: 0 !important;
+    border-radius: 9px !important;
+    box-shadow: none !important;
+    transition: background 140ms ease, transform 140ms ease;
+}
+
+[data-testid="stChatInput"] button:hover {
+    background: var(--accent-hover) !important;
+}
+
+[data-testid="stChatInput"] button:disabled {
+    color: var(--text-muted) !important;
+    background: var(--bg-hover) !important;
+    opacity: 0.65;
+}
+
+.st-key-welcome_composer [data-testid="stChatInput"] textarea,
+.st-key-welcome_composer [data-testid="stChatInput"] input {
+    box-shadow: none !important;
+}
+
+[data-testid="stPopover"] > button,
+.st-key-composer_attachment_bar [data-testid="stPopover"] > button {
+    min-height: 36px !important;
+    padding: 0 11px !important;
+    color: var(--text-secondary) !important;
+    background: var(--bg-card-secondary) !important;
+    border: 1px solid var(--border-default) !important;
+    border-radius: 8px !important;
+    box-shadow: none !important;
+    font-size: 12px !important;
+}
+
+[data-testid="stPopover"] > button:hover {
+    color: var(--text-primary) !important;
+    background: var(--bg-hover) !important;
+    border-color: var(--border-hover) !important;
+}
+
+[data-testid="stPopoverBody"] {
+    max-width: min(420px, calc(100vw - 32px));
+    padding: 16px !important;
+    background: var(--bg-card) !important;
+    border: 1px solid var(--border-default) !important;
+    border-radius: 12px !important;
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.32) !important;
+}
+
+.attachment-panel-title {
+    margin-bottom: 4px;
+    color: var(--text-primary);
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.attachment-panel-help {
+    margin-bottom: 12px;
+    color: var(--text-muted);
+    font-size: 12px;
+    line-height: 1.55;
+}
+
+[data-testid="stFileUploader"] section {
+    min-height: 84px !important;
+    padding: 12px !important;
+    background: var(--bg-input) !important;
+    border: 1px dashed var(--border-hover) !important;
+    border-radius: 10px !important;
+}
+
+[data-testid="stFileUploader"] section:hover {
+    border-color: rgba(217, 144, 54, 0.54) !important;
+}
+
+[data-testid="stFileUploader"] section button {
+    min-height: 38px !important;
+    color: var(--text-primary) !important;
+    background: var(--bg-hover) !important;
+    border: 1px solid var(--border-hover) !important;
+    border-radius: 8px !important;
+}
+
+[data-testid="stFileUploader"] small,
+[data-testid="stFileUploader"] [data-testid="stMarkdownContainer"] p {
+    color: var(--text-muted) !important;
+    font-size: 12px !important;
+}
+
+[data-testid="stTextArea"] label p {
+    color: var(--text-secondary) !important;
+    font-size: 12px !important;
+    font-weight: 500 !important;
+}
+
+[data-testid="stTextArea"] textarea {
+    min-height: 96px !important;
+    padding: 12px !important;
+    color: var(--text-primary) !important;
+    background: var(--bg-input) !important;
+    border: 1px solid var(--border-default) !important;
+    border-radius: 10px !important;
+    box-shadow: none !important;
+    font-size: 13px !important;
+    line-height: 1.6 !important;
+}
+
+[data-testid="stTextArea"] textarea:focus {
+    border-color: rgba(217, 144, 54, 0.72) !important;
+    box-shadow: 0 0 0 3px rgba(217, 144, 54, 0.10) !important;
+}
+
+.attachment-preview-meta {
+    margin: 8px 0;
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.agent-progress-panel {
+    width: min(var(--conversation-width), 100%);
+    margin: 16px auto 24px;
+    padding: 18px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-default);
+    border-radius: 14px;
+    box-shadow: var(--shadow-float);
+}
+
+.progress-panel-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid var(--border-default);
+}
+
+.progress-panel-title {
+    color: var(--text-primary);
+    font-size: 16px;
+    font-weight: 600;
+    line-height: 1.4;
+}
+
+.progress-panel-current {
+    margin-top: 4px;
+    color: var(--text-muted);
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.progress-running-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 28px;
+    padding: 0 9px;
+    color: var(--text-secondary);
+    background: var(--bg-card-secondary);
+    border-radius: 7px;
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+.progress-running-badge span {
+    width: 6px;
+    height: 6px;
+    background: var(--accent);
+    border-radius: 50%;
+    animation: progress-pulse 1.4s ease-in-out infinite;
+}
+
+.progress-step-list {
+    display: grid;
+    gap: 4px;
+    margin-top: 12px;
+}
+
+.progress-step {
+    display: grid;
+    grid-template-columns: 20px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+    min-height: 34px;
+    color: var(--text-muted);
+    font-size: 13px;
+}
+
+.progress-step-icon {
+    display: grid;
+    width: 18px;
+    height: 18px;
+    place-items: center;
+    color: var(--text-muted);
+    font-family: var(--font-mono) !important;
+    font-size: 12px;
+}
+
+.progress-step.is-complete .progress-step-icon,
+.progress-step.is-complete .progress-step-state {
+    color: var(--success);
+}
+
+.progress-step.is-active {
+    color: var(--text-primary);
+}
+
+.progress-step.is-active .progress-step-icon,
+.progress-step.is-active .progress-step-state {
+    color: var(--accent);
+}
+
+.progress-step-state {
+    font-size: 12px;
+}
+
+.progress-panel-foot {
+    margin-top: 12px;
+    padding-top: 12px;
+    color: var(--text-muted);
+    border-top: 1px solid var(--border-default);
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+@keyframes progress-pulse {
+    0%, 100% { opacity: 0.45; }
+    50% { opacity: 1; }
+}

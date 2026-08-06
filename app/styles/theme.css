@@ -1,0 +1,175 @@
+:root {
+    color-scheme: dark;
+    --bg-primary: #0d0f12;
+    --bg-sidebar: #111419;
+    --bg-card: #15191f;
+    --bg-card-secondary: #191e25;
+    --bg-hover: #20262e;
+    --bg-input: #12161b;
+
+    --text-primary: #f2f3f5;
+    --text-secondary: #a3aab5;
+    --text-muted: #747d89;
+
+    --border-default: #292f37;
+    --border-hover: #3a424d;
+
+    --accent: #d99036;
+    --accent-hover: #e3a04a;
+    --accent-soft: rgba(217, 144, 54, 0.12);
+
+    --success: #4fae7a;
+    --success-soft: rgba(79, 174, 122, 0.12);
+    --warning: #d99a45;
+    --warning-soft: rgba(217, 154, 69, 0.12);
+    --danger: #d96868;
+    --danger-soft: rgba(217, 104, 104, 0.11);
+
+    --font-sans: Inter, "SF Pro Text", "PingFang SC", "Noto Sans SC", "Microsoft YaHei", Arial, sans-serif;
+    --font-mono: "JetBrains Mono", "Roboto Mono", "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+
+    --radius-control: 10px;
+    --radius-card: 12px;
+    --radius-report: 16px;
+    --sidebar-width: 256px;
+    --topbar-height: 56px;
+    --content-width: 1200px;
+    --conversation-width: 960px;
+    --shadow-float: 0 8px 24px rgba(0, 0, 0, 0.16);
+}
+
+html,
+body,
+.stApp {
+    background: var(--bg-primary) !important;
+    color: var(--text-primary) !important;
+    overflow-x: clip;
+}
+
+html,
+body,
+.stApp,
+.stMarkdown,
+[data-testid="stMarkdownContainer"],
+[data-testid="stSidebar"],
+[data-testid="stChatMessage"],
+button,
+input,
+textarea,
+select,
+label,
+p,
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+    font-family: var(--font-sans) !important;
+    letter-spacing: 0;
+}
+
+body {
+    font-size: 15px;
+    line-height: 1.65;
+}
+
+code,
+pre,
+kbd,
+samp,
+.mono,
+.metric-number,
+.process-stage-number {
+    font-family: var(--font-mono) !important;
+}
+
+::selection {
+    color: var(--text-primary);
+    background: rgba(217, 144, 54, 0.28);
+}
+
+a {
+    color: inherit;
+}
+
+hr {
+    margin: 24px 0 !important;
+    border-color: var(--border-default) !important;
+}
+
+#MainMenu,
+footer,
+[data-testid="stToolbar"],
+[data-testid="stDecoration"],
+[data-testid="stAppDeployButton"],
+[data-testid="stMainMenu"],
+.viewerBadge_container__r5tak,
+.styles_viewerBadge__CvC9N {
+    display: none !important;
+}
+
+header[data-testid="stHeader"] {
+    height: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+}
+
+header[data-testid="stHeader"] button,
+[data-testid="collapsedControl"] button {
+    color: var(--text-secondary) !important;
+    background: var(--bg-card) !important;
+    border: 1px solid var(--border-default) !important;
+    border-radius: 8px !important;
+    box-shadow: none !important;
+}
+
+[data-testid="stStatusWidget"] {
+    position: fixed !important;
+    top: 10px !important;
+    right: 16px !important;
+    z-index: 1005 !important;
+}
+
+[data-testid="stStatusWidget"] button {
+    color: var(--danger) !important;
+    background: var(--danger-soft) !important;
+    border: 1px solid rgba(217, 104, 104, 0.28) !important;
+}
+
+*:focus-visible {
+    outline: 2px solid rgba(217, 144, 54, 0.72) !important;
+    outline-offset: 2px !important;
+}
+
+* {
+    scrollbar-width: thin;
+    scrollbar-color: #343b45 transparent;
+}
+
+*::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+
+*::-webkit-scrollbar-thumb {
+    background: #343b45;
+    border: 3px solid transparent;
+    border-radius: 999px;
+    background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        scroll-behavior: auto !important;
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+    }
+}

@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import base64
 import hashlib
@@ -31,6 +31,7 @@ from agent import (
     vision_client,
     workflow,
 )
+from app import ui_components
 
 agent_memory = importlib.reload(agent_memory)
 llm_client = importlib.reload(llm_client)
@@ -46,8 +47,10 @@ chat_with_deepseek = llm_client.chat_with_deepseek
 get_deepseek_api_key = llm_client.get_deepseek_api_key
 retrieve_general_literature = llm_client.retrieve_general_literature
 get_vision_model = vision_client.get_vision_model
+get_vision_api_key = vision_client.get_vision_api_key
 prepare_image_for_vision = vision_client.prepare_image_for_vision
 SUPPORTED_UPLOAD_EXTENSIONS = vision_client.SUPPORTED_UPLOAD_EXTENSIONS
+STYLE_DIR = Path(__file__).resolve().parent / "styles"
 
 
 @st.cache_resource(show_spinner=False)
@@ -70,26 +73,26 @@ EXAMPLE_PROMPTS = [
 EXAMPLE_CARDS = [
     {
         "eyebrow": "01 · 路线选择",
-        "title": "评估最佳加工方向",
-        "description": "比较整果、果汁与果皮路线",
+        "title": "最佳加工方向",
+        "description": "比较果皮、果汁与果胶等路线",
         "prompt": EXAMPLE_PROMPTS[0],
     },
     {
         "eyebrow": "02 · 果汁生产",
-        "title": "规划脐橙果汁生产",
-        "description": "梳理加工与质控流程",
+        "title": "橙汁生产规划",
+        "description": "生成工艺参数与质量控制方案",
         "prompt": EXAMPLE_PROMPTS[1],
     },
     {
         "eyebrow": "03 · 果皮增值",
-        "title": "提升果皮利用价值",
-        "description": "比较陈皮、精油与果胶路线",
+        "title": "果皮价值提升",
+        "description": "评估陈皮、精油与果胶路线",
         "prompt": EXAMPLE_PROMPTS[2],
     },
     {
         "eyebrow": "04 · 风险复核",
-        "title": "复核批次生产风险",
-        "description": "明确补检与人工放行条件",
+        "title": "批次风险复核",
+        "description": "检查农残、重金属和微生物风险",
         "prompt": EXAMPLE_PROMPTS[3],
     },
 ]
@@ -403,1452 +406,9 @@ def persist_uploaded_image(
 
 
 def inject_style() -> None:
-    st.markdown(
-        """
-        <style>
-        :root {
-            color-scheme: dark;
-            --agent-bg: #111111;
-            --agent-bg-elevated: #181818;
-            --agent-bg-soft: #202020;
-            --agent-bg-softer: #272727;
-            --agent-line: #303030;
-            --agent-line-strong: #3f3f3f;
-            --agent-text: #f4f4f5;
-            --agent-text-soft: #d4d4d8;
-            --agent-muted: #9ca3af;
-            --agent-faint: #6b7280;
-            --agent-accent: #f97316;
-            --agent-accent-soft: rgba(249, 115, 22, 0.16);
-            --agent-shadow: 0 22px 70px rgba(0, 0, 0, 0.28);
-            --agent-font-family: "Times New Roman", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", serif;
-            --agent-mono-font-family: "Times New Roman", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", serif;
-            --agent-chinese-font-family: "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif;
-        }
-        html {
-            background: var(--agent-bg);
-        }
-        html, body, .stApp, [data-testid="stSidebar"], [data-testid="stChatMessage"],
-        .stMarkdown, .stText, .stCaption, .stButton, .stTextInput, .stTextArea, .stFileUploader,
-        button, input, textarea, select, label, p, h1, h2, h3, h4, h5, h6 {
-            font-family: var(--agent-font-family) !important;
-            letter-spacing: 0;
-        }
-        body {
-            color: var(--agent-text);
-            background: var(--agent-bg);
-        }
-        code, pre, kbd, samp {
-            font-family: var(--agent-mono-font-family) !important;
-        }
-        #MainMenu, footer {
-            visibility: hidden;
-            height: 0;
-        }
-        header[data-testid="stHeader"] {
-            background: transparent !important;
-            color: var(--agent-text) !important;
-            box-shadow: none !important;
-        }
-        header[data-testid="stHeader"] button {
-            color: var(--agent-text-soft) !important;
-            background: rgba(255, 255, 255, 0.055) !important;
-            border: 1px solid rgba(255, 255, 255, 0.08) !important;
-            border-radius: 8px !important;
-        }
-        .stApp {
-            background:
-                radial-gradient(circle at 78% 0%, rgba(249, 115, 22, 0.08), transparent 28rem),
-                linear-gradient(180deg, #141414 0%, #101010 38%, #0d0d0d 100%);
-            color: var(--agent-text);
-        }
-        .block-container {
-            max-width: 1120px;
-            padding: 3.15rem 2.4rem 8rem;
-        }
-        [data-testid="stSidebar"] {
-            background: #1a1a1a;
-            border-right: 1px solid var(--agent-line);
-            box-shadow: 18px 0 44px rgba(0, 0, 0, 0.18);
-        }
-        [data-testid="stSidebar"] > div {
-            padding: 2rem 1.15rem 1.2rem;
-        }
-        [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p,
-        [data-testid="stSidebar"] label,
-        [data-testid="stSidebar"] .stCaption {
-            color: var(--agent-muted) !important;
-        }
-        [data-testid="stSidebar"] h1,
-        [data-testid="stSidebar"] h2,
-        [data-testid="stSidebar"] h3 {
-            color: var(--agent-text) !important;
-        }
-        .sidebar-brand {
-            display: flex;
-            align-items: center;
-            gap: 0.78rem;
-            padding: 0.15rem 0 0.9rem;
-        }
-        .brand-mark {
-            width: 2.55rem;
-            height: 2.55rem;
-            border-radius: 0.8rem;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            background: linear-gradient(135deg, #f97316, #facc15);
-            color: #101010;
-            font-weight: 800;
-            font-size: 1rem;
-            box-shadow: 0 12px 26px rgba(249, 115, 22, 0.28);
-        }
-        .brand-title {
-            color: var(--agent-text);
-            font-size: 1.16rem;
-            font-weight: 720;
-            line-height: 1.1;
-        }
-        .brand-subtitle {
-            color: var(--agent-muted);
-            font-size: 0.8rem;
-            margin-top: 0.22rem;
-        }
-        .sidebar-section-title {
-            color: #e5e7eb;
-            font-size: 0.78rem;
-            font-weight: 700;
-            text-transform: uppercase;
-            margin: 1.25rem 0 0.62rem;
-        }
-        .status-list {
-            border: 1px solid var(--agent-line);
-            background: rgba(255, 255, 255, 0.035);
-            border-radius: 8px;
-            overflow: hidden;
-        }
-        .status-row {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 0.8rem;
-            padding: 0.72rem 0.78rem;
-            color: var(--agent-text-soft);
-            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-            font-size: 0.86rem;
-        }
-        .status-row:last-child {
-            border-bottom: 0;
-        }
-        .status-pill {
-            color: #f8fafc;
-            background: rgba(255, 255, 255, 0.08);
-            border: 1px solid rgba(255, 255, 255, 0.08);
-            border-radius: 999px;
-            padding: 0.1rem 0.45rem;
-            font-size: 0.72rem;
-            white-space: nowrap;
-        }
-        .sidebar-note {
-            color: var(--agent-muted);
-            font-size: 0.82rem;
-            line-height: 1.62;
-            padding: 0.78rem 0.82rem;
-            border: 1px solid var(--agent-line);
-            border-radius: 8px;
-            background: rgba(255, 255, 255, 0.03);
-        }
-        .agent-live-progress {
-            display: flex;
-            align-items: center;
-            gap: 0.88rem;
-            width: min(760px, 100%);
-            margin: 0.35rem 0 1.2rem;
-            padding: 0.92rem 1rem;
-            color: var(--agent-text);
-            background: rgba(17, 17, 17, 0.78);
-            border: 1px solid rgba(249, 115, 22, 0.24);
-            border-radius: 8px;
-            box-shadow: 0 18px 46px rgba(0, 0, 0, 0.24);
-        }
-        .agent-live-spinner {
-            width: 1.35rem;
-            height: 1.35rem;
-            min-width: 1.35rem;
-            border-radius: 999px;
-            border: 2px solid rgba(249, 115, 22, 0.18);
-            border-top-color: #f97316;
-            border-right-color: #facc15;
-            animation: agent-spin 780ms linear infinite;
-        }
-        .agent-live-copy {
-            min-width: 0;
-        }
-        .agent-live-title {
-            color: var(--agent-text);
-            font-size: 0.96rem;
-            line-height: 1.35;
-            font-weight: 650;
-            overflow-wrap: anywhere;
-        }
-        .agent-live-subtitle {
-            display: flex;
-            align-items: center;
-            gap: 0.42rem;
-            color: var(--agent-muted);
-            font-size: 0.78rem;
-            line-height: 1.35;
-            margin-top: 0.22rem;
-        }
-        .agent-live-dot {
-            width: 0.28rem;
-            height: 0.28rem;
-            border-radius: 999px;
-            background: #facc15;
-            animation: agent-pulse 980ms ease-in-out infinite;
-        }
-        .agent-live-dot:nth-child(2) {
-            animation-delay: 130ms;
-        }
-        .agent-live-dot:nth-child(3) {
-            animation-delay: 260ms;
-        }
-        @keyframes agent-spin {
-            to {
-                transform: rotate(360deg);
-            }
-        }
-        @keyframes agent-pulse {
-            0%, 100% {
-                opacity: 0.28;
-                transform: translateY(0);
-            }
-            45% {
-                opacity: 1;
-                transform: translateY(-0.16rem);
-            }
-        }
-        hr {
-            border-color: var(--agent-line) !important;
-        }
-        .hero {
-            padding: 5.1rem 0 1.2rem;
-            max-width: 850px;
-        }
-        .hero h1 {
-            color: var(--agent-text);
-            font-size: clamp(2rem, 4.4vw, 4.2rem);
-            line-height: 1.06;
-            letter-spacing: 0;
-            margin: 0 0 0.82rem;
-            font-weight: 760;
-        }
-        .hero p {
-            color: var(--agent-muted);
-            font-size: 1.06rem;
-            line-height: 1.7;
-            margin: 0;
-            max-width: 690px;
-        }
-        .hero-kicker {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.45rem;
-            color: #fed7aa;
-            background: var(--agent-accent-soft);
-            border: 1px solid rgba(249, 115, 22, 0.24);
-            border-radius: 999px;
-            padding: 0.32rem 0.68rem;
-            font-size: 0.8rem;
-            font-weight: 650;
-            margin-bottom: 1rem;
-        }
-        .prompt-grid-label {
-            color: var(--agent-muted);
-            font-size: 0.88rem;
-            margin: 2.1rem 0 0.65rem;
-        }
-        div[data-testid="stButton"] > button {
-            border-radius: 8px;
-            min-height: 2.7rem;
-            background: rgba(255, 255, 255, 0.055);
-            border: 1px solid var(--agent-line);
-            color: var(--agent-text-soft);
-            white-space: normal;
-            text-align: left;
-            line-height: 1.52;
-            transition: background 160ms ease, border-color 160ms ease, transform 160ms ease;
-        }
-        div[data-testid="stButton"] > button:hover {
-            background: rgba(255, 255, 255, 0.085);
-            border-color: var(--agent-line-strong);
-            color: #ffffff;
-            transform: translateY(-1px);
-        }
-        div[data-testid="stButton"] > button:focus:not(:active) {
-            border-color: rgba(249, 115, 22, 0.55);
-            box-shadow: 0 0 0 1px rgba(249, 115, 22, 0.25);
-        }
-        .metric-card {
-            background: linear-gradient(180deg, rgba(255,255,255,0.07), rgba(255,255,255,0.035));
-            border: 1px solid var(--agent-line);
-            border-radius: 8px;
-            padding: 1rem 1.05rem;
-            min-height: 7.25rem;
-            overflow: hidden;
-            box-shadow: var(--agent-shadow);
-        }
-        .metric-label {
-            color: var(--agent-muted);
-            font-size: 0.8rem;
-            font-weight: 640;
-            line-height: 1.45;
-            margin-bottom: 0.35rem;
-        }
-        .metric-value {
-            color: var(--agent-text);
-            font-size: clamp(1.35rem, 2.25vw, 2.1rem);
-            line-height: 1.18;
-            font-weight: 680;
-            word-break: break-word;
-            overflow-wrap: anywhere;
-            white-space: normal;
-        }
-        .chat-transcript-start {
-            height: 0.45rem;
-        }
-        .message-row {
-            display: flex;
-            gap: 0.75rem;
-            align-items: flex-start;
-            margin: 0 0 1.35rem;
-            padding-top: 0.2rem;
-            overflow: visible;
-        }
-        .message-avatar {
-            width: 2.05rem;
-            height: 2.05rem;
-            min-width: 2.05rem;
-            border-radius: 0.6rem;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: #111111;
-            font-weight: 780;
-            line-height: 1;
-            margin-top: 0.1rem;
-            box-shadow: 0 10px 24px rgba(0, 0, 0, 0.22);
-        }
-        .message-avatar.user {
-            background: #f4f4f5;
-        }
-        .message-avatar.assistant {
-            background: linear-gradient(135deg, #f97316, #facc15);
-        }
-        .message-bubble {
-            background: var(--agent-bg-soft);
-            border: 1px solid var(--agent-line);
-            border-radius: 8px;
-            padding: 0.75rem 0.95rem;
-            line-height: 1.7;
-            min-height: 2.35rem;
-            overflow: visible;
-            flex: 1;
-            word-break: break-word;
-            overflow-wrap: anywhere;
-            color: var(--agent-text-soft);
-            box-shadow: 0 16px 40px rgba(0, 0, 0, 0.18);
-        }
-        .message-row.user .message-bubble {
-            background: #242424;
-            border-color: #363636;
-            color: #f8fafc;
-        }
-        .message-bubble p {
-            margin: 0 0 0.35rem 0;
-            line-height: 1.7;
-        }
-        .analysis-shell {
-            margin: -0.25rem 0 1.4rem 2.8rem;
-            padding: 1rem 0 0;
-        }
-        .stMarkdown, [data-testid="stMarkdownContainer"] {
-            color: var(--agent-text-soft);
-        }
-        [data-testid="stMarkdownContainer"] strong {
-            color: #ffffff;
-        }
-        [data-testid="stMarkdownContainer"] h1,
-        [data-testid="stMarkdownContainer"] h2,
-        [data-testid="stMarkdownContainer"] h3 {
-            color: var(--agent-text) !important;
-            font-weight: 720 !important;
-        }
-        [data-testid="stMarkdownContainer"] li {
-            margin-bottom: 0.25rem;
-        }
-        div[data-testid="stAlert"] {
-            border-radius: 8px;
-            border: 1px solid var(--agent-line);
-            background: rgba(255, 255, 255, 0.055);
-            color: var(--agent-text-soft);
-        }
-        div[data-testid="stExpander"] {
-            border: 1px solid var(--agent-line) !important;
-            border-radius: 8px !important;
-            background: rgba(255, 255, 255, 0.035) !important;
-            overflow: hidden;
-        }
-        div[data-testid="stExpander"] summary {
-            color: var(--agent-text) !important;
-            font-weight: 650;
-        }
-        div[data-testid="stDataFrame"] {
-            border-radius: 8px;
-            overflow: hidden;
-            border: 1px solid var(--agent-line);
-        }
-        .score-bars {
-            display: grid;
-            gap: 0.82rem;
-            margin: 0.15rem 0 1.05rem;
-        }
-        .score-row {
-            padding: 0.88rem 0.95rem 0.95rem;
-            border: 1px solid rgba(217, 189, 130, 0.14);
-            border-radius: 6px;
-            background: rgba(17, 21, 29, 0.62);
-        }
-        .score-head {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 1rem;
-            margin-bottom: 0.62rem;
-        }
-        .score-name {
-            color: var(--agent-text);
-            font-size: 0.94rem;
-            line-height: 1.45;
-            min-width: 0;
-            overflow-wrap: anywhere;
-        }
-        .score-value {
-            color: #f1dfad;
-            font-family: var(--agent-mono-font-family);
-            font-size: 0.9rem;
-            text-align: right;
-            white-space: nowrap;
-        }
-        .score-track {
-            height: 0.42rem;
-            background: rgba(217, 189, 130, 0.09);
-            border-radius: 999px;
-            overflow: hidden;
-        }
-        .score-fill {
-            height: 100%;
-            background: linear-gradient(90deg, #f97316, #facc15);
-            border-radius: 999px;
-        }
-        .score-detail {
-            color: var(--agent-muted);
-            font-size: 0.84rem;
-            line-height: 1.62;
-            margin-top: 0.62rem;
-            overflow-wrap: anywhere;
-        }
-        .score-detail + .score-detail {
-            margin-top: 0.32rem;
-        }
-        .score-detail strong {
-            color: var(--agent-text-soft);
-            font-weight: 620;
-        }
-        .risk-list {
-            display: grid;
-            gap: 0.62rem;
-            margin-top: 1rem;
-        }
-        .risk-item {
-            padding: 0.78rem 0.9rem;
-            border: 1px solid rgba(217, 189, 130, 0.15);
-            border-left: 3px solid rgba(217, 189, 130, 0.42);
-            border-radius: 6px;
-            background: rgba(17, 21, 29, 0.62);
-            color: var(--agent-text-soft);
-            font-size: 0.86rem;
-            line-height: 1.62;
-            overflow-wrap: anywhere;
-        }
-        .risk-item.high {
-            border-color: rgba(176, 86, 74, 0.28);
-            border-left-color: rgba(201, 99, 82, 0.72);
-            background: rgba(63, 25, 24, 0.26);
-        }
-        .risk-level {
-            color: #f1dfad;
-            font-family: var(--agent-mono-font-family) !important;
-            font-size: 0.78rem;
-            margin-right: 0.45rem;
-        }
-        .risk-empty {
-            margin-top: 1rem;
-            padding: 0.78rem 0.9rem;
-            border: 1px solid rgba(217, 189, 130, 0.14);
-            border-radius: 6px;
-            background: rgba(17, 21, 29, 0.58);
-            color: var(--agent-muted);
-            font-size: 0.86rem;
-        }
-        .tool-steps {
-            display: grid;
-            gap: 0.72rem;
-            margin: 0.2rem 0 0.25rem;
-        }
-        .tool-step {
-            display: grid;
-            grid-template-columns: 2.4rem minmax(0, 1fr);
-            gap: 0.82rem;
-            padding: 0.88rem 0.95rem;
-            border: 1px solid rgba(217, 189, 130, 0.14);
-            border-radius: 6px;
-            background: rgba(17, 21, 29, 0.62);
-        }
-        .tool-step-index {
-            width: 2.1rem;
-            height: 2.1rem;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            border: 1px solid rgba(217, 189, 130, 0.18);
-            border-radius: 999px;
-            color: #f1dfad;
-            font-family: var(--agent-mono-font-family) !important;
-            font-size: 0.82rem;
-            background: rgba(217, 189, 130, 0.06);
-        }
-        .tool-step-title {
-            color: var(--agent-text);
-            font-size: 0.94rem;
-            line-height: 1.5;
-            overflow-wrap: anywhere;
-        }
-        .tool-step-meta {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 0.42rem;
-            margin: 0.36rem 0 0.48rem;
-        }
-        .tool-chip {
-            display: inline-flex;
-            align-items: center;
-            min-height: 1.35rem;
-            padding: 0.08rem 0.48rem;
-            border: 1px solid rgba(217, 189, 130, 0.14);
-            border-radius: 999px;
-            color: var(--agent-muted);
-            background: rgba(8, 10, 14, 0.6);
-            font-family: var(--agent-mono-font-family) !important;
-            font-size: 0.74rem;
-        }
-        .tool-step-note {
-            color: var(--agent-text-soft);
-            font-size: 0.86rem;
-            line-height: 1.62;
-            overflow-wrap: anywhere;
-        }
-        .report-anchor {
-            display: none;
-        }
-        [data-testid="stFileUploader"] section {
-            background: rgba(255, 255, 255, 0.045);
-            border: 1px dashed var(--agent-line-strong);
-            border-radius: 8px;
-            min-height: 5.1rem;
-            padding: 0.78rem 0.82rem;
-        }
-        [data-testid="stFileUploader"] button {
-            background: rgba(255, 255, 255, 0.08) !important;
-            border: 1px solid rgba(255, 255, 255, 0.12) !important;
-            color: var(--agent-text-soft) !important;
-            border-radius: 8px;
-            min-height: 2.3rem;
-            padding: 0.55rem 0.78rem;
-        }
-        [data-testid="stFileUploader"] small {
-            display: none !important;
-        }
-        [data-testid="stTextArea"] div[data-baseweb="textarea"],
-        [data-testid="stTextArea"] div[data-baseweb="base-input"],
-        [data-testid="stTextAreaRootElement"] {
-            background: rgba(255, 255, 255, 0.055) !important;
-            border-color: var(--agent-line) !important;
-        }
-        textarea, input {
-            background: rgba(255, 255, 255, 0.055) !important;
-            color: var(--agent-text) !important;
-            border: 1px solid var(--agent-line) !important;
-            border-radius: 8px !important;
-        }
-        textarea::placeholder, input::placeholder {
-            color: var(--agent-faint) !important;
-        }
-        .stDownloadButton button {
-            justify-content: center;
-            text-align: center !important;
-            background: rgba(17, 21, 29, 0.82) !important;
-            border: 1px solid rgba(217, 189, 130, 0.18) !important;
-            border-radius: 6px !important;
-            color: var(--agent-text) !important;
-        }
-        .stDownloadButton button:hover {
-            border-color: rgba(217, 189, 130, 0.34) !important;
-            background: rgba(217, 189, 130, 0.08) !important;
-            color: #f1dfad !important;
-        }
-        [data-testid="stBottom"] {
-            z-index: 999;
-            background: #111111 !important;
-            backdrop-filter: blur(18px);
-            border-top: 1px solid rgba(255, 255, 255, 0.06);
-        }
-        [data-testid="stBottomBlockContainer"] {
-            background: #111111 !important;
-            padding: 0.9rem 2.4rem 1.05rem !important;
-        }
-        [data-testid="stBottom"] [data-testid="stVerticalBlock"] {
-            width: min(1120px, 100%) !important;
-            max-width: 1120px !important;
-            margin: 0 auto !important;
-            padding: 0 !important;
-        }
-        [data-testid="stChatInput"] {
-            width: 100%;
-            background: transparent !important;
-            border: 0 !important;
-            padding: 0 !important;
-            box-shadow: none !important;
-        }
-        [data-testid="stChatInput"] > div {
-            width: 100%;
-            background: transparent !important;
-            border: 0 !important;
-            padding: 0 !important;
-        }
-        [data-testid="stChatInput"] div[data-baseweb="textarea"],
-        [data-testid="stChatInput"] div[data-baseweb="base-input"] {
-            width: 100%;
-            background: transparent !important;
-            border: 0 !important;
-        }
-        [data-testid="stChatInput"] div {
-            color: var(--agent-text) !important;
-        }
-        [data-testid="stChatInput"] textarea,
-        [data-testid="stChatInput"] input {
-            background: #222222 !important;
-            border: 1px solid #3a3a3a !important;
-            box-shadow: 0 18px 58px rgba(0, 0, 0, 0.32);
-            min-height: 3.4rem !important;
-            padding: 0.95rem 4.1rem 0.95rem 1rem !important;
-        }
-        [data-testid="stChatInput"] textarea:focus,
-        [data-testid="stChatInput"] input:focus {
-            border-color: rgba(249, 115, 22, 0.7) !important;
-            box-shadow: 0 0 0 1px rgba(249, 115, 22, 0.22), 0 18px 58px rgba(0, 0, 0, 0.32);
-            outline: none !important;
-        }
-        [data-testid="stChatInput"] button {
-            background: #f4f4f5 !important;
-            color: #111111 !important;
-            border-radius: 999px !important;
-        }
-        [data-testid="stChatMessage"] {
-            overflow: visible !important;
-            align-items: flex-start !important;
-            padding-top: 0.35rem !important;
-            padding-bottom: 0.35rem !important;
-        }
-        [data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] {
-            overflow: visible !important;
-            line-height: 1.65 !important;
-            padding-top: 0.12rem !important;
-        }
-        [data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] p {
-            line-height: 1.65 !important;
-            margin-top: 0 !important;
-            margin-bottom: 0.35rem !important;
-            overflow: visible !important;
-        }
-        [data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] h1,
-        [data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] h2,
-        [data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] h3 {
-            line-height: 1.35 !important;
-            margin-top: 0.2rem !important;
-        }
-        @media (max-width: 860px) {
-            .block-container {
-                padding: 2rem 1rem 8rem;
-            }
-            .hero {
-                padding-top: 1.6rem;
-            }
-            .message-row {
-                gap: 0.55rem;
-            }
-            .message-avatar {
-                width: 1.8rem;
-                height: 1.8rem;
-                min-width: 1.8rem;
-            }
-            .analysis-shell {
-                margin-left: 0;
-            }
-            [data-testid="stBottom"] [data-testid="stVerticalBlock"] {
-                padding-left: 1rem;
-                padding-right: 1rem;
-            }
-        }
-
-        /* Warm lab-console theme inspired by the reference screens. */
-        :root {
-            --agent-bg: #08090c;
-            --agent-bg-elevated: #0d1016;
-            --agent-bg-soft: #11151d;
-            --agent-bg-softer: #171a22;
-            --agent-line: #262b33;
-            --agent-line-strong: #3a3f48;
-            --agent-text: #efe7d3;
-            --agent-text-soft: #ded3bb;
-            --agent-muted: #89877d;
-            --agent-faint: #5f625f;
-            --agent-accent: #d9bd82;
-            --agent-accent-soft: rgba(217, 189, 130, 0.12);
-            --agent-shadow: 0 24px 72px rgba(0, 0, 0, 0.44);
-            --agent-font-family: "Times New Roman", "Noto Serif SC", "Source Han Serif SC", "Songti SC", SimSun, Georgia, serif;
-            --agent-mono-font-family: "Times New Roman", "Noto Serif SC", "Source Han Serif SC", "Songti SC", SimSun, Georgia, serif;
-        }
-        html, body, .stApp {
-            background: #08090c !important;
-        }
-        body, .stMarkdown, [data-testid="stMarkdownContainer"], p, h1, h2, h3, h4, h5, h6, label {
-            color: var(--agent-text);
-            font-family: var(--agent-font-family) !important;
-        }
-        .stApp {
-            background:
-                radial-gradient(circle at 74% 3%, rgba(217, 189, 130, 0.055), transparent 25rem),
-                radial-gradient(circle at 18% 92%, rgba(48, 63, 59, 0.18), transparent 34rem),
-                linear-gradient(180deg, #0a0b0f 0%, #08090c 48%, #07080a 100%) !important;
-        }
-        .block-container {
-            max-width: 1180px;
-            padding: 2.9rem 3.2rem 8.4rem;
-        }
-        [data-testid="stSidebar"] {
-            background: linear-gradient(180deg, #10141b 0%, #0d1118 100%) !important;
-            border-right: 1px solid #232832;
-            box-shadow: 18px 0 48px rgba(0, 0, 0, 0.34);
-        }
-        [data-testid="stSidebar"] > div {
-            padding: 2.35rem 1.35rem 1.4rem;
-        }
-        [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p,
-        [data-testid="stSidebar"] label {
-            font-size: 0.88rem !important;
-            line-height: 1.55 !important;
-        }
-        [data-testid="stSidebar"] .stCaption,
-        [data-testid="stSidebar"] small {
-            font-size: 0.76rem !important;
-            line-height: 1.45 !important;
-        }
-        .sidebar-brand {
-            display: block;
-            padding: 0 0 1.1rem;
-        }
-        .sidebar-brand::before,
-        .sidebar-section-title::before,
-        .hero-kicker::before {
-            content: "";
-            display: inline-block;
-            width: 1.45rem;
-            height: 1px;
-            margin-right: 0.55rem;
-            vertical-align: middle;
-            background: rgba(217, 189, 130, 0.55);
-        }
-        .brand-mark {
-            display: none;
-        }
-        .brand-title {
-            margin-top: 0.65rem;
-            color: var(--agent-text);
-            font-size: 1.34rem;
-            line-height: 1.15;
-            font-weight: 560;
-            font-style: normal;
-            letter-spacing: 0;
-        }
-        .brand-subtitle {
-            color: var(--agent-muted);
-            font-family: var(--agent-mono-font-family) !important;
-            font-size: 0.7rem;
-            letter-spacing: 0.18em;
-            text-transform: uppercase;
-        }
-        .sidebar-section-title {
-            color: var(--agent-muted);
-            font-family: var(--agent-mono-font-family) !important;
-            font-size: 0.76rem;
-            font-weight: 500;
-            letter-spacing: 0.16em;
-            margin: 1.7rem 0 0.82rem;
-        }
-        .status-list {
-            border: 0;
-            background: transparent;
-            border-radius: 0;
-        }
-        .status-row {
-            position: relative;
-            display: block;
-            padding: 0.78rem 0 0.9rem 1.1rem;
-            border-bottom: 1px solid rgba(217, 189, 130, 0.12);
-            color: var(--agent-text-soft);
-            font-size: 1rem;
-        }
-        .status-row::before {
-            content: "";
-            position: absolute;
-            left: 0.1rem;
-            top: 1.05rem;
-            width: 0.34rem;
-            height: 0.34rem;
-            border-radius: 999px;
-            background: var(--agent-accent);
-            box-shadow: 0 0 12px rgba(217, 189, 130, 0.58);
-        }
-        .status-pill {
-            display: block;
-            width: fit-content;
-            margin-top: 0.34rem;
-            color: var(--agent-faint);
-            background: transparent;
-            border: 0;
-            border-radius: 0;
-            padding: 0;
-            font-family: var(--agent-mono-font-family) !important;
-            font-size: 0.74rem;
-            letter-spacing: 0;
-        }
-        .sidebar-note {
-            border: 1px solid rgba(217, 189, 130, 0.18);
-            background: rgba(17, 21, 29, 0.58);
-            color: var(--agent-muted);
-            font-size: 0.86rem;
-            line-height: 1.75;
-        }
-        div[data-testid="stButton"] > button {
-            min-height: 2.75rem;
-            height: auto;
-            padding: 0.82rem 1rem;
-            background: rgba(17, 21, 29, 0.8);
-            border: 1px solid rgba(217, 189, 130, 0.18);
-            color: var(--agent-text-soft);
-            border-radius: 6px;
-            font-family: var(--agent-font-family) !important;
-            white-space: pre-wrap;
-            box-shadow: none;
-        }
-        [class*="st-key-example_card_"] div[data-testid="stButton"] > button {
-            justify-content: flex-start !important;
-            align-items: center !important;
-            text-align: left !important;
-            min-height: 4.45rem;
-            padding: 0.62rem 0.9rem;
-        }
-        div[data-testid="stButton"] > button:hover {
-            background: rgba(217, 189, 130, 0.085);
-            border-color: rgba(217, 189, 130, 0.42);
-            color: var(--agent-text);
-        }
-        div[data-testid="stButton"] > button p,
-        div[data-testid="stButton"] > button span {
-            color: var(--agent-text-soft) !important;
-            white-space: pre-wrap !important;
-            overflow: visible !important;
-            text-overflow: unset !important;
-            line-height: 1.45 !important;
-            margin: 0 !important;
-            text-align: left !important;
-        }
-        [class*="st-key-example_card_"] div[data-testid="stButton"] > button p,
-        [class*="st-key-example_card_"] div[data-testid="stButton"] > button span {
-            width: 100% !important;
-        }
-        div[data-testid="stButton"] > button:hover p,
-        div[data-testid="stButton"] > button:hover span {
-            color: var(--agent-text) !important;
-        }
-        div[data-testid="stButton"] > button:focus:not(:active) {
-            border-color: rgba(217, 189, 130, 0.62);
-            box-shadow: 0 0 0 1px rgba(217, 189, 130, 0.2);
-        }
-        .hero {
-            max-width: 680px;
-            margin: 0 auto;
-            padding: 0 0 1.35rem;
-            text-align: center;
-        }
-        .hero h1 {
-            color: var(--agent-text);
-            font-size: clamp(2.6rem, 5vw, 4.65rem);
-            line-height: 1;
-            font-weight: 420;
-            letter-spacing: 0;
-            margin: 0;
-        }
-        .hero p {
-            color: var(--agent-muted);
-            font-size: 1.18rem;
-            line-height: 1.78;
-            max-width: 730px;
-        }
-        .hero-kicker {
-            display: block;
-            width: fit-content;
-            margin-bottom: 1.28rem;
-            padding: 0;
-            color: var(--agent-muted);
-            background: transparent;
-            border: 0;
-            border-radius: 0;
-            font-family: var(--agent-mono-font-family) !important;
-            font-size: 0.68rem;
-            letter-spacing: 0.18em;
-            text-transform: uppercase;
-        }
-        .prompt-grid-label {
-            max-width: 760px;
-            margin: 0 auto 0.75rem;
-            color: var(--agent-text-soft);
-            font-family: var(--agent-font-family) !important;
-            font-size: 0.92rem;
-            line-height: 1.34;
-            letter-spacing: 0;
-            text-align: center;
-        }
-        section[data-testid="stAppScrollToBottomContainer"]:has([class*="st-key-empty_state_shell"]) {
-            align-items: flex-start !important;
-        }
-        .block-container:has([class*="st-key-empty_state_shell"]) {
-            box-sizing: border-box;
-            height: calc(100vh - 8.4rem);
-            height: calc(100dvh - 8.4rem);
-            min-height: calc(100vh - 8.4rem);
-            min-height: calc(100dvh - 8.4rem);
-            padding-block: 2.9rem;
-        }
-        .block-container:has([class*="st-key-empty_state_shell"]) > div[data-testid="stVerticalBlock"] {
-            height: 100%;
-        }
-        [data-testid="stLayoutWrapper"]:has(> [class*="st-key-empty_state_shell"]) {
-            flex: 1 1 auto;
-            min-height: 0;
-        }
-        [class*="st-key-empty_state_shell"] {
-            display: flex;
-            flex: 1 1 auto;
-            height: 100%;
-            min-height: 0;
-            align-items: center;
-            justify-content: center;
-        }
-        [class*="st-key-empty_state_shell"] > div[data-testid="stVerticalBlock"] {
-            width: 100%;
-            gap: 0.8rem;
-        }
-        [class*="st-key-empty_state_shell"] .agent-live-progress {
-            width: min(1120px, calc(100% + 1.6rem));
-            margin: 0.15rem 0 1.2rem 50%;
-            transform: translateX(-50%);
-        }
-        [class*="st-key-empty_state_shell"] [class*="st-key-example_card_"] p,
-        [class*="st-key-empty_state_shell"] [class*="st-key-example_card_"] span {
-            font-size: 0.92rem !important;
-            line-height: 1.34 !important;
-        }
-        .metric-card {
-            background: rgba(17, 21, 29, 0.78);
-            border: 1px solid rgba(217, 189, 130, 0.18);
-            border-radius: 6px;
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            height: 8.9rem;
-            min-height: 8.9rem;
-            padding: 1.05rem 1.35rem;
-            overflow: hidden;
-            box-shadow: var(--agent-shadow);
-        }
-        .metric-label {
-            color: var(--agent-muted);
-            font-family: var(--agent-mono-font-family) !important;
-            font-size: 0.78rem;
-            line-height: 1.35;
-            letter-spacing: 0.06em;
-            margin-bottom: 0.72rem;
-            text-transform: uppercase;
-            white-space: nowrap;
-        }
-        .metric-value {
-            color: var(--agent-text);
-            display: block;
-            max-width: 100%;
-            font-size: clamp(1.45rem, 1.7vw, 1.95rem);
-            line-height: 1.16;
-            font-weight: 440;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            word-break: normal;
-            overflow-wrap: normal;
-        }
-        .recommendation-summary {
-            width: min(44rem, 100%);
-            margin: 0 0 1.85rem;
-        }
-        .recommendation-card {
-            height: auto;
-            min-height: 6.9rem;
-            justify-content: flex-start;
-            padding: 1.2rem 1.45rem 1.3rem;
-            overflow: visible;
-        }
-        .recommendation-card .metric-value {
-            font-size: clamp(1.55rem, 2vw, 2.25rem);
-            line-height: 1.24;
-            white-space: normal;
-            overflow: visible;
-            text-overflow: clip;
-            word-break: break-word;
-            overflow-wrap: anywhere;
-        }
-        .processing-plan {
-            width: min(58rem, 100%);
-            margin: 0 0 1.85rem;
-            padding: 1.35rem 1.45rem 1.5rem;
-            border: 1px solid rgba(249, 115, 22, 0.24);
-            border-radius: 8px;
-            background:
-                linear-gradient(135deg, rgba(249, 115, 22, 0.08), transparent 35%),
-                rgba(17, 21, 29, 0.82);
-            box-shadow: var(--agent-shadow);
-        }
-        .processing-plan-head {
-            display: flex;
-            align-items: flex-start;
-            justify-content: space-between;
-            gap: 1rem;
-            margin-bottom: 1.15rem;
-        }
-        .processing-plan-kicker {
-            color: var(--agent-accent);
-            font-family: var(--agent-chinese-font-family) !important;
-            font-size: 0.74rem;
-            letter-spacing: 0.06em;
-            margin-bottom: 0.32rem;
-        }
-        .processing-plan-title {
-            color: var(--agent-text);
-            font-size: clamp(1.22rem, 1.8vw, 1.65rem);
-            line-height: 1.35;
-            font-weight: 600;
-        }
-        .processing-plan-status {
-            flex: 0 0 auto;
-            max-width: 16rem;
-            padding: 0.38rem 0.58rem;
-            border: 1px solid rgba(249, 115, 22, 0.28);
-            border-radius: 999px;
-            color: #fdba74;
-            background: rgba(249, 115, 22, 0.09);
-            font-family: var(--agent-chinese-font-family) !important;
-            font-size: 0.7rem;
-            line-height: 1.35;
-            text-align: center;
-        }
-        .processing-flow {
-            display: flex;
-            flex-wrap: wrap;
-            align-items: center;
-            gap: 0.42rem;
-            margin-bottom: 1.15rem;
-        }
-        .processing-flow-step {
-            padding: 0.42rem 0.58rem;
-            border: 1px solid #353b45;
-            border-radius: 5px;
-            color: var(--agent-text-soft);
-            background: #171b22;
-            font-size: 0.8rem;
-            line-height: 1.35;
-        }
-        .processing-flow-arrow {
-            color: var(--agent-accent);
-            font-size: 0.76rem;
-        }
-        .processing-stage-grid {
-            display: grid;
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 0.72rem;
-        }
-        .processing-stage {
-            padding: 0.92rem 1rem;
-            border: 1px solid #2c323c;
-            border-radius: 6px;
-            background: rgba(12, 15, 20, 0.72);
-        }
-        .processing-stage:last-child {
-            grid-column: 1 / -1;
-        }
-        .processing-stage h4 {
-            margin: 0 0 0.5rem;
-            color: var(--agent-text);
-            font-size: 0.94rem;
-            line-height: 1.4;
-            font-weight: 600;
-        }
-        .processing-stage p {
-            margin: 0.32rem 0;
-            color: var(--agent-muted);
-            font-size: 0.82rem;
-            line-height: 1.65;
-        }
-        .processing-stage strong {
-            color: var(--agent-text-soft);
-            font-weight: 600;
-        }
-        .processing-plan-foot {
-            display: grid;
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 0.72rem;
-            margin-top: 0.72rem;
-        }
-        .processing-plan-note {
-            padding: 0.82rem 0.95rem;
-            border-left: 2px solid rgba(249, 115, 22, 0.55);
-            color: var(--agent-muted);
-            background: rgba(249, 115, 22, 0.045);
-            font-size: 0.8rem;
-            line-height: 1.65;
-        }
-        .processing-plan-note strong {
-            color: var(--agent-text-soft);
-        }
-        .processing-plan-note:last-child {
-            grid-column: 1 / -1;
-        }
-        @media (max-width: 760px) {
-            .processing-plan-head {
-                flex-direction: column;
-            }
-            .processing-plan-status {
-                max-width: 100%;
-                text-align: left;
-            }
-            .processing-stage-grid,
-            .processing-plan-foot {
-                grid-template-columns: 1fr;
-            }
-            .processing-stage:last-child {
-                grid-column: auto;
-            }
-            .processing-plan-note:last-child {
-                grid-column: auto;
-            }
-        }
-        .message-row {
-            margin: 0 0 1.8rem;
-        }
-        .message-row.user {
-            justify-content: flex-end;
-        }
-        .message-row.user .message-avatar {
-            display: none;
-        }
-        .message-row.user .message-bubble {
-            flex: 0 1 760px;
-            margin-left: auto;
-            background: rgba(17, 21, 29, 0.86);
-            border: 1px solid #2b3039;
-            color: var(--agent-text);
-            border-radius: 6px;
-            padding: 1.05rem 1.18rem;
-            font-size: 1.12rem;
-            box-shadow: none;
-        }
-        .user-attachment-row {
-            display: flex;
-            justify-content: flex-end;
-            margin: 0 0 0.65rem;
-        }
-        .user-attachment {
-            display: block;
-            width: min(22rem, 58vw);
-            max-height: 24rem;
-            object-fit: contain;
-            border: 1px solid #2b3039;
-            border-radius: 8px;
-            background: rgba(17, 21, 29, 0.86);
-        }
-        .message-row.assistant {
-            display: grid;
-            grid-template-columns: 6.8rem minmax(0, 1fr);
-            gap: 1.45rem;
-            align-items: start;
-        }
-        .message-row.assistant .message-avatar {
-            width: auto;
-            min-width: 0;
-            height: auto;
-            margin: 0;
-            padding: 0.66rem 1.2rem 0 0;
-            justify-content: flex-start;
-            align-items: flex-start;
-            background: transparent;
-            border-radius: 0;
-            color: var(--agent-accent);
-            box-shadow: none;
-            font-size: 0.86rem;
-            line-height: 1.2;
-            font-style: italic;
-            font-weight: 420;
-            border-right: 1px solid rgba(217, 189, 130, 0.16);
-        }
-        .message-row.assistant .message-bubble {
-            background: transparent;
-            border: 0;
-            box-shadow: none;
-            padding: 0;
-            color: var(--agent-text);
-            font-size: 1.08rem;
-            line-height: 1.78;
-        }
-        div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label) {
-            align-items: flex-start;
-            gap: 1.45rem;
-            margin: 0 0 1.8rem;
-        }
-        .assistant-markdown-label {
-            min-height: 2.1rem;
-            padding: 0.66rem 1.2rem 0.45rem 0;
-            border-right: 1px solid rgba(217, 189, 130, 0.16);
-            color: var(--agent-accent);
-            font-size: 0.86rem;
-            font-style: italic;
-            font-weight: 420;
-            line-height: 1.2;
-            white-space: nowrap;
-        }
-        div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label)
-        > div[data-testid="stColumn"]:last-child [data-testid="stMarkdownContainer"] {
-            color: var(--agent-text);
-            font-size: 1.08rem;
-            line-height: 1.78;
-            overflow-wrap: anywhere;
-        }
-        .analysis-shell {
-            margin: 0 0 1.9rem 8.25rem;
-            padding-top: 0;
-        }
-        code, pre, kbd, samp {
-            color: #e4c98e !important;
-        }
-        [data-testid="stMarkdownContainer"] code {
-            color: #e4c98e !important;
-            background: #0a0b0f !important;
-            border: 1px solid rgba(217, 189, 130, 0.12);
-            border-radius: 5px;
-            padding: 0.12rem 0.38rem;
-        }
-        div[data-testid="stExpander"] {
-            border-color: rgba(217, 189, 130, 0.17) !important;
-            background: rgba(11, 13, 18, 0.72) !important;
-            border-radius: 6px !important;
-        }
-        div[data-testid="stExpander"] summary {
-            color: var(--agent-text) !important;
-            letter-spacing: 0.04em;
-            background: rgba(11, 13, 18, 0.72) !important;
-            border-bottom: 1px solid transparent;
-        }
-        div[data-testid="stExpander"] summary:hover,
-        div[data-testid="stExpander"] details[open] > summary {
-            background: rgba(17, 21, 29, 0.78) !important;
-            border-bottom-color: rgba(217, 189, 130, 0.14) !important;
-            color: var(--agent-text) !important;
-        }
-        div[data-testid="stExpander"] summary * {
-            color: var(--agent-text) !important;
-            background: transparent !important;
-        }
-        div[data-testid="stExpander"] details,
-        div[data-testid="stExpander"] div[role="region"] {
-            background: rgba(8, 10, 14, 0.72) !important;
-        }
-        div[data-testid="stExpander"]:has(.score-bars) {
-            border-color: rgba(217, 189, 130, 0.2) !important;
-            background: rgba(8, 10, 14, 0.82) !important;
-        }
-        div[data-testid="stExpander"]:has(.score-bars) summary {
-            background: rgba(17, 21, 29, 0.72) !important;
-            border-bottom: 1px solid rgba(217, 189, 130, 0.15);
-        }
-        .score-fill {
-            background: linear-gradient(90deg, #8f7450, #e0c286);
-        }
-        .score-row {
-            background: rgba(17, 21, 29, 0.72);
-            border-color: rgba(217, 189, 130, 0.16);
-        }
-        .score-track {
-            background: rgba(217, 189, 130, 0.1);
-        }
-        div[data-testid="stExpander"]:has(.tool-steps),
-        div[data-testid="stExpander"]:has(.report-anchor) {
-            border-color: rgba(217, 189, 130, 0.2) !important;
-            background: rgba(8, 10, 14, 0.82) !important;
-        }
-        .tool-step {
-            background: rgba(17, 21, 29, 0.72);
-            border-color: rgba(217, 189, 130, 0.16);
-        }
-        div[data-testid="stExpander"]:has(.report-anchor) [data-testid="stMarkdownContainer"] {
-            color: var(--agent-text-soft) !important;
-        }
-        div[data-testid="stExpander"]:has(.report-anchor) [data-testid="stMarkdownContainer"] h1 {
-            color: var(--agent-text) !important;
-            font-size: clamp(2rem, 3.5vw, 3.6rem) !important;
-            line-height: 1.08 !important;
-            margin: 0.55rem 0 1.1rem !important;
-        }
-        div[data-testid="stExpander"]:has(.report-anchor) [data-testid="stMarkdownContainer"] h2 {
-            color: #f1dfad !important;
-            font-size: 1.24rem !important;
-            line-height: 1.35 !important;
-            margin-top: 1.45rem !important;
-            padding-top: 1rem;
-            border-top: 1px solid rgba(217, 189, 130, 0.12);
-        }
-        div[data-testid="stExpander"]:has(.report-anchor) [data-testid="stMarkdownContainer"] h3 {
-            color: var(--agent-text) !important;
-            font-size: 1.02rem !important;
-        }
-        div[data-testid="stExpander"]:has(.report-anchor) [data-testid="stMarkdownContainer"] p,
-        div[data-testid="stExpander"]:has(.report-anchor) [data-testid="stMarkdownContainer"] li {
-            color: var(--agent-text-soft) !important;
-            line-height: 1.76 !important;
-        }
-        div[data-testid="stExpander"]:has(.report-anchor) [data-testid="stCaptionContainer"],
-        div[data-testid="stExpander"]:has(.report-anchor) .stCaption {
-            color: var(--agent-muted) !important;
-        }
-        [data-testid="stFileUploader"] section,
-        [data-testid="stTextArea"] div[data-baseweb="textarea"],
-        [data-testid="stTextArea"] div[data-baseweb="base-input"],
-        [data-testid="stTextAreaRootElement"],
-        textarea,
-        input {
-            background: rgba(17, 21, 29, 0.82) !important;
-            border-color: rgba(217, 189, 130, 0.16) !important;
-            color: var(--agent-text) !important;
-            border-radius: 6px !important;
-        }
-        [data-testid="stBottom"],
-        [data-testid="stBottomBlockContainer"] {
-            background: rgba(8, 9, 12, 0.92) !important;
-            border-top: 1px solid rgba(217, 189, 130, 0.08);
-        }
-        [data-testid="stChatInput"] textarea,
-        [data-testid="stChatInput"] input {
-            box-sizing: border-box !important;
-            min-height: 3.85rem !important;
-            background: rgba(17, 21, 29, 0.98) !important;
-            border: 1px solid rgba(217, 189, 130, 0.2) !important;
-            border-radius: 6px !important;
-            color: var(--agent-text) !important;
-            box-shadow: 0 24px 76px rgba(0, 0, 0, 0.46);
-            font-size: 1rem !important;
-            line-height: 1.5rem !important;
-            padding: 1.1rem 4.1rem 1.1rem 1rem !important;
-        }
-        [data-testid="stChatInput"] textarea::placeholder,
-        [data-testid="stChatInput"] input::placeholder {
-            color: rgba(222, 211, 187, 0.52) !important;
-            opacity: 1 !important;
-        }
-        [data-testid="stChatInput"] textarea:focus,
-        [data-testid="stChatInput"] input:focus {
-            border-color: rgba(217, 189, 130, 0.66) !important;
-            box-shadow: 0 0 0 1px rgba(217, 189, 130, 0.24), 0 24px 76px rgba(0, 0, 0, 0.46);
-        }
-        [data-testid="stChatInput"] button {
-            background: transparent !important;
-            color: var(--agent-accent) !important;
-        }
-        @media (max-width: 860px) {
-            .block-container {
-                padding: 1.45rem 1rem 8.2rem;
-            }
-            .hero {
-                padding: 1.2rem 0 0.8rem;
-            }
-            [class*="st-key-empty_state_shell"] {
-                box-sizing: border-box;
-                min-height: 0;
-                padding: 1rem 0 0;
-            }
-            .block-container:has([class*="st-key-empty_state_shell"]) {
-                padding-block: 1.45rem;
-            }
-            [class*="st-key-empty_state_shell"] .agent-live-progress {
-                width: calc(100% - 2.8rem);
-                transform: translate(-50%, -1rem);
-            }
-            .message-row.assistant {
-                grid-template-columns: 1fr;
-                gap: 0.65rem;
-            }
-            .message-row.assistant .message-avatar {
-                border-right: 0;
-                border-bottom: 1px solid rgba(217, 189, 130, 0.16);
-                padding-bottom: 0.45rem;
-            }
-            div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label) {
-                flex-direction: column;
-                gap: 0.65rem;
-            }
-            div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label)
-            > div[data-testid="stColumn"] {
-                width: 100%;
-                flex: 1 1 auto;
-            }
-            .assistant-markdown-label {
-                width: 100%;
-                border-right: 0;
-                border-bottom: 1px solid rgba(217, 189, 130, 0.16);
-            }
-            .analysis-shell {
-                margin-left: 0;
-            }
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
+    """Load the ordered, scoped UI style modules on every Streamlit rerun."""
+    css = ui_components.load_style_bundle(STYLE_DIR)
+    st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
 
 
 def render_scroll_position_manager(*, restore: bool) -> None:
@@ -2123,6 +683,7 @@ def start_new_conversation() -> None:
     st.session_state.current_batch = None
     st.session_state.last_result = None
     st.session_state.last_vision_context = None
+    st.session_state.agent_progress_events = []
     reset_sidebar_inputs()
 
 
@@ -2133,113 +694,135 @@ def init_state() -> None:
     st.session_state.setdefault("last_vision_context", None)
     st.session_state.setdefault("clear_sidebar_inputs", False)
     st.session_state.setdefault("image_uploader_version", 0)
+    st.session_state.setdefault("agent_progress_events", [])
     initialize_memory_identity()
     if st.session_state.clear_sidebar_inputs:
         reset_sidebar_inputs()
         st.session_state.clear_sidebar_inputs = False
 
 
-def render_sidebar() -> tuple[str, bool, bytes | None, str]:
+def literature_database_ready() -> bool:
+    return Path(agent_rag.LITERATURE_DB_PATH).exists()
+
+
+def render_topbar(api_key: str) -> None:
+    st.markdown(
+        ui_components.topbar_html(
+            task_name=ui_components.current_task_label(st.session_state.agent_messages),
+            literature_ready=literature_database_ready(),
+            text_model_ready=bool(api_key),
+            vision_model_ready=bool(get_vision_api_key()),
+        ),
+        unsafe_allow_html=True,
+    )
+
+
+def render_sidebar(api_key: str) -> None:
+    """Render navigation and truthful system status without input widgets."""
     with st.sidebar:
-        st.markdown(
-            f"""
-            <div class="sidebar-brand">
-                <div>
-                    <div class="brand-subtitle">CITRUS AI · DECISION LAB</div>
-                    <div class="brand-title">Citrus Assistant</div>
+        with st.container(key="sidebar_brand"):
+            st.markdown(ui_components.sidebar_brand_html(), unsafe_allow_html=True)
+
+        with st.container(key="sidebar_new_task"):
+            st.button(
+                "＋ 新建对话",
+                width="stretch",
+                key="new_conversation",
+                on_click=start_new_conversation,
+            )
+
+        with st.container(key="sidebar_nav"):
+            st.markdown(
+                ui_components.sidebar_navigation_html(
+                    recent_tasks=ui_components.recent_task_labels(
+                        st.session_state.agent_messages
+                    ),
+                    literature_ready=literature_database_ready(),
+                ),
+                unsafe_allow_html=True,
+            )
+
+        with st.container(key="sidebar_footer"):
+            st.markdown(
+                ui_components.sidebar_system_status_html(
+                    text_model=DEEPSEEK_MODEL,
+                    text_model_ready=bool(api_key),
+                    vision_model=get_vision_model(),
+                    vision_model_ready=bool(get_vision_api_key()),
+                ),
+                unsafe_allow_html=True,
+            )
+
+
+def render_attachment_controls(
+    container_key: str,
+) -> tuple[str, bool, bytes | None, str]:
+    """Render the existing upload contract beside the active composer."""
+    prepared_image = None
+    uploader_version = int(st.session_state.image_uploader_version)
+    has_pending_upload = bool(st.session_state.get(image_uploader_key()))
+
+    with st.container(key=container_key):
+        with st.popover(
+            "图片已添加" if has_pending_upload else "图片与外观说明",
+            icon=":material/attach_file:",
+            key=f"{container_key}_popover",
+        ):
+            st.markdown(
+                """
+                <div class="attachment-panel-title">图片与外观说明</div>
+                <div class="attachment-panel-help">
+                    支持单张柑橘图片。图片仅在提交本轮任务后调用视觉模型，
+                    外观描述会作为人工观察一并纳入分析。
                 </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+                """,
+                unsafe_allow_html=True,
+            )
+            uploaded_image = st.file_uploader(
+                "上传柑橘图片",
+                type=list(SUPPORTED_UPLOAD_EXTENSIONS),
+                key=image_uploader_key(),
+            )
+            if uploaded_image:
+                try:
+                    prepared_image = prepare_image_for_vision(
+                        uploaded_image.getvalue(),
+                        filename=uploaded_image.name,
+                        mime_type=uploaded_image.type,
+                    )
+                except vision_client.VisionAPIError as error:
+                    st.error(str(error))
+                else:
+                    st.image(prepared_image.data, caption="图片预览", width="stretch")
+                    st.markdown(
+                        '<div class="attachment-preview-meta">'
+                        "已完成本地格式与尺寸校验；提交后将调用 Qwen Vision。"
+                        "</div>",
+                        unsafe_allow_html=True,
+                    )
+                    st.button(
+                        "删除图片",
+                        width="stretch",
+                        key=f"remove_uploaded_image_{uploader_version}",
+                        on_click=reset_uploaded_image,
+                    )
 
-        st.button(
-            "＋ 新建对话",
-            width="stretch",
-            on_click=start_new_conversation,
-        )
-
-        st.markdown('<div class="sidebar-section-title">视觉输入</div>', unsafe_allow_html=True)
-        uploader_version = int(st.session_state.image_uploader_version)
-        uploaded_image = st.file_uploader(
-            "上传柑橘图片",
-            type=list(SUPPORTED_UPLOAD_EXTENSIONS),
-            key=image_uploader_key(),
-        )
-        prepared_image = None
-        if uploaded_image:
-            try:
-                prepared_image = prepare_image_for_vision(
-                    uploaded_image.getvalue(),
-                    filename=uploaded_image.name,
-                    mime_type=uploaded_image.type,
-                )
-            except vision_client.VisionAPIError as error:
-                st.error(str(error))
-            else:
-                st.image(prepared_image.data, caption="图片预览", width="stretch")
-                st.info("图片会在本轮分析中自动调用视觉模型识别；下方外观描述可作为人工补充。")
-                st.button(
-                    "× 删除图片",
-                    width="stretch",
-                    key=f"remove_uploaded_image_{uploader_version}",
-                    on_click=reset_uploaded_image,
-                )
-
-        manual_observation = st.text_area(
-            "外观描述",
-            placeholder="例如：果皮完整，颜色偏成熟，无明显霉斑或腐烂。",
-            height=120,
-            key="manual_observation",
-        )
-
-        st.divider()
-
-        st.markdown(
-            f"""
-            <div class="sidebar-section-title">语言模型</div>
-            <div class="status-list">
-                <div class="status-row"><span>DeepSeek</span><span class="status-pill">{DEEPSEEK_MODEL}</span></div>
-                <div class="status-row"><span>Qwen Vision</span><span class="status-pill">{get_vision_model()}</span></div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+            manual_observation = st.text_area(
+                "图片外观描述（可选）",
+                placeholder="例如：果皮完整，颜色偏成熟，无明显霉斑或腐烂。",
+                height=104,
+                key="manual_observation",
+            )
 
     image_bytes = prepared_image.data if prepared_image else None
     image_mime_type = prepared_image.mime_type if prepared_image else "image/jpeg"
-    return manual_observation, prepared_image is not None, image_bytes, image_mime_type
-
-
-def score_table(result: dict[str, Any]) -> pd.DataFrame:
-    return pd.DataFrame(
-        [
-            {
-                "加工方向": item_value(item, "direction"),
-                "适配等级": item_value(item, "match_level", "待评估"),
-                "文献支持": item_value(item, "evidence_support", "未评估"),
-                "数据置信度": item_value(item, "data_confidence", "低"),
-                "主要原因": "；".join(item_value(item, "reasons", [])),
-                "风险提示": "；".join(item_value(item, "risk_notes", [])) or "暂无",
-            }
-            for item in result.get("scores", [])
-        ]
+    return (
+        manual_observation,
+        prepared_image is not None,
+        image_bytes,
+        image_mime_type,
     )
 
-
-def step_table(result: dict[str, Any]) -> pd.DataFrame:
-    return pd.DataFrame(
-        [
-            {
-                "步骤": index,
-                "任务": item_value(step, "name"),
-                "调用工具": item_value(step, "tool"),
-                "状态": item_value(step, "status"),
-                "观察结果": item_value(step, "observation"),
-            }
-            for index, step in enumerate(result.get("agent_steps", []), 1)
-        ]
-    )
 
 
 def render_tool_steps(result: dict[str, Any]) -> None:
@@ -2305,59 +888,20 @@ def render_score_bars(scores: list[Any], limit: int = 8) -> None:
         st.markdown("<div class=\"score-bars\">" + "".join(rows) + "</div>", unsafe_allow_html=True)
 
 
-def render_processing_plan(plan: dict[str, Any]) -> None:
-    if not plan:
-        return
-
-    def safe_text(value: Any) -> str:
-        return html.escape(str(value or ""))
-
-    flow_parts = []
-    for index, step in enumerate(plan.get("flow", [])):
-        if index:
-            flow_parts.append('<span class="processing-flow-arrow">→</span>')
-        flow_parts.append(f'<span class="processing-flow-step">{safe_text(step)}</span>')
-
-    stage_parts = []
-    for stage in plan.get("stages", []):
-        stage_parts.append(
-            '<article class="processing-stage">'
-            f'<h4>{safe_text(stage.get("name"))}</h4>'
-            f'<p><strong>对应工序：</strong>{safe_text(" → ".join(stage.get("steps", [])))}</p>'
-            f'<p><strong>操作要点：</strong>{safe_text(stage.get("operation"))}</p>'
-            f'<p><strong>质控要求：</strong>{safe_text(stage.get("control"))}</p>'
-            f'<p><strong>必留记录：</strong>{safe_text(stage.get("record"))}</p>'
-            "</article>"
+def render_processing_plan(
+    plan: dict[str, Any],
+    *,
+    anchor_suffix: str = "",
+) -> None:
+    if plan:
+        st.markdown(
+            ui_components.processing_plan_html(
+                plan,
+                anchor_suffix=anchor_suffix,
+            ),
+            unsafe_allow_html=True,
         )
 
-    basis = "；".join(str(item) for item in plan.get("basis", []))
-    pilot_parameters = "；".join(str(item) for item in plan.get("pilot_parameters", []))
-    release_checks = "；".join(str(item) for item in plan.get("release_checks", []))
-    missing_data = "；".join(str(item) for item in plan.get("missing_data", []))
-    risk_controls = "；".join(str(item) for item in plan.get("risk_controls", []))
-    st.markdown(
-        f"""
-        <section class="processing-plan" aria-label="完整加工流程方案">
-            <div class="processing-plan-head">
-                <div>
-                    <div class="processing-plan-kicker">完整加工流程（方案）</div>
-                    <div class="processing-plan-title">{safe_text(plan.get("product_form"))}</div>
-                </div>
-                <div class="processing-plan-status">{safe_text(plan.get("status"))}</div>
-            </div>
-            <div class="processing-flow">{"".join(flow_parts)}</div>
-            <div class="processing-stage-grid">{"".join(stage_parts)}</div>
-            <div class="processing-plan-foot">
-                <div class="processing-plan-note"><strong>当前方案依据：</strong>{safe_text(basis)}</div>
-                <div class="processing-plan-note"><strong>待小试定参：</strong>{safe_text(pilot_parameters)}</div>
-                <div class="processing-plan-note"><strong>成品放行复核：</strong>{safe_text(release_checks)}</div>
-                <div class="processing-plan-note"><strong>当前待补：</strong>{safe_text(missing_data)}</div>
-                <div class="processing-plan-note"><strong>风险边界：</strong>{safe_text(risk_controls)}</div>
-            </div>
-        </section>
-        """,
-        unsafe_allow_html=True,
-    )
 
 
 def resolve_processing_plan(result: dict[str, Any]) -> dict[str, Any]:
@@ -2425,28 +969,19 @@ def render_vision_result(vision_result: dict[str, Any]) -> None:
         st.warning(str(note))
 
 
-def render_analysis_payload(payload: dict[str, Any]) -> None:
-    result = payload["result"]
-    report_path = Path(str(payload["report_path"]))
+def render_analysis_payload(
+    payload: dict[str, Any],
+    *,
+    ui_key: str,
+    anchor_suffix: str = "",
+) -> None:
+    result = payload.get("result") or {}
+    report_path = Path(str(payload.get("report_path") or "analysis-report.md"))
     scores = result.get("scores", [])
-    top = scores[0] if scores else None
     risks = result.get("quality_risks", [])
     evidence = result.get("evidence", [])
-
-    recommendation = html.escape(str(item_value(top, "direction", "暂无")))
-    st.markdown(
-        f"""
-        <div class="recommendation-summary">
-            <div class="metric-card recommendation-card">
-                <div class="metric-label">推荐方向</div>
-                <div class="metric-value">{recommendation}</div>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
     processing_plan = resolve_processing_plan(result)
+
     summary = str(payload.get("summary") or "")
     if processing_plan and "完整加工流程（方案）" not in summary:
         summary = orchestrator.summarize_result(result, report_path)
@@ -2456,195 +991,386 @@ def render_analysis_payload(payload: dict[str, Any]) -> None:
     answer = str(payload.get("answer") or llm_answer or summary).strip()
     answer = orchestrator.ensure_primary_processing_flow(result, answer)
 
-    # The recommendation must be followed by an executable route regardless of
-    # how the summarization model phrases its answer.  Render directly from the
-    # structured tool result; this also repairs older stored analysis payloads.
-    if processing_plan:
-        render_processing_plan(processing_plan)
-        parameterized_text = agent_report.parameterized_plan_markdown(
-            result.get("parameterized_plan") or {},
-            result.get("parameter_groups") or [],
-            result.get("processing_intent") or {},
-        )
-        parameterized_text = re.sub(r"(?m)^### 5\.\d+\s+", "### ", parameterized_text)
-        st.markdown(parameterized_text)
+    with st.container(key=f"analysis_layout_{ui_key}"):
+        report_column, evidence_column = st.columns([3.35, 1], gap="large")
 
-    narrative_answer = orchestrator.strip_primary_processing_flow(answer)
-    if narrative_answer:
-        st.markdown(narrative_answer)
-
-    if payload.get("vision_result"):
-        with st.expander("图片识别结果", expanded=True):
-            render_vision_result(payload["vision_result"])
-
-    with st.expander("工具调用过程", expanded=False):
-        render_tool_steps(result)
-
-    with st.expander("加工路线分级与质控风险", expanded=False):
-        if scores:
-            render_score_bars(scores)
-        else:
-            st.info("暂无加工方向分级结果。")
-        if risks:
-            risk_rows = []
-            for risk in risks:
-                level = html.escape(str(item_value(risk, "level", "提示")))
-                item_name = html.escape(str(item_value(risk, "item", "质控项")))
-                suggestion = html.escape(str(item_value(risk, "suggestion", "")))
-                severity_class = " high" if level == "高" else ""
-                risk_rows.append(
-                    f'<div class="risk-item{severity_class}">'
-                    f'<span class="risk-level">[{level}]</span>{item_name}：{suggestion}'
-                    '</div>'
-                )
-            st.markdown('<div class="risk-list">' + "".join(risk_rows) + "</div>", unsafe_allow_html=True)
-        else:
+        with report_column:
             st.markdown(
-                '<div class="risk-empty">暂未触发高风险项，但仍需人工复核。</div>',
+                ui_components.decision_summary_html(
+                    result,
+                    processing_plan,
+                    anchor_suffix=anchor_suffix,
+                ),
                 unsafe_allow_html=True,
             )
 
-    with st.expander("文献证据", expanded=False):
-        if evidence:
-            for index, item in enumerate(evidence, 1):
-                title = item.get("title") or "未命名文献"
-                year = item.get("year") or "年份未知"
-                st.markdown(f"**[文献{index}] {title}（{year}）** · 匹配分 {item.get('match_score')}")
-                st.write(item.get("chunk_text"))
-                page_text = f"；页码：{item.get('page')}" if item.get("page") else ""
-                doi_text = f"；DOI：{item.get('doi')}" if item.get("doi") else ""
-                st.caption(f"来源：{item.get('source')}；主题：{item.get('topic')}{page_text}{doi_text}")
-        else:
-            st.info("没有检索到文献片段，请补充或重建文献库数据。")
-
-    with st.expander("工艺参数证据", expanded=False):
-        parameter_groups = result.get("parameter_groups") or []
-        if parameter_groups:
-            rows = []
-            for item in parameter_groups:
-                rows.append(
-                    {
-                        "步骤": item.get("process_step"),
-                        "参数": item.get("parameter_name"),
-                        "推荐/报告值": item.get("recommended_range"),
-                        "可信度": item.get("confidence_level"),
-                        "原料/对象": item.get("raw_material"),
-                        "规模": item.get("scale"),
-                        "方法": item.get("process_method"),
-                        "是否冲突": "是" if item.get("conflict") else "否",
-                        "来源ID": "、".join(item.get("source_ids") or []),
-                    }
+            if processing_plan:
+                render_processing_plan(
+                    processing_plan,
+                    anchor_suffix=anchor_suffix,
                 )
-            st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
-            st.caption("单篇文献值不等于通用生产参数；请展开报告核对适用条件、页码和原文片段。")
-        else:
-            st.info("未提取到单位、适用条件和来源均完整的可靠工艺参数；系统不会自动补写数值。")
+                parameterized_text = agent_report.parameterized_plan_markdown(
+                    result.get("parameterized_plan") or {},
+                    result.get("parameter_groups") or [],
+                    result.get("processing_intent") or {},
+                )
+                parameterized_text = re.sub(
+                    r"(?m)^### 5\.\d+\s+",
+                    "### ",
+                    parameterized_text,
+                )
+                with st.container(key=f"parameter_section_{ui_key}"):
+                    st.markdown(
+                        f'<span id="parameter-evidence{anchor_suffix}" '
+                        'class="report-anchor"></span>'
+                        '<div class="section-eyebrow">关键工艺参数</div>',
+                        unsafe_allow_html=True,
+                    )
+                    st.markdown(parameterized_text)
 
-    with st.expander("报告草稿", expanded=False):
-        st.markdown('<span class="report-anchor"></span>', unsafe_allow_html=True)
-        st.markdown(result["report"])
-        st.download_button(
-            "下载 Markdown 报告",
-            data=result["report"],
-            file_name=report_path.name,
-            mime="text/markdown",
-            width="stretch",
-            key=f"download_{report_path.name}",
-        )
-        st.caption(f"报告已保存到：{report_path}")
+            narrative_answer = orchestrator.strip_primary_processing_flow(answer)
+            if narrative_answer:
+                with st.container(key=f"analysis_narrative_{ui_key}"):
+                    st.markdown(narrative_answer)
+
+            if payload.get("vision_result"):
+                with st.expander("图片识别结果", expanded=True):
+                    render_vision_result(payload["vision_result"])
+
+            st.markdown(
+                f'<span id="task-record{anchor_suffix}" '
+                'class="report-anchor"></span>',
+                unsafe_allow_html=True,
+            )
+            with st.expander("任务执行记录", expanded=False):
+                render_tool_steps(result)
+
+            st.markdown(
+                f'<span id="risk-evidence{anchor_suffix}" '
+                'class="report-anchor"></span>',
+                unsafe_allow_html=True,
+            )
+            with st.expander("质量控制、风险与边界条件", expanded=False):
+                if scores:
+                    render_score_bars(scores)
+                else:
+                    st.info("暂无加工方向分级结果。")
+                if risks:
+                    risk_rows = []
+                    for risk in risks:
+                        level = html.escape(str(item_value(risk, "level", "提示")))
+                        item_name = html.escape(str(item_value(risk, "item", "质控项")))
+                        suggestion = html.escape(str(item_value(risk, "suggestion", "")))
+                        severity_class = " high" if level == "高" else ""
+                        risk_rows.append(
+                            f'<div class="risk-item{severity_class}">'
+                            f'<span class="risk-level">[{level}]</span>'
+                            f"{item_name}：{suggestion}</div>"
+                        )
+                    st.markdown(
+                        '<div class="risk-list">'
+                        + "".join(risk_rows)
+                        + "</div>",
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    st.markdown(
+                        '<div class="risk-empty">'
+                        "暂未触发结构化高风险项，生产放行仍需人工复核。"
+                        "</div>",
+                        unsafe_allow_html=True,
+                    )
+
+            st.markdown(
+                f'<span id="evidence-detail{anchor_suffix}" '
+                'class="report-anchor"></span>',
+                unsafe_allow_html=True,
+            )
+            with st.expander("文献与标准证据", expanded=False):
+                if evidence:
+                    for index, item in enumerate(evidence, 1):
+                        title = item.get("title") or "未命名文献"
+                        year = item.get("year") or "年份未知"
+                        st.markdown(
+                            f"**[证据 {index}] {title}（{year}）**"
+                            f" · 匹配分 {item.get('match_score')}"
+                        )
+                        st.write(item.get("chunk_text"))
+                        page_text = (
+                            f"；页码：{item.get('page')}" if item.get("page") else ""
+                        )
+                        doi_text = (
+                            f"；DOI：{item.get('doi')}" if item.get("doi") else ""
+                        )
+                        st.caption(
+                            f"来源：{item.get('source')}；"
+                            f"主题：{item.get('topic')}{page_text}{doi_text}"
+                        )
+                else:
+                    st.info("没有检索到文献片段，请补充或重建文献库数据。")
+
+            with st.expander("工艺参数证据", expanded=False):
+                parameter_groups = result.get("parameter_groups") or []
+                if parameter_groups:
+                    rows = []
+                    for item in parameter_groups:
+                        rows.append(
+                            {
+                                "步骤": item.get("process_step"),
+                                "参数": item.get("parameter_name"),
+                                "推荐/报告值": item.get("recommended_range"),
+                                "可信度": item.get("confidence_level"),
+                                "原料/对象": item.get("raw_material"),
+                                "规模": item.get("scale"),
+                                "方法": item.get("process_method"),
+                                "是否冲突": "是" if item.get("conflict") else "否",
+                                "来源ID": "、".join(item.get("source_ids") or []),
+                            }
+                        )
+                    st.dataframe(
+                        pd.DataFrame(rows),
+                        width="stretch",
+                        hide_index=True,
+                    )
+                    st.caption(
+                        "单篇文献值不等于通用生产参数；请展开报告核对"
+                        "适用条件、页码和原文片段。"
+                    )
+                else:
+                    st.info(
+                        "未提取到单位、适用条件和来源均完整的可靠工艺参数；"
+                        "系统不会自动补写数值。"
+                    )
+
+            with st.expander("完整报告与导出", expanded=False):
+                st.markdown(
+                    '<span class="report-anchor"></span>',
+                    unsafe_allow_html=True,
+                )
+                st.markdown(result.get("report") or "暂无报告内容。")
+                st.download_button(
+                    "下载 Markdown 报告",
+                    data=result.get("report") or "",
+                    file_name=report_path.name,
+                    mime="text/markdown",
+                    width="stretch",
+                    key=f"download_{ui_key}_{report_path.name}",
+                )
+                st.caption(f"报告已保存到：{report_path}")
+
+        with evidence_column:
+            with st.container(key=f"analysis_evidence_panel_{ui_key}"):
+                st.markdown(
+                    ui_components.evidence_panel_html(
+                        payload,
+                        anchor_suffix=anchor_suffix,
+                    ),
+                    unsafe_allow_html=True,
+                )
 
 
-def render_message(message: dict[str, Any]) -> None:
+
+def _message_ui_key(message: dict[str, Any], message_index: int) -> str:
+    source = "|".join(
+        [
+            str(message_index),
+            str(message.get("message_id") or ""),
+            str(message.get("kind") or ""),
+            str(message.get("content") or "")[:500],
+        ]
+    )
+    return f"{message_index}_{hashlib.sha256(source.encode('utf-8')).hexdigest()[:12]}"
+
+
+def render_message(
+    message: dict[str, Any],
+    *,
+    message_index: int = 0,
+    is_current_analysis: bool = True,
+) -> None:
     role = message["role"]
     content_text = str(message.get("content", ""))
+    ui_key = _message_ui_key(message, message_index)
+
     if message.get("kind") == "analysis":
-        st.markdown(
-            '<div class="message-row assistant"><div class="message-avatar assistant">Citrus AI</div><div class="message-bubble">已完成批次分析，工具调用结果如下。</div></div>',
-            unsafe_allow_html=True,
-        )
-        st.markdown('<div class="analysis-shell">', unsafe_allow_html=True)
-        render_analysis_payload(message["payload"])
-        st.markdown('</div>', unsafe_allow_html=True)
+        payload = message.get("payload") or {}
+        result = payload.get("result") or {}
+        detail_parts = ["已完成分析"]
+        if payload.get("vision_result"):
+            detail_parts.append("使用图像")
+        if result.get("batch"):
+            detail_parts.append("批次数据")
+        if result.get("evidence"):
+            detail_parts.append("文献证据")
+        with st.container(key=f"analysis_message_{ui_key}"):
+            st.markdown(
+                '<div class="message-shell analysis-message-shell">'
+                + ui_components.assistant_identity_html(
+                    detail=" · ".join(detail_parts)
+                )
+                + "</div>",
+                unsafe_allow_html=True,
+            )
+            render_analysis_payload(
+                payload,
+                ui_key=ui_key,
+                anchor_suffix="" if is_current_analysis else f"-{ui_key}",
+            )
         return
 
     if message.get("kind") == "analysis_legacy":
-        st.markdown(
-            '<div class="message-row assistant"><div class="message-avatar assistant">Citrus AI</div><div class="message-bubble">已完成批次分析，工具调用结果如下。</div></div>',
-            unsafe_allow_html=True,
-        )
-        st.markdown('<div class="analysis-shell">', unsafe_allow_html=True)
-        st.markdown(restore_flattened_markdown(content_text))
-        st.markdown('</div>', unsafe_allow_html=True)
+        with st.container(key=f"analysis_legacy_{ui_key}"):
+            st.markdown(
+                '<div class="message-shell analysis-message-shell">'
+                + ui_components.assistant_identity_html(detail="历史分析记录")
+                + "</div>",
+                unsafe_allow_html=True,
+            )
+            st.markdown(restore_flattened_markdown(content_text))
         return
 
     if role == "user":
+        attachment_markup = ""
         image_bytes = message.get("image_bytes")
         if image_bytes:
-            image_mime_type = html.escape(str(message.get("image_mime_type") or "image/jpeg"))
+            image_mime_type = html.escape(
+                str(message.get("image_mime_type") or "image/jpeg")
+            )
             image_data = base64.b64encode(image_bytes).decode("ascii")
-            st.markdown(
-                f'<div class="user-attachment-row"><img class="user-attachment" src="data:{image_mime_type};base64,{image_data}" alt="本轮上传图片"></div>',
-                unsafe_allow_html=True,
+            attachment_markup = (
+                '<div class="user-attachment-row">'
+                f'<img class="user-attachment" '
+                f'src="data:{image_mime_type};base64,{image_data}" '
+                'alt="本轮上传图片">'
+                "</div>"
             )
         content = html.escape(content_text).replace("\n", "<br>")
         st.markdown(
-            f'<div class="message-row user"><div class="message-bubble">{content}</div></div>',
+            '<div class="message-shell user-message-shell">'
+            + attachment_markup
+            + f'<div class="user-message-bubble">{content}</div>'
+            + "</div>",
             unsafe_allow_html=True,
         )
         return
 
-    label_column, content_column = st.columns([1.15, 8.85], gap="medium")
-    with label_column:
+    with st.container(key=f"assistant_message_{ui_key}"):
         st.markdown(
-            '<div class="assistant-markdown-label">Citrus AI</div>',
+            '<div class="message-shell assistant-message-shell">'
+            + ui_components.assistant_identity_html()
+            + "</div>",
             unsafe_allow_html=True,
         )
-    with content_column:
+        # Keep ordinary assistant text on Streamlit's safe Markdown path.
         st.markdown(content_text)
 
 
-def render_empty_state(api_key: str) -> tuple[str | None, Any]:
+
+def render_empty_state(
+    api_key: str,
+) -> tuple[
+    str | None,
+    str | None,
+    tuple[str, bool, bytes | None, str],
+    Any,
+]:
     selected_prompt = None
-    with st.container(key="empty_state_shell"):
-        st.markdown('<div class="hero"><h1>柑橘产业链决策</h1></div>', unsafe_allow_html=True)
+    with st.container(key="welcome_view"):
+        st.markdown(
+            """
+            <section class="welcome-shell">
+                <div class="welcome-hero">
+                    <div class="welcome-eyebrow">Citrus Decision Workspace</div>
+                    <h1>柑橘产业链决策助手</h1>
+                    <p>
+                        基于图像、批次数据和文献证据，<br>
+                        生成可追溯的加工与质量控制方案。
+                    </p>
+                </div>
+            </section>
+            """,
+            unsafe_allow_html=True,
+        )
+
         if not api_key:
-            st.warning("请先在 agent/llm_config.py 中填入 DeepSeek API Key；未填时仍可运行本地规则工具，但不能生成大模型总结。")
+            st.warning(
+                "DeepSeek API Key 尚未配置。仍可运行本地规则工具，"
+                "但不能生成大模型总结。"
+            )
 
-        left, center, right = st.columns([1, 2.25, 1])
-        with center:
-            st.markdown('<div class="prompt-grid-label">请选择本次需要开展的工作</div>', unsafe_allow_html=True)
-            for row_start in range(0, len(EXAMPLE_CARDS), 2):
-                cols = st.columns(2)
-                for card_index, (col, card) in enumerate(
-                    zip(cols, EXAMPLE_CARDS[row_start : row_start + 2]),
-                    start=row_start,
-                ):
-                    label = f"{card['title']}\n{card['description']}"
-                    if col.button(label, width="stretch", key=f"example_card_{card_index}"):
-                        selected_prompt = card["prompt"]
+        with st.container(key="welcome_composer"):
+            attachment_values = render_attachment_controls(
+                "welcome_attachment_bar"
+            )
+            typed_prompt = st.chat_input(
+                "输入批次信息、生产目标或需要复核的问题…",
+                key="welcome_chat_input",
+            )
+            st.markdown(
+                """
+                <div class="composer-mode-row">
+                    <span>支持图片与外观说明</span>
+                    <span><i></i>自动判断分析模式</span>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
         progress_slot = st.empty()
-    return selected_prompt, progress_slot
 
-
-def render_agent_progress(slot: Any, message: str) -> None:
-    safe_message = html.escape(message)
-    slot.markdown(
-        f"""
-        <div class="agent-live-progress" role="status" aria-live="polite">
-            <div class="agent-live-spinner"></div>
-            <div class="agent-live-copy">
-                <div class="agent-live-title">{safe_message}</div>
-                <div class="agent-live-subtitle">
-                    <span>Agent 正在运行</span>
-                    <span class="agent-live-dot"></span>
-                    <span class="agent-live-dot"></span>
-                    <span class="agent-live-dot"></span>
+        st.markdown(
+            """
+            <div class="task-section-header">
+                <div>
+                    <h2>常用任务</h2>
+                    <p>从标准任务开始，提交前仍可补充批次信息。</p>
                 </div>
             </div>
-        </div>
-        """,
+            """,
+            unsafe_allow_html=True,
+        )
+        with st.container(key="task_grid"):
+            for row_start in range(0, len(EXAMPLE_CARDS), 2):
+                columns = st.columns(2, gap="medium")
+                for card_index, (column, card) in enumerate(
+                    zip(columns, EXAMPLE_CARDS[row_start : row_start + 2]),
+                    start=row_start,
+                ):
+                    with column:
+                        with st.container(key=f"task_card_{card_index}"):
+                            st.markdown(
+                                ui_components.task_card_html(
+                                    card_index,
+                                    title=card["title"],
+                                    description=card["description"],
+                                ),
+                                unsafe_allow_html=True,
+                            )
+                            if st.button(
+                                "开始任务",
+                                width="stretch",
+                                key=f"example_card_{card_index}",
+                            ):
+                                selected_prompt = card["prompt"]
+
+    return selected_prompt, typed_prompt, attachment_values, progress_slot
+
+
+def render_agent_progress(
+    slot: Any,
+    message: str,
+    *,
+    mode: str = "analysis",
+) -> None:
+    events = st.session_state.setdefault("agent_progress_events", [])
+    normalized = str(message or "").strip()
+    if normalized and (not events or events[-1] != normalized):
+        events.append(normalized)
+    slot.markdown(
+        ui_components.agent_progress_html(events, mode=mode),
         unsafe_allow_html=True,
     )
+
 
 
 def build_conversation_history(messages: list[dict[str, Any]]) -> list[dict[str, str]]:
@@ -3155,6 +1881,7 @@ def handle_prompt(
     live_orchestrator = importlib.reload(orchestrator)
     if progress_slot is None:
         progress_slot = st.empty()
+    st.session_state.agent_progress_events = []
     vision_memory = st.session_state.last_vision_context or live_orchestrator.recover_vision_memory_from_messages(
         st.session_state.agent_messages
     )
@@ -3289,7 +2016,11 @@ def handle_prompt(
         general_trace["model_name"] = get_vision_model()
         if stored_image_path:
             vision_payload["stored_image_path"] = stored_image_path
-        render_agent_progress(progress_slot, "正在读取图片并回答本轮问题")
+        render_agent_progress(
+            progress_slot,
+            "正在读取图片并回答本轮问题",
+            mode="vision",
+        )
         try:
             vision_payload = live_orchestrator.run_vision_turn(
                 user_prompt=prompt,
@@ -3333,7 +2064,11 @@ def handle_prompt(
         assistant_message = {"role": "assistant", "content": assistant_text}
         mode = "request_inputs"
     else:
-        render_agent_progress(progress_slot, "正在全面检索本地文献并组织专业回答")
+        render_agent_progress(
+            progress_slot,
+            "正在全面检索本地文献并组织专业回答",
+            mode="research",
+        )
         try:
             assistant_text, general_trace = run_general_turn(
                 resolved_prompt,
@@ -3382,24 +2117,76 @@ def handle_prompt(
 
 
 def main() -> None:
-    st.set_page_config(page_title="柑橘产业链 Agent", layout="wide")
+    st.set_page_config(
+        page_title="柑橘产业决策",
+        page_icon="🍊",
+        layout="wide",
+        initial_sidebar_state="auto",
+        menu_items={
+            "Get Help": None,
+            "Report a bug": None,
+            "About": None,
+        },
+    )
     inject_style()
     init_state()
-    restore_scroll_position = bool(st.session_state.pop("restore_main_scroll_position", False))
+    restore_scroll_position = bool(
+        st.session_state.pop("restore_main_scroll_position", False)
+    )
 
     api_key = get_deepseek_api_key()
-    manual_observation, has_image, image_bytes, image_mime_type = render_sidebar()
+    render_sidebar(api_key)
+    render_topbar(api_key)
 
     if not st.session_state.agent_messages:
-        selected_prompt, progress_slot = render_empty_state(api_key)
+        (
+            selected_prompt,
+            typed_prompt,
+            attachment_values,
+            progress_slot,
+        ) = render_empty_state(api_key)
     else:
         selected_prompt = None
         progress_slot = None
-        st.markdown('<div class="chat-transcript-start"></div>', unsafe_allow_html=True)
-        for message in st.session_state.agent_messages:
-            render_message(message)
+        with st.container(key="conversation_stream"):
+            st.markdown(
+                '<span id="conversation-start" '
+                'class="chat-transcript-start"></span>',
+                unsafe_allow_html=True,
+            )
+            analysis_indices = [
+                index
+                for index, message in enumerate(st.session_state.agent_messages)
+                if message.get("kind") == "analysis"
+            ]
+            current_analysis_index = (
+                analysis_indices[-1] if analysis_indices else None
+            )
+            for message_index, message in enumerate(
+                st.session_state.agent_messages
+            ):
+                render_message(
+                    message,
+                    message_index=message_index,
+                    is_current_analysis=(
+                        message_index == current_analysis_index
+                    ),
+                )
 
-    typed_prompt = st.chat_input("输入问题，或粘贴批次信息开始分析...")
+        attachment_values = render_attachment_controls(
+            "composer_attachment_bar"
+        )
+        typed_prompt = st.chat_input(
+            "输入问题，或粘贴批次信息开始分析…",
+            key="conversation_chat_input",
+        )
+
+    (
+        manual_observation,
+        has_image,
+        image_bytes,
+        image_mime_type,
+    ) = attachment_values
     render_scroll_position_manager(restore=restore_scroll_position)
     prompt = typed_prompt or selected_prompt
     if prompt:
@@ -3412,6 +2199,7 @@ def main() -> None:
             image_mime_type,
             progress_slot=progress_slot,
         )
+
 
 
 if __name__ == "__main__":
