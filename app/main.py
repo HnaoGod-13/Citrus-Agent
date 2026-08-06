@@ -1359,21 +1359,28 @@ def inject_style() -> None:
             min-height: 0;
         }
         [class*="st-key-empty_state_shell"] {
+            --empty-rail-shift: clamp(4rem, 6vw, 8rem);
             display: flex;
             flex: 1 1 auto;
             height: 100%;
             min-height: 0;
             align-items: center;
             justify-content: center;
+            overflow-x: clip;
         }
         [class*="st-key-empty_state_shell"] > div[data-testid="stVerticalBlock"] {
             width: 100%;
             gap: 0.8rem;
         }
+        [class*="st-key-welcome_content"] {
+            width: 100%;
+            transform: translateX(var(--empty-rail-shift));
+        }
         [class*="st-key-empty_state_shell"] .agent-live-progress {
-            width: min(1120px, calc(100% + 1.6rem));
-            margin: 0.15rem 0 1.2rem 50%;
-            transform: translateX(-50%);
+            width: fit-content;
+            max-width: min(760px, calc(100% - var(--empty-rail-shift)));
+            margin: 0.15rem 0 1.2rem max(0px, calc(50% - 35rem + var(--empty-rail-shift)));
+            transform: none;
         }
         [class*="st-key-empty_state_shell"] [class*="st-key-example_card_"] p,
         [class*="st-key-empty_state_shell"] [class*="st-key-example_card_"] span {
@@ -1815,8 +1822,13 @@ def inject_style() -> None:
                 padding-block: 1.45rem;
             }
             [class*="st-key-empty_state_shell"] .agent-live-progress {
-                width: calc(100% - 2.8rem);
-                transform: translate(-50%, -1rem);
+                width: fit-content;
+                max-width: 100%;
+                margin-left: 0;
+                transform: translateY(-1rem);
+            }
+            [class*="st-key-welcome_content"] {
+                transform: none;
             }
             .message-row.assistant {
                 grid-template-columns: 1fr;
@@ -2606,22 +2618,23 @@ def render_message(message: dict[str, Any]) -> None:
 def render_empty_state(api_key: str) -> tuple[str | None, Any]:
     selected_prompt = None
     with st.container(key="empty_state_shell"):
-        st.markdown('<div class="hero"><h1>柑橘产业链决策</h1></div>', unsafe_allow_html=True)
-        if not api_key:
-            st.warning("请先在 agent/llm_config.py 中填入 DeepSeek API Key；未填时仍可运行本地规则工具，但不能生成大模型总结。")
+        with st.container(key="welcome_content"):
+            st.markdown('<div class="hero"><h1>柑橘产业链决策</h1></div>', unsafe_allow_html=True)
+            if not api_key:
+                st.warning("请先在 agent/llm_config.py 中填入 DeepSeek API Key；未填时仍可运行本地规则工具，但不能生成大模型总结。")
 
-        left, center, right = st.columns([1, 2.25, 1])
-        with center:
-            st.markdown('<div class="prompt-grid-label">请选择本次需要开展的工作</div>', unsafe_allow_html=True)
-            for row_start in range(0, len(EXAMPLE_CARDS), 2):
-                cols = st.columns(2)
-                for card_index, (col, card) in enumerate(
-                    zip(cols, EXAMPLE_CARDS[row_start : row_start + 2]),
-                    start=row_start,
-                ):
-                    label = f"{card['title']}\n{card['description']}"
-                    if col.button(label, width="stretch", key=f"example_card_{card_index}"):
-                        selected_prompt = card["prompt"]
+            left, center, right = st.columns([1, 2.25, 1])
+            with center:
+                st.markdown('<div class="prompt-grid-label">请选择本次需要开展的工作</div>', unsafe_allow_html=True)
+                for row_start in range(0, len(EXAMPLE_CARDS), 2):
+                    cols = st.columns(2)
+                    for card_index, (col, card) in enumerate(
+                        zip(cols, EXAMPLE_CARDS[row_start : row_start + 2]),
+                        start=row_start,
+                    ):
+                        label = f"{card['title']}\n{card['description']}"
+                        if col.button(label, width="stretch", key=f"example_card_{card_index}"):
+                            selected_prompt = card["prompt"]
         progress_slot = st.empty()
     return selected_prompt, progress_slot
 
