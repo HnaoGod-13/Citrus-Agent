@@ -1262,7 +1262,9 @@ def inject_style() -> None:
             white-space: pre-wrap;
             box-shadow: none;
         }
-        [class*="st-key-example_card_"] div[data-testid="stButton"] > button {
+        [class*="st-key-example_card_"] button {
+            display: flex !important;
+            width: 100% !important;
             justify-content: flex-start !important;
             align-items: center !important;
             text-align: left !important;
@@ -1284,9 +1286,15 @@ def inject_style() -> None:
             margin: 0 !important;
             text-align: left !important;
         }
-        [class*="st-key-example_card_"] div[data-testid="stButton"] > button p,
-        [class*="st-key-example_card_"] div[data-testid="stButton"] > button span {
+        [class*="st-key-example_card_"] button [data-testid="stMarkdownContainer"] {
             width: 100% !important;
+            min-width: 0 !important;
+            text-align: left !important;
+        }
+        [class*="st-key-example_card_"] button p,
+        [class*="st-key-example_card_"] button span {
+            width: 100% !important;
+            text-align: left !important;
         }
         div[data-testid="stButton"] > button:hover p,
         div[data-testid="stButton"] > button:hover span {
