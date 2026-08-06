@@ -1265,9 +1265,9 @@ def inject_style() -> None:
         [class*="st-key-example_card_"] button {
             display: flex !important;
             width: 100% !important;
-            justify-content: flex-start !important;
+            justify-content: center !important;
             align-items: center !important;
-            text-align: left !important;
+            text-align: center !important;
             min-height: 4.45rem;
             padding: 0.62rem 0.9rem;
         }
@@ -1289,12 +1289,12 @@ def inject_style() -> None:
         [class*="st-key-example_card_"] button [data-testid="stMarkdownContainer"] {
             width: 100% !important;
             min-width: 0 !important;
-            text-align: left !important;
+            text-align: center !important;
         }
         [class*="st-key-example_card_"] button p,
         [class*="st-key-example_card_"] button span {
             width: 100% !important;
-            text-align: left !important;
+            text-align: center !important;
         }
         div[data-testid="stButton"] > button:hover p,
         div[data-testid="stButton"] > button:hover span {
