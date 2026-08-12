@@ -870,7 +870,10 @@ textarea::placeholder {
 
 div[data-baseweb="input"]:focus-within > div,
 div[data-baseweb="textarea"]:focus-within,
-div[data-baseweb="select"] > div:focus-within {
+div[data-baseweb="select"] > div:focus-within,
+[data-testid="stTextInputRootElement"]:focus-within,
+[data-testid="stTextAreaRootElement"]:focus-within,
+.stSelectbox .react-aria-ComboBox:focus-within > div {
     border-color: var(--border-strong) !important;
     box-shadow: 0 0 0 3px var(--focus-ring) !important;
 }
