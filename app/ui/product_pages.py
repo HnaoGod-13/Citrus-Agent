@@ -22,6 +22,8 @@ from typing import Any, Iterator
 import pandas as pd
 import streamlit as st
 
+from app.ui import components as ui_components
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_MEMORY_DB_PATH = PROJECT_ROOT / "data" / "memory" / "memory.db"
@@ -169,11 +171,19 @@ def _render_data_unavailable(label: str) -> None:
     st.info(f"{label}暂不可用，或当前存储中还没有可展示的数据。")
 
 
-def _render_table(rows: list[dict[str, Any]], empty_message: str, *, height: int = 360) -> None:
-    if not rows:
-        st.info(empty_message)
-        return
-    st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True, height=height)
+def _render_table(
+    rows: list[dict[str, Any]],
+    empty_message: str,
+    *,
+    height: int = 360,
+    variant: str = "data",
+) -> None:
+    ui_components.render_light_table(
+        rows,
+        empty_message,
+        height=height,
+        variant=variant,
+    )
 
 
 def _load_workspace(path: Path, scope: _Scope) -> dict[str, Any]:
@@ -850,10 +860,17 @@ def render_settings_page() -> None:
         {"项目": "前端运行时", "当前状态": f"Streamlit {getattr(st, '__version__', '未知')}"},
         {"项目": "页面设置", "当前状态": "只读；不提供未接入业务的保存操作"},
     ]
-    _render_table(product_rows, "产品状态暂不可用。", height=176)
+    _render_table(product_rows, "产品状态暂不可用。", height=176, variant="settings")
 
     st.subheader("模型")
-    _render_table(_model_settings(), "模型状态暂不可用。", height=176)
+    model_rows = [
+        {
+            "项目": f"{row.get('能力') or '模型'} · {row.get('模型') or '未知'}",
+            "当前状态": f"{row.get('配置状态') or '未知'} · {row.get('用途') or '—'}",
+        }
+        for row in _model_settings()
+    ]
+    _render_table(model_rows, "模型状态暂不可用。", height=176, variant="settings")
     st.caption("安全说明：此页面只检查凭据是否已配置，不读取到页面、不返回也不显示任何 API Key 值。")
 
     scope = _current_scope()
@@ -862,10 +879,8 @@ def render_settings_page() -> None:
     if scope is None:
         storage_rows.append(
             {
-                "存储": "会话记忆",
-                "类型": "SQLite",
-                "状态": "身份尚未初始化",
-                "当前范围数据": "—",
+                "项目": "会话记忆",
+                "当前状态": "SQLite · 身份尚未初始化",
             }
         )
     else:
@@ -874,19 +889,15 @@ def render_settings_page() -> None:
         except (FileNotFoundError, OSError, sqlite3.Error, ValueError):
             storage_rows.append(
                 {
-                    "存储": "会话记忆",
-                    "类型": "SQLite",
-                    "状态": "不可用",
-                    "当前范围数据": "—",
+                    "项目": "会话记忆",
+                    "当前状态": "SQLite · 不可用",
                 }
             )
         else:
             storage_rows.append(
                 {
-                    "存储": "会话记忆",
-                    "类型": "SQLite",
-                    "状态": "可用",
-                    "当前范围数据": (
+                    "项目": "会话记忆",
+                    "当前状态": "SQLite · 可用 · " + (
                         f"{int(counts.get('sessions') or 0)} 会话 · "
                         f"{int(counts.get('runs') or 0)} 运行 · "
                         f"{int(counts.get('samples') or 0)} 样本"
@@ -894,30 +905,28 @@ def render_settings_page() -> None:
                 }
             )
 
+    literature_path = _literature_db_path()
+    _prepare_literature_database(literature_path)
     try:
-        knowledge_counts = _knowledge_storage_counts(_literature_db_path())
+        knowledge_counts = _knowledge_storage_counts(literature_path)
     except (FileNotFoundError, OSError, sqlite3.Error, ValueError):
         storage_rows.append(
             {
-                "存储": "本地知识库",
-                "类型": "SQLite FTS",
-                "状态": "不可用",
-                "当前范围数据": "—",
+                "项目": "本地知识库",
+                "当前状态": "SQLite FTS · 不可用",
             }
         )
     else:
         storage_rows.append(
             {
-                "存储": "本地知识库",
-                "类型": "SQLite FTS",
-                "状态": "可用",
-                "当前范围数据": (
+                "项目": "本地知识库",
+                "当前状态": "SQLite FTS · 可用 · " + (
                     f"{int(knowledge_counts.get('documents') or 0)} 文献 · "
                     f"{int(knowledge_counts.get('chunks') or 0)} 片段"
                 ),
             }
         )
-    _render_table(storage_rows, "存储状态暂不可用。", height=176)
+    _render_table(storage_rows, "存储状态暂不可用。", height=176, variant="settings")
 
     st.subheader("隐私与数据范围")
     if scope is None:
@@ -935,7 +944,7 @@ def render_settings_page() -> None:
             {"项目": "数据访问", "当前状态": "按 user_id + project_id 双重隔离"},
             {"项目": "凭据展示", "当前状态": "始终隐藏"},
         ]
-    _render_table(privacy_rows, "隐私状态暂不可用。", height=248)
+    _render_table(privacy_rows, "隐私状态暂不可用。", height=248, variant="settings")
 
 
 _PAGE_RENDERERS = {

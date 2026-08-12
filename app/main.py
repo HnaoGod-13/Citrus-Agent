@@ -81,11 +81,11 @@ EXAMPLE_CARDS = [
     },
     {
         "eyebrow": "02 · 果汁生产",
-        "title": "规划脐橙果汁生产",
+        "title": "规划生产流程",
         "title_en": "Plan Production Process",
-        "description": "梳理加工与质控流程",
-        "description_en": "Plan raw materials and processing flow",
-        "icon": "chart-no-axes",
+        "description": "规划阶段原料生产",
+        "description_en": "Raw material planning and processing flow",
+        "icon": "factory",
         "prompt": EXAMPLE_PROMPTS[1],
     },
     {
@@ -94,7 +94,7 @@ EXAMPLE_CARDS = [
         "title_en": "Improve Peel Utilization Value",
         "description": "比较陈皮、精油与果胶路线",
         "description_en": "Compare dried peel, essential oil and pectin routes",
-        "icon": "database",
+        "icon": "circle-yen",
         "prompt": EXAMPLE_PROMPTS[2],
     },
     {
@@ -740,6 +740,7 @@ def select_product_view(view: str) -> None:
     preserve_sidebar_draft()
     st.session_state.product_view = normalized
     st.session_state.mobile_secondary_open = False
+    st.session_state.reset_main_scroll_position = True
     _set_query_value("view", normalized)
 
 
@@ -1015,7 +1016,10 @@ def render_sidebar(view: str = "chat") -> tuple[str, bool, bytes | None, str]:
             )
         manual_observation = st.text_area(
             "外观描述",
-            placeholder="例如：果皮完整，颜色偏成熟，无明显霉斑或腐烂。",
+            placeholder=(
+                "例如：果皮完整，颜色偏成熟，无明显霉斑或腐烂。\n"
+                "e.g., peel intact, color slightly ripe, no obvious mold or rot."
+            ),
             height=110,
             key="manual_observation",
             label_visibility="collapsed",
@@ -1362,7 +1366,11 @@ def render_analysis_payload(payload: dict[str, Any]) -> None:
                         "来源ID": "、".join(item.get("source_ids") or []),
                     }
                 )
-            st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+            ui_components.render_light_table(
+                rows,
+                "未提取到可展示的可靠工艺参数。",
+                height=420,
+            )
             st.caption("单篇文献值不等于通用生产参数；请展开报告核对适用条件、页码和原文片段。")
         else:
             st.info("未提取到单位、适用条件和来源均完整的可靠工艺参数；系统不会自动补写数值。")
@@ -1453,7 +1461,7 @@ def render_empty_state(api_key: str) -> tuple[str | None, Any]:
             st.markdown(
                 f"""
                 <div class="hero">
-                    <div class="hero-symbol">{ui_components.icon_svg("file-text", 26)}</div>
+                    <div class="hero-symbol">{ui_components.icon_svg("decision", 26)}</div>
                     <h1>柑橘产业链决策</h1>
                     <div class="hero-english">CITRUS INDUSTRY CHAIN DECISION MAKING</div>
                 </div>
@@ -1479,9 +1487,13 @@ def render_empty_state(api_key: str) -> tuple[str | None, Any]:
                             st.markdown(
                                 f"""
                                 <article class="task-card">
-                                    <div class="task-card-icon">{ui_components.icon_svg(str(card['icon']), 21)}</div>
-                                    <div class="task-card-title">{html.escape(str(card['title']))}</div>
-                                    <div class="task-card-title-en">{html.escape(str(card['title_en']))}</div>
+                                    <div class="task-card-head">
+                                        <div class="task-card-icon">{ui_components.icon_svg(str(card['icon']), 20)}</div>
+                                        <div class="task-card-copy">
+                                            <div class="task-card-title">{html.escape(str(card['title']))}</div>
+                                            <div class="task-card-title-en">{html.escape(str(card['title_en']))}</div>
+                                        </div>
+                                    </div>
                                     <div class="task-card-description">{html.escape(str(card['description']))}</div>
                                     <div class="task-card-description-en">{html.escape(str(card['description_en']))}</div>
                                 </article>
@@ -2267,6 +2279,7 @@ def main() -> None:
     inject_style()
     init_state()
     restore_scroll_position = bool(st.session_state.pop("restore_main_scroll_position", False))
+    reset_scroll_position = bool(st.session_state.pop("reset_main_scroll_position", False))
     active_view = current_product_view()
     uid = _query_value("uid")
     sid = _query_value("sid")
@@ -2292,8 +2305,12 @@ def main() -> None:
     manual_observation, has_image, image_bytes, image_mime_type = render_sidebar(active_view)
 
     if active_view != "chat":
-        render_product_page(active_view)
-        render_scroll_position_manager(restore=restore_scroll_position)
+        with st.container(key="product_page_shell"):
+            render_product_page(active_view)
+        render_scroll_position_manager(
+            restore=restore_scroll_position,
+            reset_to_top=reset_scroll_position,
+        )
         return
 
     if not st.session_state.agent_messages:
@@ -2305,10 +2322,16 @@ def main() -> None:
         for message in st.session_state.agent_messages:
             render_message(message)
 
+    clearance_state = "is-transcript" if st.session_state.agent_messages else "is-empty"
+    st.markdown(
+        f'<div class="mobile-composer-clearance {clearance_state}" aria-hidden="true"></div>',
+        unsafe_allow_html=True,
+    )
+
     typed_prompt = st.chat_input("输入问题或粘贴批次信息… · Ask or paste batch data…")
     render_scroll_position_manager(
         restore=restore_scroll_position,
-        reset_to_top=not bool(st.session_state.agent_messages),
+        reset_to_top=reset_scroll_position or not bool(st.session_state.agent_messages),
     )
     prompt = typed_prompt or selected_prompt
     if prompt:

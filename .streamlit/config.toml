@@ -1,0 +1,37 @@
+[server]
+enableStaticServing = true
+
+[[theme.fontFaces]]
+family = "CitrusInter"
+url = "app/static/fonts/InterVariable.woff2"
+weight = "100 900"
+style = "normal"
+
+[[theme.fontFaces]]
+family = "CitrusNotoSansSC"
+url = "app/static/fonts/NotoSansSC-VF.ttf"
+weight = "100 900"
+style = "normal"
+
+[theme]
+base = "light"
+primaryColor = "#111111"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#FAFAFA"
+textColor = "#111111"
+font = "CitrusInter, CitrusNotoSansSC, sans-serif"
+headingFont = "CitrusInter, CitrusNotoSansSC, sans-serif"
+baseFontSize = 15
+baseFontWeight = 400
+baseRadius = "10px"
+buttonRadius = "10px"
+borderColor = "#E5E5E5"
+dataframeBorderColor = "#E8E8E8"
+dataframeHeaderBackgroundColor = "#FAFAFA"
+showWidgetBorder = true
+showSidebarBorder = true
+
+[theme.sidebar]
+backgroundColor = "#FCFCFC"
+secondaryBackgroundColor = "#FAFAFA"
+textColor = "#111111"

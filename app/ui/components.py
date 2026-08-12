@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import html
 from collections.abc import Callable
+from typing import Any
 from urllib.parse import urlencode
 
 import streamlit as st
@@ -34,6 +35,9 @@ _ICON_PATHS: dict[str, str] = {
     "search": '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
     "folder": '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
     "file-text": '<path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="8" x2="16" y1="13" y2="13"/><line x1="8" x2="16" y1="17" y2="17"/>',
+    "decision": '<rect x="3" y="3" width="15" height="16" rx="2"/><path d="M7 8h7"/><path d="M7 12h4"/><circle cx="17" cy="17" r="3"/><path d="m19.25 19.25 1.75 1.75"/>',
+    "factory": '<path d="M3 21V9l6 3V8l6 3V4h4v17"/><path d="M3 21h18"/><path d="M7 17v-2"/><path d="M12 17v-2"/>',
+    "circle-yen": '<circle cx="12" cy="12" r="10"/><path d="m8 7 4 5 4-5"/><path d="M8 13h8"/><path d="M8 16h8"/><path d="M12 12v6"/>',
     "database": '<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/><path d="M3 12c0 1.66 4.03 3 9 3s9-1.34 9-3"/>',
     "activity": '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
     "shield": '<path d="M20 13c0 5-3.5 7.5-8 9-4.5-1.5-8-4-8-9V5l8-3 8 3z"/><path d="m9 12 2 2 4-4"/>',
@@ -49,6 +53,57 @@ def icon_svg(name: str, size: int = 20, *, class_name: str = "") -> str:
         f'<svg class="{safe_class}" width="{size}" height="{size}" viewBox="0 0 24 24" '
         'fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" '
         f'stroke-linejoin="round" aria-hidden="true">{paths}</svg>'
+    )
+
+
+def render_light_table(
+    rows: list[dict[str, Any]],
+    empty_message: str,
+    *,
+    height: int = 360,
+    variant: str = "data",
+) -> None:
+    """Render a safe, theme-independent light table for read-only data."""
+    if not rows:
+        st.info(empty_message)
+        return
+
+    columns: list[str] = []
+    for row in rows:
+        for column in row:
+            if column not in columns:
+                columns.append(column)
+
+    safe_variant = "settings-table" if variant == "settings" else ""
+    safe_height = min(max(int(height), 120), 640)
+    header_cells = "".join(
+        f'<th scope="col">{html.escape(str(column))}</th>' for column in columns
+    )
+    body_rows: list[str] = []
+    for row in rows:
+        cells: list[str] = []
+        for column in columns:
+            value = row.get(column)
+            display = "—" if value in (None, "") else str(value)
+            escaped = html.escape(display)
+            title = html.escape(display, quote=True)
+            numeric_class = "is-numeric" if isinstance(value, (int, float)) else ""
+            cells.append(
+                f'<td class="{numeric_class}" title="{title}">{escaped}</td>'
+            )
+        body_rows.append("<tr>" + "".join(cells) + "</tr>")
+
+    st.markdown(
+        f"""
+        <div class="data-table-shell {safe_variant}" style="--table-max-height:{safe_height}px"
+             role="region" aria-label="数据表格" tabindex="0">
+            <table>
+                <thead><tr>{header_cells}</tr></thead>
+                <tbody>{''.join(body_rows)}</tbody>
+            </table>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 
 
