@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import base64
 import hashlib
@@ -31,6 +31,8 @@ from agent import (
     vision_client,
     workflow,
 )
+from app.ui import components as ui_components
+from app.ui.product_pages import render_product_page
 
 agent_memory = importlib.reload(agent_memory)
 llm_client = importlib.reload(llm_client)
@@ -71,25 +73,37 @@ EXAMPLE_CARDS = [
     {
         "eyebrow": "01 · 路线选择",
         "title": "评估最佳加工方向",
+        "title_en": "Evaluate Optimal Processing Direction",
         "description": "比较整果、果汁与果皮路线",
+        "description_en": "Compare acidity, juice and peel routes",
+        "icon": "activity",
         "prompt": EXAMPLE_PROMPTS[0],
     },
     {
         "eyebrow": "02 · 果汁生产",
         "title": "规划脐橙果汁生产",
+        "title_en": "Plan Production Process",
         "description": "梳理加工与质控流程",
+        "description_en": "Plan raw materials and processing flow",
+        "icon": "chart-no-axes",
         "prompt": EXAMPLE_PROMPTS[1],
     },
     {
         "eyebrow": "03 · 果皮增值",
         "title": "提升果皮利用价值",
+        "title_en": "Improve Peel Utilization Value",
         "description": "比较陈皮、精油与果胶路线",
+        "description_en": "Compare dried peel, essential oil and pectin routes",
+        "icon": "database",
         "prompt": EXAMPLE_PROMPTS[2],
     },
     {
         "eyebrow": "04 · 风险复核",
         "title": "复核批次生产风险",
+        "title_en": "Review Risk & Compliance",
         "description": "明确补检与人工放行条件",
+        "description_en": "Identify risk and ensure compliance",
+        "icon": "shield",
         "prompt": EXAMPLE_PROMPTS[3],
     },
 ]
@@ -240,7 +254,48 @@ def restore_flattened_markdown(value: Any) -> str:
     return re.sub(r"\n{3,}", "\n\n", text).strip()
 
 
-def restore_ui_messages(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _restore_scoped_message_image(
+    manager: agent_memory.MemoryManager,
+    user_id: str,
+    project_id: str,
+    metadata: dict[str, Any],
+) -> tuple[bytes, str] | None:
+    """Read a persisted attachment only from this user's scoped file directory."""
+    stored_path = str(metadata.get("stored_image_path") or "").strip()
+    if not stored_path:
+        return None
+    try:
+        root = (manager.db_path.parent / "files").resolve()
+        scope_hash = hashlib.sha256(f"{user_id}\0{project_id}".encode("utf-8")).hexdigest()[:24]
+        scoped_root = (root / scope_hash).resolve()
+        candidate = Path(stored_path).resolve(strict=True)
+        if scoped_root != candidate.parent and scoped_root not in candidate.parents:
+            return None
+        file_size = candidate.stat().st_size
+        if file_size <= 0 or file_size > vision_client.MAX_UPLOAD_BYTES:
+            return None
+        expected_size = int(metadata.get("image_size") or 0)
+        if expected_size and expected_size != file_size:
+            return None
+        image_bytes = candidate.read_bytes()
+        expected_digest = str(metadata.get("image_sha256") or "").strip().lower()
+        if expected_digest and hashlib.sha256(image_bytes).hexdigest() != expected_digest:
+            return None
+        mime_type = str(metadata.get("image_mime_type") or "").strip().lower()
+        if mime_type not in {"image/jpeg", "image/png"}:
+            mime_type = "image/png" if candidate.suffix.lower() == ".png" else "image/jpeg"
+        return image_bytes, mime_type
+    except (OSError, TypeError, ValueError):
+        return None
+
+
+def restore_ui_messages(
+    rows: list[dict[str, Any]],
+    *,
+    manager: agent_memory.MemoryManager | None = None,
+    user_id: str = "",
+    project_id: str = "",
+) -> list[dict[str, Any]]:
     restored: list[dict[str, Any]] = []
     seen_message_ids: set[str] = set()
     for row in rows:
@@ -262,6 +317,18 @@ def restore_ui_messages(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "run_id": metadata.get("run_id"),
             "audit_trace": metadata.get("audit_trace"),
         }
+        if role == "user" and bool(metadata.get("has_image")):
+            restored_image = (
+                _restore_scoped_message_image(manager, user_id, project_id, metadata)
+                if manager is not None and user_id and project_id
+                else None
+            )
+            if restored_image:
+                message["image_bytes"], message["image_mime_type"] = restored_image
+            else:
+                message["attachment_missing"] = True
+        if role == "assistant" and isinstance(metadata.get("vision_result"), dict):
+            message["vision_result"] = _without_raw_model_output(metadata["vision_result"])
         if role == "assistant" and message_type == "analysis":
             snapshot = metadata.get("analysis_payload")
             if is_valid_persisted_analysis_payload(snapshot):
@@ -364,21 +431,35 @@ def recover_legacy_analysis_payload(
 def restore_latest_analysis_state(
     messages: list[dict[str, Any]],
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None, dict[str, str] | None]:
+    latest_batch: dict[str, Any] | None = None
+    latest_result: dict[str, Any] | None = None
+    latest_vision_context: dict[str, str] | None = None
     for message in reversed(messages):
-        if message.get("kind") != "analysis" or not isinstance(message.get("payload"), dict):
-            continue
-        payload = message["payload"]
-        result = payload.get("result")
-        if not isinstance(result, dict):
-            continue
-        batch = payload.get("batch") or result.get("batch")
-        if not isinstance(batch, dict):
-            batch = None
-        vision_context = (
-            orchestrator.build_vision_memory(payload) if payload.get("vision_result") else {}
-        )
-        return batch, result, vision_context or None
-    return None, None, None
+        if latest_vision_context is None:
+            if message.get("kind") == "analysis" and isinstance(message.get("payload"), dict):
+                vision_source = message["payload"]
+            elif isinstance(message.get("vision_result"), dict):
+                vision_source = message["vision_result"]
+            else:
+                vision_source = {}
+            if vision_source:
+                recovered_vision = orchestrator.build_vision_memory(vision_source)
+                latest_vision_context = recovered_vision or None
+
+        if (
+            latest_result is None
+            and message.get("kind") == "analysis"
+            and isinstance(message.get("payload"), dict)
+        ):
+            payload = message["payload"]
+            result = payload.get("result")
+            if isinstance(result, dict):
+                batch = payload.get("batch") or result.get("batch")
+                latest_batch = batch if isinstance(batch, dict) else None
+                latest_result = result
+        if latest_result is not None and latest_vision_context is not None:
+            break
+    return latest_batch, latest_result, latest_vision_context
 
 
 def persist_uploaded_image(
@@ -403,1479 +484,18 @@ def persist_uploaded_image(
 
 
 def inject_style() -> None:
+    """Load the single product-wide visual system."""
+    stylesheet = ROOT / "app" / "ui" / "design_system.css"
     st.markdown(
-        """
-        <style>
-        :root {
-            color-scheme: dark;
-            --agent-bg: #111111;
-            --agent-bg-elevated: #181818;
-            --agent-bg-soft: #202020;
-            --agent-bg-softer: #272727;
-            --agent-line: #303030;
-            --agent-line-strong: #3f3f3f;
-            --agent-text: #f4f4f5;
-            --agent-text-soft: #d4d4d8;
-            --agent-muted: #9ca3af;
-            --agent-faint: #6b7280;
-            --agent-accent: #f97316;
-            --agent-accent-soft: rgba(249, 115, 22, 0.16);
-            --agent-shadow: 0 22px 70px rgba(0, 0, 0, 0.28);
-            --agent-font-family: "Times New Roman", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", serif;
-            --agent-mono-font-family: "Times New Roman", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", serif;
-            --agent-chinese-font-family: "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif;
-        }
-        html {
-            background: var(--agent-bg);
-        }
-        html, body, .stApp, [data-testid="stSidebar"], [data-testid="stChatMessage"],
-        .stMarkdown, .stText, .stCaption, .stButton, .stTextInput, .stTextArea, .stFileUploader,
-        button, input, textarea, select, label, p, h1, h2, h3, h4, h5, h6 {
-            font-family: var(--agent-font-family) !important;
-            letter-spacing: 0;
-        }
-        body {
-            color: var(--agent-text);
-            background: var(--agent-bg);
-        }
-        code, pre, kbd, samp {
-            font-family: var(--agent-mono-font-family) !important;
-        }
-        #MainMenu, footer {
-            visibility: hidden;
-            height: 0;
-        }
-        header[data-testid="stHeader"] {
-            background: transparent !important;
-            color: var(--agent-text) !important;
-            box-shadow: none !important;
-        }
-        header[data-testid="stHeader"] button {
-            color: var(--agent-text-soft) !important;
-            background: rgba(255, 255, 255, 0.055) !important;
-            border: 1px solid rgba(255, 255, 255, 0.08) !important;
-            border-radius: 8px !important;
-        }
-        .stApp {
-            background:
-                radial-gradient(circle at 78% 0%, rgba(249, 115, 22, 0.08), transparent 28rem),
-                linear-gradient(180deg, #141414 0%, #101010 38%, #0d0d0d 100%);
-            color: var(--agent-text);
-        }
-        .block-container {
-            max-width: 1120px;
-            padding: 3.15rem 2.4rem 8rem;
-        }
-        [data-testid="stSidebar"] {
-            background: #1a1a1a;
-            border-right: 1px solid var(--agent-line);
-            box-shadow: 18px 0 44px rgba(0, 0, 0, 0.18);
-        }
-        [data-testid="stSidebar"] > div {
-            padding: 2rem 1.15rem 1.2rem;
-        }
-        [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p,
-        [data-testid="stSidebar"] label,
-        [data-testid="stSidebar"] .stCaption {
-            color: var(--agent-muted) !important;
-        }
-        [data-testid="stSidebar"] h1,
-        [data-testid="stSidebar"] h2,
-        [data-testid="stSidebar"] h3 {
-            color: var(--agent-text) !important;
-        }
-        .sidebar-brand {
-            display: flex;
-            align-items: center;
-            gap: 0.78rem;
-            padding: 0.15rem 0 0.9rem;
-        }
-        .brand-mark {
-            width: 2.55rem;
-            height: 2.55rem;
-            border-radius: 0.8rem;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            background: linear-gradient(135deg, #f97316, #facc15);
-            color: #101010;
-            font-weight: 800;
-            font-size: 1rem;
-            box-shadow: 0 12px 26px rgba(249, 115, 22, 0.28);
-        }
-        .brand-title {
-            color: var(--agent-text);
-            font-size: 1.16rem;
-            font-weight: 720;
-            line-height: 1.1;
-        }
-        .brand-subtitle {
-            color: var(--agent-muted);
-            font-size: 0.8rem;
-            margin-top: 0.22rem;
-        }
-        .sidebar-section-title {
-            color: #e5e7eb;
-            font-size: 0.78rem;
-            font-weight: 700;
-            text-transform: uppercase;
-            margin: 1.25rem 0 0.62rem;
-        }
-        .status-list {
-            border: 1px solid var(--agent-line);
-            background: rgba(255, 255, 255, 0.035);
-            border-radius: 8px;
-            overflow: hidden;
-        }
-        .status-row {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 0.8rem;
-            padding: 0.72rem 0.78rem;
-            color: var(--agent-text-soft);
-            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-            font-size: 0.86rem;
-        }
-        .status-row:last-child {
-            border-bottom: 0;
-        }
-        .status-pill {
-            color: #f8fafc;
-            background: rgba(255, 255, 255, 0.08);
-            border: 1px solid rgba(255, 255, 255, 0.08);
-            border-radius: 999px;
-            padding: 0.1rem 0.45rem;
-            font-size: 0.72rem;
-            white-space: nowrap;
-        }
-        .sidebar-note {
-            color: var(--agent-muted);
-            font-size: 0.82rem;
-            line-height: 1.62;
-            padding: 0.78rem 0.82rem;
-            border: 1px solid var(--agent-line);
-            border-radius: 8px;
-            background: rgba(255, 255, 255, 0.03);
-        }
-        .agent-live-progress {
-            display: flex;
-            align-items: center;
-            gap: 0.88rem;
-            width: min(760px, 100%);
-            margin: 0.35rem 0 1.2rem;
-            padding: 0.92rem 1rem;
-            color: var(--agent-text);
-            background: rgba(17, 17, 17, 0.78);
-            border: 1px solid rgba(249, 115, 22, 0.24);
-            border-radius: 8px;
-            box-shadow: 0 18px 46px rgba(0, 0, 0, 0.24);
-        }
-        .agent-live-spinner {
-            width: 1.35rem;
-            height: 1.35rem;
-            min-width: 1.35rem;
-            border-radius: 999px;
-            border: 2px solid rgba(249, 115, 22, 0.18);
-            border-top-color: #f97316;
-            border-right-color: #facc15;
-            animation: agent-spin 780ms linear infinite;
-        }
-        .agent-live-copy {
-            min-width: 0;
-        }
-        .agent-live-title {
-            color: var(--agent-text);
-            font-size: 0.96rem;
-            line-height: 1.35;
-            font-weight: 650;
-            overflow-wrap: anywhere;
-        }
-        .agent-live-subtitle {
-            display: flex;
-            align-items: center;
-            gap: 0.42rem;
-            color: var(--agent-muted);
-            font-size: 0.78rem;
-            line-height: 1.35;
-            margin-top: 0.22rem;
-        }
-        .agent-live-dot {
-            width: 0.28rem;
-            height: 0.28rem;
-            border-radius: 999px;
-            background: #facc15;
-            animation: agent-pulse 980ms ease-in-out infinite;
-        }
-        .agent-live-dot:nth-child(2) {
-            animation-delay: 130ms;
-        }
-        .agent-live-dot:nth-child(3) {
-            animation-delay: 260ms;
-        }
-        @keyframes agent-spin {
-            to {
-                transform: rotate(360deg);
-            }
-        }
-        @keyframes agent-pulse {
-            0%, 100% {
-                opacity: 0.28;
-                transform: translateY(0);
-            }
-            45% {
-                opacity: 1;
-                transform: translateY(-0.16rem);
-            }
-        }
-        hr {
-            border-color: var(--agent-line) !important;
-        }
-        .hero {
-            padding: 5.1rem 0 1.2rem;
-            max-width: 850px;
-        }
-        .hero h1 {
-            color: var(--agent-text);
-            font-size: clamp(2rem, 4.4vw, 4.2rem);
-            line-height: 1.06;
-            letter-spacing: 0;
-            margin: 0 0 0.82rem;
-            font-weight: 760;
-        }
-        .hero p {
-            color: var(--agent-muted);
-            font-size: 1.06rem;
-            line-height: 1.7;
-            margin: 0;
-            max-width: 690px;
-        }
-        .hero-kicker {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.45rem;
-            color: #fed7aa;
-            background: var(--agent-accent-soft);
-            border: 1px solid rgba(249, 115, 22, 0.24);
-            border-radius: 999px;
-            padding: 0.32rem 0.68rem;
-            font-size: 0.8rem;
-            font-weight: 650;
-            margin-bottom: 1rem;
-        }
-        .prompt-grid-label {
-            color: var(--agent-muted);
-            font-size: 0.88rem;
-            margin: 2.1rem 0 0.65rem;
-        }
-        div[data-testid="stButton"] > button {
-            border-radius: 8px;
-            min-height: 2.7rem;
-            background: rgba(255, 255, 255, 0.055);
-            border: 1px solid var(--agent-line);
-            color: var(--agent-text-soft);
-            white-space: normal;
-            text-align: left;
-            line-height: 1.52;
-            transition: background 160ms ease, border-color 160ms ease, transform 160ms ease;
-        }
-        div[data-testid="stButton"] > button:hover {
-            background: rgba(255, 255, 255, 0.085);
-            border-color: var(--agent-line-strong);
-            color: #ffffff;
-            transform: translateY(-1px);
-        }
-        div[data-testid="stButton"] > button:focus:not(:active) {
-            border-color: rgba(249, 115, 22, 0.55);
-            box-shadow: 0 0 0 1px rgba(249, 115, 22, 0.25);
-        }
-        .metric-card {
-            background: linear-gradient(180deg, rgba(255,255,255,0.07), rgba(255,255,255,0.035));
-            border: 1px solid var(--agent-line);
-            border-radius: 8px;
-            padding: 1rem 1.05rem;
-            min-height: 7.25rem;
-            overflow: hidden;
-            box-shadow: var(--agent-shadow);
-        }
-        .metric-label {
-            color: var(--agent-muted);
-            font-size: 0.8rem;
-            font-weight: 640;
-            line-height: 1.45;
-            margin-bottom: 0.35rem;
-        }
-        .metric-value {
-            color: var(--agent-text);
-            font-size: clamp(1.35rem, 2.25vw, 2.1rem);
-            line-height: 1.18;
-            font-weight: 680;
-            word-break: break-word;
-            overflow-wrap: anywhere;
-            white-space: normal;
-        }
-        .chat-transcript-start {
-            height: 0.45rem;
-        }
-        .message-row {
-            display: flex;
-            gap: 0.75rem;
-            align-items: flex-start;
-            margin: 0 0 1.35rem;
-            padding-top: 0.2rem;
-            overflow: visible;
-        }
-        .message-avatar {
-            width: 2.05rem;
-            height: 2.05rem;
-            min-width: 2.05rem;
-            border-radius: 0.6rem;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: #111111;
-            font-weight: 780;
-            line-height: 1;
-            margin-top: 0.1rem;
-            box-shadow: 0 10px 24px rgba(0, 0, 0, 0.22);
-        }
-        .message-avatar.user {
-            background: #f4f4f5;
-        }
-        .message-avatar.assistant {
-            background: linear-gradient(135deg, #f97316, #facc15);
-        }
-        .message-bubble {
-            background: var(--agent-bg-soft);
-            border: 1px solid var(--agent-line);
-            border-radius: 8px;
-            padding: 0.75rem 0.95rem;
-            line-height: 1.7;
-            min-height: 2.35rem;
-            overflow: visible;
-            flex: 1;
-            word-break: break-word;
-            overflow-wrap: anywhere;
-            color: var(--agent-text-soft);
-            box-shadow: 0 16px 40px rgba(0, 0, 0, 0.18);
-        }
-        .message-row.user .message-bubble {
-            background: #242424;
-            border-color: #363636;
-            color: #f8fafc;
-        }
-        .message-bubble p {
-            margin: 0 0 0.35rem 0;
-            line-height: 1.7;
-        }
-        .analysis-shell {
-            margin: -0.25rem 0 1.4rem 2.8rem;
-            padding: 1rem 0 0;
-        }
-        .stMarkdown, [data-testid="stMarkdownContainer"] {
-            color: var(--agent-text-soft);
-        }
-        [data-testid="stMarkdownContainer"] strong {
-            color: #ffffff;
-        }
-        [data-testid="stMarkdownContainer"] h1,
-        [data-testid="stMarkdownContainer"] h2,
-        [data-testid="stMarkdownContainer"] h3 {
-            color: var(--agent-text) !important;
-            font-weight: 720 !important;
-        }
-        [data-testid="stMarkdownContainer"] li {
-            margin-bottom: 0.25rem;
-        }
-        div[data-testid="stAlert"] {
-            border-radius: 8px;
-            border: 1px solid var(--agent-line);
-            background: rgba(255, 255, 255, 0.055);
-            color: var(--agent-text-soft);
-        }
-        div[data-testid="stExpander"] {
-            border: 1px solid var(--agent-line) !important;
-            border-radius: 8px !important;
-            background: rgba(255, 255, 255, 0.035) !important;
-            overflow: hidden;
-        }
-        div[data-testid="stExpander"] summary {
-            color: var(--agent-text) !important;
-            font-weight: 650;
-        }
-        div[data-testid="stDataFrame"] {
-            border-radius: 8px;
-            overflow: hidden;
-            border: 1px solid var(--agent-line);
-        }
-        .score-bars {
-            display: grid;
-            gap: 0.82rem;
-            margin: 0.15rem 0 1.05rem;
-        }
-        .score-row {
-            padding: 0.88rem 0.95rem 0.95rem;
-            border: 1px solid rgba(217, 189, 130, 0.14);
-            border-radius: 6px;
-            background: rgba(17, 21, 29, 0.62);
-        }
-        .score-head {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 1rem;
-            margin-bottom: 0.62rem;
-        }
-        .score-name {
-            color: var(--agent-text);
-            font-size: 0.94rem;
-            line-height: 1.45;
-            min-width: 0;
-            overflow-wrap: anywhere;
-        }
-        .score-value {
-            color: #f1dfad;
-            font-family: var(--agent-mono-font-family);
-            font-size: 0.9rem;
-            text-align: right;
-            white-space: nowrap;
-        }
-        .score-track {
-            height: 0.42rem;
-            background: rgba(217, 189, 130, 0.09);
-            border-radius: 999px;
-            overflow: hidden;
-        }
-        .score-fill {
-            height: 100%;
-            background: linear-gradient(90deg, #f97316, #facc15);
-            border-radius: 999px;
-        }
-        .score-detail {
-            color: var(--agent-muted);
-            font-size: 0.84rem;
-            line-height: 1.62;
-            margin-top: 0.62rem;
-            overflow-wrap: anywhere;
-        }
-        .score-detail + .score-detail {
-            margin-top: 0.32rem;
-        }
-        .score-detail strong {
-            color: var(--agent-text-soft);
-            font-weight: 620;
-        }
-        .risk-list {
-            display: grid;
-            gap: 0.62rem;
-            margin-top: 1rem;
-        }
-        .risk-item {
-            padding: 0.78rem 0.9rem;
-            border: 1px solid rgba(217, 189, 130, 0.15);
-            border-left: 3px solid rgba(217, 189, 130, 0.42);
-            border-radius: 6px;
-            background: rgba(17, 21, 29, 0.62);
-            color: var(--agent-text-soft);
-            font-size: 0.86rem;
-            line-height: 1.62;
-            overflow-wrap: anywhere;
-        }
-        .risk-item.high {
-            border-color: rgba(176, 86, 74, 0.28);
-            border-left-color: rgba(201, 99, 82, 0.72);
-            background: rgba(63, 25, 24, 0.26);
-        }
-        .risk-level {
-            color: #f1dfad;
-            font-family: var(--agent-mono-font-family) !important;
-            font-size: 0.78rem;
-            margin-right: 0.45rem;
-        }
-        .risk-empty {
-            margin-top: 1rem;
-            padding: 0.78rem 0.9rem;
-            border: 1px solid rgba(217, 189, 130, 0.14);
-            border-radius: 6px;
-            background: rgba(17, 21, 29, 0.58);
-            color: var(--agent-muted);
-            font-size: 0.86rem;
-        }
-        .tool-steps {
-            display: grid;
-            gap: 0.72rem;
-            margin: 0.2rem 0 0.25rem;
-        }
-        .tool-step {
-            display: grid;
-            grid-template-columns: 2.4rem minmax(0, 1fr);
-            gap: 0.82rem;
-            padding: 0.88rem 0.95rem;
-            border: 1px solid rgba(217, 189, 130, 0.14);
-            border-radius: 6px;
-            background: rgba(17, 21, 29, 0.62);
-        }
-        .tool-step-index {
-            width: 2.1rem;
-            height: 2.1rem;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            border: 1px solid rgba(217, 189, 130, 0.18);
-            border-radius: 999px;
-            color: #f1dfad;
-            font-family: var(--agent-mono-font-family) !important;
-            font-size: 0.82rem;
-            background: rgba(217, 189, 130, 0.06);
-        }
-        .tool-step-title {
-            color: var(--agent-text);
-            font-size: 0.94rem;
-            line-height: 1.5;
-            overflow-wrap: anywhere;
-        }
-        .tool-step-meta {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 0.42rem;
-            margin: 0.36rem 0 0.48rem;
-        }
-        .tool-chip {
-            display: inline-flex;
-            align-items: center;
-            min-height: 1.35rem;
-            padding: 0.08rem 0.48rem;
-            border: 1px solid rgba(217, 189, 130, 0.14);
-            border-radius: 999px;
-            color: var(--agent-muted);
-            background: rgba(8, 10, 14, 0.6);
-            font-family: var(--agent-mono-font-family) !important;
-            font-size: 0.74rem;
-        }
-        .tool-step-note {
-            color: var(--agent-text-soft);
-            font-size: 0.86rem;
-            line-height: 1.62;
-            overflow-wrap: anywhere;
-        }
-        .report-anchor {
-            display: none;
-        }
-        [data-testid="stFileUploader"] section {
-            background: rgba(255, 255, 255, 0.045);
-            border: 1px dashed var(--agent-line-strong);
-            border-radius: 8px;
-            min-height: 5.1rem;
-            padding: 0.78rem 0.82rem;
-        }
-        [data-testid="stFileUploader"] button {
-            background: rgba(255, 255, 255, 0.08) !important;
-            border: 1px solid rgba(255, 255, 255, 0.12) !important;
-            color: var(--agent-text-soft) !important;
-            border-radius: 8px;
-            min-height: 2.3rem;
-            padding: 0.55rem 0.78rem;
-        }
-        [data-testid="stFileUploader"] small {
-            display: none !important;
-        }
-        [data-testid="stTextArea"] div[data-baseweb="textarea"],
-        [data-testid="stTextArea"] div[data-baseweb="base-input"],
-        [data-testid="stTextAreaRootElement"] {
-            background: rgba(255, 255, 255, 0.055) !important;
-            border-color: var(--agent-line) !important;
-        }
-        textarea, input {
-            background: rgba(255, 255, 255, 0.055) !important;
-            color: var(--agent-text) !important;
-            border: 1px solid var(--agent-line) !important;
-            border-radius: 8px !important;
-        }
-        textarea::placeholder, input::placeholder {
-            color: var(--agent-faint) !important;
-        }
-        .stDownloadButton button {
-            justify-content: center;
-            text-align: center !important;
-            background: rgba(17, 21, 29, 0.82) !important;
-            border: 1px solid rgba(217, 189, 130, 0.18) !important;
-            border-radius: 6px !important;
-            color: var(--agent-text) !important;
-        }
-        .stDownloadButton button:hover {
-            border-color: rgba(217, 189, 130, 0.34) !important;
-            background: rgba(217, 189, 130, 0.08) !important;
-            color: #f1dfad !important;
-        }
-        [data-testid="stBottom"] {
-            z-index: 999;
-            background: #111111 !important;
-            backdrop-filter: blur(18px);
-            border-top: 1px solid rgba(255, 255, 255, 0.06);
-        }
-        [data-testid="stBottomBlockContainer"] {
-            background: #111111 !important;
-            padding: 0.9rem 2.4rem 1.05rem !important;
-        }
-        [data-testid="stBottom"] [data-testid="stVerticalBlock"] {
-            width: min(1120px, 100%) !important;
-            max-width: 1120px !important;
-            margin: 0 auto !important;
-            padding: 0 !important;
-        }
-        [data-testid="stChatInput"] {
-            width: 100%;
-            background: transparent !important;
-            border: 0 !important;
-            padding: 0 !important;
-            box-shadow: none !important;
-        }
-        [data-testid="stChatInput"] > div {
-            width: 100%;
-            background: transparent !important;
-            border: 0 !important;
-            padding: 0 !important;
-        }
-        [data-testid="stChatInput"] div[data-baseweb="textarea"],
-        [data-testid="stChatInput"] div[data-baseweb="base-input"] {
-            width: 100%;
-            background: transparent !important;
-            border: 0 !important;
-        }
-        [data-testid="stChatInput"] div {
-            color: var(--agent-text) !important;
-        }
-        [data-testid="stChatInput"] textarea,
-        [data-testid="stChatInput"] input {
-            background: #222222 !important;
-            border: 1px solid #3a3a3a !important;
-            box-shadow: 0 18px 58px rgba(0, 0, 0, 0.32);
-            min-height: 3.4rem !important;
-            padding: 0.95rem 4.1rem 0.95rem 1rem !important;
-        }
-        [data-testid="stChatInput"] textarea:focus,
-        [data-testid="stChatInput"] input:focus {
-            border-color: rgba(249, 115, 22, 0.7) !important;
-            box-shadow: 0 0 0 1px rgba(249, 115, 22, 0.22), 0 18px 58px rgba(0, 0, 0, 0.32);
-            outline: none !important;
-        }
-        [data-testid="stChatInput"] button {
-            background: #f4f4f5 !important;
-            color: #111111 !important;
-            border-radius: 999px !important;
-        }
-        [data-testid="stChatMessage"] {
-            overflow: visible !important;
-            align-items: flex-start !important;
-            padding-top: 0.35rem !important;
-            padding-bottom: 0.35rem !important;
-        }
-        [data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] {
-            overflow: visible !important;
-            line-height: 1.65 !important;
-            padding-top: 0.12rem !important;
-        }
-        [data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] p {
-            line-height: 1.65 !important;
-            margin-top: 0 !important;
-            margin-bottom: 0.35rem !important;
-            overflow: visible !important;
-        }
-        [data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] h1,
-        [data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] h2,
-        [data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] h3 {
-            line-height: 1.35 !important;
-            margin-top: 0.2rem !important;
-        }
-        @media (max-width: 860px) {
-            .block-container {
-                padding: 2rem 1rem 8rem;
-            }
-            .hero {
-                padding-top: 1.6rem;
-            }
-            .message-row {
-                gap: 0.55rem;
-            }
-            .message-avatar {
-                width: 1.8rem;
-                height: 1.8rem;
-                min-width: 1.8rem;
-            }
-            .analysis-shell {
-                margin-left: 0;
-            }
-            [data-testid="stBottom"] [data-testid="stVerticalBlock"] {
-                padding-left: 1rem;
-                padding-right: 1rem;
-            }
-        }
-
-        /* Warm lab-console theme inspired by the reference screens. */
-        :root {
-            --agent-bg: #08090c;
-            --agent-bg-elevated: #0d1016;
-            --agent-bg-soft: #11151d;
-            --agent-bg-softer: #171a22;
-            --agent-line: #262b33;
-            --agent-line-strong: #3a3f48;
-            --agent-text: #efe7d3;
-            --agent-text-soft: #ded3bb;
-            --agent-muted: #89877d;
-            --agent-faint: #5f625f;
-            --agent-accent: #d9bd82;
-            --agent-accent-soft: rgba(217, 189, 130, 0.12);
-            --agent-shadow: 0 24px 72px rgba(0, 0, 0, 0.44);
-            --agent-font-family: "Times New Roman", "Noto Serif SC", "Source Han Serif SC", "Songti SC", SimSun, Georgia, serif;
-            --agent-mono-font-family: "Times New Roman", "Noto Serif SC", "Source Han Serif SC", "Songti SC", SimSun, Georgia, serif;
-        }
-        html, body, .stApp {
-            background: #08090c !important;
-        }
-        body, .stMarkdown, [data-testid="stMarkdownContainer"], p, h1, h2, h3, h4, h5, h6, label {
-            color: var(--agent-text);
-            font-family: var(--agent-font-family) !important;
-        }
-        .stApp {
-            background:
-                radial-gradient(circle at 74% 3%, rgba(217, 189, 130, 0.055), transparent 25rem),
-                radial-gradient(circle at 18% 92%, rgba(48, 63, 59, 0.18), transparent 34rem),
-                linear-gradient(180deg, #0a0b0f 0%, #08090c 48%, #07080a 100%) !important;
-        }
-        .block-container {
-            max-width: 1180px;
-            padding: 2.9rem 3.2rem 8.4rem;
-        }
-        [data-testid="stSidebar"] {
-            background: linear-gradient(180deg, #10141b 0%, #0d1118 100%) !important;
-            border-right: 1px solid #232832;
-            box-shadow: 18px 0 48px rgba(0, 0, 0, 0.34);
-        }
-        [data-testid="stSidebar"] > div {
-            padding: 2.35rem 1.35rem 1.4rem;
-        }
-        [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p,
-        [data-testid="stSidebar"] label {
-            font-size: 0.88rem !important;
-            line-height: 1.55 !important;
-        }
-        [data-testid="stSidebar"] .stCaption,
-        [data-testid="stSidebar"] small {
-            font-size: 0.76rem !important;
-            line-height: 1.45 !important;
-        }
-        .sidebar-brand {
-            display: block;
-            padding: 0 0 1.1rem;
-        }
-        .sidebar-brand::before,
-        .sidebar-section-title::before,
-        .hero-kicker::before {
-            content: "";
-            display: inline-block;
-            width: 1.45rem;
-            height: 1px;
-            margin-right: 0.55rem;
-            vertical-align: middle;
-            background: rgba(217, 189, 130, 0.55);
-        }
-        .brand-mark {
-            display: none;
-        }
-        .brand-title {
-            margin-top: 0.65rem;
-            color: var(--agent-text);
-            font-size: 1.34rem;
-            line-height: 1.15;
-            font-weight: 560;
-            font-style: normal;
-            letter-spacing: 0;
-        }
-        .brand-subtitle {
-            color: var(--agent-muted);
-            font-family: var(--agent-mono-font-family) !important;
-            font-size: 0.7rem;
-            letter-spacing: 0.18em;
-            text-transform: uppercase;
-        }
-        .sidebar-section-title {
-            color: var(--agent-muted);
-            font-family: var(--agent-mono-font-family) !important;
-            font-size: 0.76rem;
-            font-weight: 500;
-            letter-spacing: 0.16em;
-            margin: 1.7rem 0 0.82rem;
-        }
-        .status-list {
-            border: 0;
-            background: transparent;
-            border-radius: 0;
-        }
-        .status-row {
-            position: relative;
-            display: block;
-            padding: 0.78rem 0 0.9rem 1.1rem;
-            border-bottom: 1px solid rgba(217, 189, 130, 0.12);
-            color: var(--agent-text-soft);
-            font-size: 1rem;
-        }
-        .status-row::before {
-            content: "";
-            position: absolute;
-            left: 0.1rem;
-            top: 1.05rem;
-            width: 0.34rem;
-            height: 0.34rem;
-            border-radius: 999px;
-            background: var(--agent-accent);
-            box-shadow: 0 0 12px rgba(217, 189, 130, 0.58);
-        }
-        .status-pill {
-            display: block;
-            width: fit-content;
-            margin-top: 0.34rem;
-            color: var(--agent-faint);
-            background: transparent;
-            border: 0;
-            border-radius: 0;
-            padding: 0;
-            font-family: var(--agent-mono-font-family) !important;
-            font-size: 0.74rem;
-            letter-spacing: 0;
-        }
-        .sidebar-note {
-            border: 1px solid rgba(217, 189, 130, 0.18);
-            background: rgba(17, 21, 29, 0.58);
-            color: var(--agent-muted);
-            font-size: 0.86rem;
-            line-height: 1.75;
-        }
-        div[data-testid="stButton"] > button {
-            min-height: 2.75rem;
-            height: auto;
-            padding: 0.82rem 1rem;
-            background: rgba(17, 21, 29, 0.8);
-            border: 1px solid rgba(217, 189, 130, 0.18);
-            color: var(--agent-text-soft);
-            border-radius: 6px;
-            font-family: var(--agent-font-family) !important;
-            white-space: pre-wrap;
-            box-shadow: none;
-        }
-        [class*="st-key-example_card_"][class*="st-key-example_card_"] button {
-            display: flex !important;
-            width: 100% !important;
-            justify-content: center !important;
-            align-items: center !important;
-            text-align: center !important;
-            min-height: 4.45rem;
-            padding: 0.62rem 0.9rem;
-        }
-        div[data-testid="stButton"] > button:hover {
-            background: rgba(217, 189, 130, 0.085);
-            border-color: rgba(217, 189, 130, 0.42);
-            color: var(--agent-text);
-        }
-        div[data-testid="stButton"] > button p,
-        div[data-testid="stButton"] > button span {
-            color: var(--agent-text-soft) !important;
-            white-space: pre-wrap !important;
-            overflow: visible !important;
-            text-overflow: unset !important;
-            line-height: 1.45 !important;
-            margin: 0 !important;
-            text-align: left !important;
-        }
-        [class*="st-key-example_card_"][class*="st-key-example_card_"] button [data-testid="stMarkdownContainer"] {
-            flex: 1 1 100% !important;
-            width: 100% !important;
-            min-width: 0 !important;
-            text-align: center !important;
-        }
-        [class*="st-key-example_card_"][class*="st-key-example_card_"] button p,
-        [class*="st-key-example_card_"][class*="st-key-example_card_"] button span {
-            display: block !important;
-            width: 100% !important;
-            text-align: center !important;
-        }
-        div[data-testid="stButton"] > button:hover p,
-        div[data-testid="stButton"] > button:hover span {
-            color: var(--agent-text) !important;
-        }
-        div[data-testid="stButton"] > button:focus:not(:active) {
-            border-color: rgba(217, 189, 130, 0.62);
-            box-shadow: 0 0 0 1px rgba(217, 189, 130, 0.2);
-        }
-        .hero {
-            max-width: 680px;
-            margin: 0 auto;
-            padding: 0 0 1.35rem;
-            text-align: center;
-        }
-        .hero h1 {
-            color: var(--agent-text);
-            font-size: clamp(2.6rem, 5vw, 4.65rem);
-            line-height: 1;
-            font-weight: 420;
-            letter-spacing: 0;
-            margin: 0;
-        }
-        .hero p {
-            color: var(--agent-muted);
-            font-size: 1.18rem;
-            line-height: 1.78;
-            max-width: 730px;
-        }
-        .hero-kicker {
-            display: block;
-            width: fit-content;
-            margin-bottom: 1.28rem;
-            padding: 0;
-            color: var(--agent-muted);
-            background: transparent;
-            border: 0;
-            border-radius: 0;
-            font-family: var(--agent-mono-font-family) !important;
-            font-size: 0.68rem;
-            letter-spacing: 0.18em;
-            text-transform: uppercase;
-        }
-        .prompt-grid-label {
-            max-width: 760px;
-            margin: 0 auto 0.75rem;
-            color: var(--agent-text-soft);
-            font-family: var(--agent-font-family) !important;
-            font-size: 0.92rem;
-            line-height: 1.34;
-            letter-spacing: 0;
-            text-align: center;
-        }
-        section[data-testid="stAppScrollToBottomContainer"]:has([class*="st-key-empty_state_shell"]) {
-            align-items: flex-start !important;
-        }
-        .block-container:has([class*="st-key-empty_state_shell"]) {
-            box-sizing: border-box;
-            height: calc(100vh - 8.4rem);
-            height: calc(100dvh - 8.4rem);
-            min-height: calc(100vh - 8.4rem);
-            min-height: calc(100dvh - 8.4rem);
-            padding-block: 2.9rem;
-        }
-        .block-container:has([class*="st-key-empty_state_shell"]) > div[data-testid="stVerticalBlock"] {
-            height: 100%;
-        }
-        [data-testid="stLayoutWrapper"]:has(> [class*="st-key-empty_state_shell"]) {
-            flex: 1 1 auto;
-            min-height: 0;
-        }
-        [class*="st-key-empty_state_shell"] {
-            --empty-rail-shift: clamp(4rem, 6vw, 8rem);
-            display: flex;
-            flex: 1 1 auto;
-            height: 100%;
-            min-height: 0;
-            align-items: center;
-            justify-content: center;
-            overflow-x: clip;
-        }
-        [class*="st-key-empty_state_shell"] > div[data-testid="stVerticalBlock"] {
-            width: 100%;
-            gap: 0.8rem;
-        }
-        [class*="st-key-welcome_content"] {
-            width: 100%;
-            transform: translateX(var(--empty-rail-shift));
-        }
-        [class*="st-key-empty_state_shell"] .agent-live-progress {
-            width: fit-content;
-            max-width: min(760px, calc(100% - var(--empty-rail-shift)));
-            margin: 0.15rem 0 1.2rem max(0px, calc(50% - 35rem + var(--empty-rail-shift)));
-            transform: none;
-        }
-        [class*="st-key-empty_state_shell"] [class*="st-key-example_card_"] p,
-        [class*="st-key-empty_state_shell"] [class*="st-key-example_card_"] span {
-            font-size: 0.92rem !important;
-            line-height: 1.34 !important;
-        }
-        .metric-card {
-            background: rgba(17, 21, 29, 0.78);
-            border: 1px solid rgba(217, 189, 130, 0.18);
-            border-radius: 6px;
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            height: 8.9rem;
-            min-height: 8.9rem;
-            padding: 1.05rem 1.35rem;
-            overflow: hidden;
-            box-shadow: var(--agent-shadow);
-        }
-        .metric-label {
-            color: var(--agent-muted);
-            font-family: var(--agent-mono-font-family) !important;
-            font-size: 0.78rem;
-            line-height: 1.35;
-            letter-spacing: 0.06em;
-            margin-bottom: 0.72rem;
-            text-transform: uppercase;
-            white-space: nowrap;
-        }
-        .metric-value {
-            color: var(--agent-text);
-            display: block;
-            max-width: 100%;
-            font-size: clamp(1.45rem, 1.7vw, 1.95rem);
-            line-height: 1.16;
-            font-weight: 440;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            word-break: normal;
-            overflow-wrap: normal;
-        }
-        .recommendation-summary {
-            width: min(44rem, 100%);
-            margin: 0 0 1.85rem;
-        }
-        .recommendation-card {
-            height: auto;
-            min-height: 6.9rem;
-            justify-content: flex-start;
-            padding: 1.2rem 1.45rem 1.3rem;
-            overflow: visible;
-        }
-        .recommendation-card .metric-value {
-            font-size: clamp(1.55rem, 2vw, 2.25rem);
-            line-height: 1.24;
-            white-space: normal;
-            overflow: visible;
-            text-overflow: clip;
-            word-break: break-word;
-            overflow-wrap: anywhere;
-        }
-        .processing-plan {
-            width: min(58rem, 100%);
-            margin: 0 0 1.85rem;
-            padding: 1.35rem 1.45rem 1.5rem;
-            border: 1px solid rgba(249, 115, 22, 0.24);
-            border-radius: 8px;
-            background:
-                linear-gradient(135deg, rgba(249, 115, 22, 0.08), transparent 35%),
-                rgba(17, 21, 29, 0.82);
-            box-shadow: var(--agent-shadow);
-        }
-        .processing-plan-head {
-            display: flex;
-            align-items: flex-start;
-            justify-content: space-between;
-            gap: 1rem;
-            margin-bottom: 1.15rem;
-        }
-        .processing-plan-kicker {
-            color: var(--agent-accent);
-            font-family: var(--agent-chinese-font-family) !important;
-            font-size: 0.74rem;
-            letter-spacing: 0.06em;
-            margin-bottom: 0.32rem;
-        }
-        .processing-plan-title {
-            color: var(--agent-text);
-            font-size: clamp(1.22rem, 1.8vw, 1.65rem);
-            line-height: 1.35;
-            font-weight: 600;
-        }
-        .processing-plan-status {
-            flex: 0 0 auto;
-            max-width: 16rem;
-            padding: 0.38rem 0.58rem;
-            border: 1px solid rgba(249, 115, 22, 0.28);
-            border-radius: 999px;
-            color: #fdba74;
-            background: rgba(249, 115, 22, 0.09);
-            font-family: var(--agent-chinese-font-family) !important;
-            font-size: 0.7rem;
-            line-height: 1.35;
-            text-align: center;
-        }
-        .processing-flow {
-            display: flex;
-            flex-wrap: wrap;
-            align-items: center;
-            gap: 0.42rem;
-            margin-bottom: 1.15rem;
-        }
-        .processing-flow-step {
-            padding: 0.42rem 0.58rem;
-            border: 1px solid #353b45;
-            border-radius: 5px;
-            color: var(--agent-text-soft);
-            background: #171b22;
-            font-size: 0.8rem;
-            line-height: 1.35;
-        }
-        .processing-flow-arrow {
-            color: var(--agent-accent);
-            font-size: 0.76rem;
-        }
-        .processing-stage-grid {
-            display: grid;
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 0.72rem;
-        }
-        .processing-stage {
-            padding: 0.92rem 1rem;
-            border: 1px solid #2c323c;
-            border-radius: 6px;
-            background: rgba(12, 15, 20, 0.72);
-        }
-        .processing-stage:last-child {
-            grid-column: 1 / -1;
-        }
-        .processing-stage h4 {
-            margin: 0 0 0.5rem;
-            color: var(--agent-text);
-            font-size: 0.94rem;
-            line-height: 1.4;
-            font-weight: 600;
-        }
-        .processing-stage p {
-            margin: 0.32rem 0;
-            color: var(--agent-muted);
-            font-size: 0.82rem;
-            line-height: 1.65;
-        }
-        .processing-stage strong {
-            color: var(--agent-text-soft);
-            font-weight: 600;
-        }
-        .processing-plan-foot {
-            display: grid;
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 0.72rem;
-            margin-top: 0.72rem;
-        }
-        .processing-plan-note {
-            padding: 0.82rem 0.95rem;
-            border-left: 2px solid rgba(249, 115, 22, 0.55);
-            color: var(--agent-muted);
-            background: rgba(249, 115, 22, 0.045);
-            font-size: 0.8rem;
-            line-height: 1.65;
-        }
-        .processing-plan-note strong {
-            color: var(--agent-text-soft);
-        }
-        .processing-plan-note:last-child {
-            grid-column: 1 / -1;
-        }
-        @media (max-width: 760px) {
-            .processing-plan-head {
-                flex-direction: column;
-            }
-            .processing-plan-status {
-                max-width: 100%;
-                text-align: left;
-            }
-            .processing-stage-grid,
-            .processing-plan-foot {
-                grid-template-columns: 1fr;
-            }
-            .processing-stage:last-child {
-                grid-column: auto;
-            }
-            .processing-plan-note:last-child {
-                grid-column: auto;
-            }
-        }
-        .message-row {
-            margin: 0 0 1.8rem;
-        }
-        .message-row.user {
-            justify-content: flex-end;
-        }
-        .message-row.user .message-avatar {
-            display: none;
-        }
-        .message-row.user .message-bubble {
-            flex: 0 1 760px;
-            margin-left: auto;
-            background: rgba(17, 21, 29, 0.86);
-            border: 1px solid #2b3039;
-            color: var(--agent-text);
-            border-radius: 6px;
-            padding: 1.05rem 1.18rem;
-            font-size: 1.12rem;
-            box-shadow: none;
-        }
-        .user-attachment-row {
-            display: flex;
-            justify-content: flex-end;
-            margin: 0 0 0.65rem;
-        }
-        .user-attachment {
-            display: block;
-            width: min(22rem, 58vw);
-            max-height: 24rem;
-            object-fit: contain;
-            border: 1px solid #2b3039;
-            border-radius: 8px;
-            background: rgba(17, 21, 29, 0.86);
-        }
-        .message-row.assistant {
-            display: grid;
-            grid-template-columns: 6.8rem minmax(0, 1fr);
-            gap: 1.45rem;
-            align-items: start;
-        }
-        .message-row.assistant .message-avatar {
-            width: auto;
-            min-width: 0;
-            height: auto;
-            margin: 0;
-            padding: 0.66rem 1.2rem 0 0;
-            justify-content: flex-start;
-            align-items: flex-start;
-            background: transparent;
-            border-radius: 0;
-            color: var(--agent-accent);
-            box-shadow: none;
-            font-size: 0.96rem;
-            line-height: 1.2;
-            font-style: italic;
-            font-weight: 420;
-            border-right: 1px solid rgba(217, 189, 130, 0.16);
-        }
-        .message-row.assistant .message-bubble {
-            background: transparent;
-            border: 0;
-            box-shadow: none;
-            padding: 0;
-            color: var(--agent-text);
-            font-size: 1.08rem;
-            line-height: 1.78;
-        }
-        div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label) {
-            align-items: flex-start;
-            gap: 1.45rem;
-            margin: 0 0 1.8rem;
-        }
-        .assistant-markdown-label {
-            min-height: 2.1rem;
-            padding: 0.66rem 1.2rem 0.45rem 0;
-            border-right: 1px solid rgba(217, 189, 130, 0.16);
-            color: var(--agent-accent);
-            font-size: 0.96rem;
-            font-style: italic;
-            font-weight: 420;
-            line-height: 1.2;
-            white-space: nowrap;
-        }
-        div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label)
-        > div[data-testid="stColumn"]:last-child [data-testid="stMarkdownContainer"] {
-            color: var(--agent-text);
-            font-size: 1.08rem;
-            line-height: 1.78;
-            overflow-wrap: anywhere;
-        }
-        .analysis-shell {
-            margin: 0 0 1.9rem 8.25rem;
-            padding-top: 0;
-        }
-        code, pre, kbd, samp {
-            color: #e4c98e !important;
-        }
-        [data-testid="stMarkdownContainer"] code {
-            color: #e4c98e !important;
-            background: #0a0b0f !important;
-            border: 1px solid rgba(217, 189, 130, 0.12);
-            border-radius: 5px;
-            padding: 0.12rem 0.38rem;
-        }
-        div[data-testid="stExpander"] {
-            border-color: rgba(217, 189, 130, 0.17) !important;
-            background: rgba(11, 13, 18, 0.72) !important;
-            border-radius: 6px !important;
-        }
-        div[data-testid="stExpander"] summary {
-            color: var(--agent-text) !important;
-            letter-spacing: 0.04em;
-            background: rgba(11, 13, 18, 0.72) !important;
-            border-bottom: 1px solid transparent;
-        }
-        div[data-testid="stExpander"] summary:hover,
-        div[data-testid="stExpander"] details[open] > summary {
-            background: rgba(17, 21, 29, 0.78) !important;
-            border-bottom-color: rgba(217, 189, 130, 0.14) !important;
-            color: var(--agent-text) !important;
-        }
-        div[data-testid="stExpander"] summary * {
-            color: var(--agent-text) !important;
-            background: transparent !important;
-        }
-        div[data-testid="stExpander"] details,
-        div[data-testid="stExpander"] div[role="region"] {
-            background: rgba(8, 10, 14, 0.72) !important;
-        }
-        div[data-testid="stExpander"]:has(.score-bars) {
-            border-color: rgba(217, 189, 130, 0.2) !important;
-            background: rgba(8, 10, 14, 0.82) !important;
-        }
-        div[data-testid="stExpander"]:has(.score-bars) summary {
-            background: rgba(17, 21, 29, 0.72) !important;
-            border-bottom: 1px solid rgba(217, 189, 130, 0.15);
-        }
-        .score-fill {
-            background: linear-gradient(90deg, #8f7450, #e0c286);
-        }
-        .score-row {
-            background: rgba(17, 21, 29, 0.72);
-            border-color: rgba(217, 189, 130, 0.16);
-        }
-        .score-track {
-            background: rgba(217, 189, 130, 0.1);
-        }
-        div[data-testid="stExpander"]:has(.tool-steps),
-        div[data-testid="stExpander"]:has(.report-anchor) {
-            border-color: rgba(217, 189, 130, 0.2) !important;
-            background: rgba(8, 10, 14, 0.82) !important;
-        }
-        .tool-step {
-            background: rgba(17, 21, 29, 0.72);
-            border-color: rgba(217, 189, 130, 0.16);
-        }
-        div[data-testid="stExpander"]:has(.report-anchor) [data-testid="stMarkdownContainer"] {
-            color: var(--agent-text-soft) !important;
-        }
-        div[data-testid="stExpander"]:has(.report-anchor) [data-testid="stMarkdownContainer"] h1 {
-            color: var(--agent-text) !important;
-            font-size: clamp(2rem, 3.5vw, 3.6rem) !important;
-            line-height: 1.08 !important;
-            margin: 0.55rem 0 1.1rem !important;
-        }
-        div[data-testid="stExpander"]:has(.report-anchor) [data-testid="stMarkdownContainer"] h2 {
-            color: #f1dfad !important;
-            font-size: 1.24rem !important;
-            line-height: 1.35 !important;
-            margin-top: 1.45rem !important;
-            padding-top: 1rem;
-            border-top: 1px solid rgba(217, 189, 130, 0.12);
-        }
-        div[data-testid="stExpander"]:has(.report-anchor) [data-testid="stMarkdownContainer"] h3 {
-            color: var(--agent-text) !important;
-            font-size: 1.02rem !important;
-        }
-        div[data-testid="stExpander"]:has(.report-anchor) [data-testid="stMarkdownContainer"] p,
-        div[data-testid="stExpander"]:has(.report-anchor) [data-testid="stMarkdownContainer"] li {
-            color: var(--agent-text-soft) !important;
-            line-height: 1.76 !important;
-        }
-        div[data-testid="stExpander"]:has(.report-anchor) [data-testid="stCaptionContainer"],
-        div[data-testid="stExpander"]:has(.report-anchor) .stCaption {
-            color: var(--agent-muted) !important;
-        }
-        [data-testid="stFileUploader"] section,
-        [data-testid="stTextArea"] div[data-baseweb="textarea"],
-        [data-testid="stTextArea"] div[data-baseweb="base-input"],
-        [data-testid="stTextAreaRootElement"],
-        textarea,
-        input {
-            background: rgba(17, 21, 29, 0.82) !important;
-            border-color: rgba(217, 189, 130, 0.16) !important;
-            color: var(--agent-text) !important;
-            border-radius: 6px !important;
-        }
-        [data-testid="stBottom"],
-        [data-testid="stBottomBlockContainer"] {
-            background: rgba(8, 9, 12, 0.92) !important;
-            border-top: 1px solid rgba(217, 189, 130, 0.08);
-        }
-        [data-testid="stChatInput"] textarea,
-        [data-testid="stChatInput"] input {
-            box-sizing: border-box !important;
-            min-height: 3.85rem !important;
-            background: rgba(17, 21, 29, 0.98) !important;
-            border: 1px solid rgba(217, 189, 130, 0.2) !important;
-            border-radius: 6px !important;
-            color: var(--agent-text) !important;
-            box-shadow: 0 24px 76px rgba(0, 0, 0, 0.46);
-            font-size: 1rem !important;
-            line-height: 1.5rem !important;
-            padding: 1.1rem 4.1rem 1.1rem 1rem !important;
-        }
-        [data-testid="stChatInput"] textarea::placeholder,
-        [data-testid="stChatInput"] input::placeholder {
-            color: rgba(222, 211, 187, 0.52) !important;
-            opacity: 1 !important;
-        }
-        [data-testid="stChatInput"] textarea:focus,
-        [data-testid="stChatInput"] input:focus {
-            border-color: rgba(217, 189, 130, 0.66) !important;
-            box-shadow: 0 0 0 1px rgba(217, 189, 130, 0.24), 0 24px 76px rgba(0, 0, 0, 0.46);
-        }
-        [data-testid="stChatInput"] button {
-            background: transparent !important;
-            color: var(--agent-accent) !important;
-        }
-        @media (max-width: 860px) {
-            .block-container {
-                padding: 1.45rem 1rem 8.2rem;
-            }
-            .hero {
-                padding: 1.2rem 0 0.8rem;
-            }
-            [class*="st-key-empty_state_shell"] {
-                box-sizing: border-box;
-                min-height: 0;
-                padding: 1rem 0 0;
-            }
-            .block-container:has([class*="st-key-empty_state_shell"]) {
-                padding-block: 1.45rem;
-            }
-            [class*="st-key-empty_state_shell"] .agent-live-progress {
-                width: fit-content;
-                max-width: 100%;
-                margin-left: 0;
-                transform: translateY(-1rem);
-            }
-            [class*="st-key-welcome_content"] {
-                transform: none;
-            }
-            .message-row.assistant {
-                grid-template-columns: 1fr;
-                gap: 0.65rem;
-            }
-            .message-row.assistant .message-avatar {
-                border-right: 0;
-                border-bottom: 1px solid rgba(217, 189, 130, 0.16);
-                padding-bottom: 0.45rem;
-            }
-            div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label) {
-                flex-direction: column;
-                gap: 0.65rem;
-            }
-            div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label)
-            > div[data-testid="stColumn"] {
-                width: 100%;
-                flex: 1 1 auto;
-            }
-            .assistant-markdown-label {
-                width: 100%;
-                border-right: 0;
-                border-bottom: 1px solid rgba(217, 189, 130, 0.16);
-            }
-            .analysis-shell {
-                margin-left: 0;
-            }
-        }
-        </style>
-        """,
+        f"<style>{stylesheet.read_text(encoding='utf-8')}</style>",
         unsafe_allow_html=True,
     )
 
 
-def render_scroll_position_manager(*, restore: bool) -> None:
+def render_scroll_position_manager(*, restore: bool, reset_to_top: bool = False) -> None:
     """Preserve the reader's main-page position across the final answer rerun."""
     restore_requested = "true" if restore else "false"
+    reset_requested = "true" if reset_to_top else "false"
     st.iframe(
         f"""
         <style>
@@ -1913,6 +533,7 @@ def render_scroll_position_manager(*, restore: bool) -> None:
                 manager = {{
                     version: 1,
                     restoring: false,
+                    emptyResetActive: false,
                     userScrollUntil: 0,
                     scroller: null,
                     boundScroller: null,
@@ -1928,6 +549,7 @@ def render_scroll_position_manager(*, restore: bool) -> None:
                     }}
                 }};
                 manager.markUserScroll = () => {{
+                    manager.emptyResetActive = false;
                     manager.userScrollUntil = Date.now() + 1200;
                 }};
 
@@ -1960,10 +582,38 @@ def render_scroll_position_manager(*, restore: bool) -> None:
                 scroller.addEventListener("wheel", manager.markUserScroll, {{ passive: true }});
                 scroller.addEventListener("touchstart", manager.markUserScroll, {{ passive: true }});
                 scroller.addEventListener("scroll", () => {{
+                    if (manager.emptyResetActive) {{
+                        host.requestAnimationFrame(() => {{
+                            if (manager.emptyResetActive && manager.scroller) {{
+                                manager.scroller.scrollTop = 0;
+                            }}
+                        }});
+                        return;
+                    }}
                     if (!manager.restoring && Date.now() <= manager.userScrollUntil) manager.remember();
                 }}, {{ passive: true }});
                 manager.boundScroller = scroller;
             }}
+            if ({reset_requested}) {{
+                manager.restoring = true;
+                manager.emptyResetActive = true;
+                try {{
+                    host.sessionStorage.removeItem(storageKey);
+                }} catch (_) {{
+                    // Empty-state positioning must not depend on storage availability.
+                }}
+                const resetTop = () => scroller.scrollTo({{
+                    top: 0,
+                    left: scroller.scrollLeft,
+                    behavior: "auto",
+                }});
+                [0, 40, 120, 280, 600, 1000].forEach(
+                    (delay) => host.setTimeout(resetTop, delay)
+                );
+                host.setTimeout(() => {{ manager.restoring = false; }}, 1100);
+                return;
+            }}
+            manager.emptyResetActive = false;
             let hasSavedPosition = false;
             try {{
                 hasSavedPosition = host.sessionStorage.getItem(storageKey) !== null;
@@ -2011,6 +661,9 @@ def image_uploader_key() -> str:
 
 def reset_uploaded_image() -> None:
     st.session_state.pop(image_uploader_key(), None)
+    st.session_state.pop("sidebar_draft_image_bytes", None)
+    st.session_state.pop("sidebar_draft_image_mime_type", None)
+    st.session_state.pop("sidebar_draft_image_name", None)
     st.session_state.image_uploader_version = (
         int(st.session_state.get("image_uploader_version", 0)) + 1
     )
@@ -2019,6 +672,7 @@ def reset_uploaded_image() -> None:
 def reset_sidebar_inputs() -> None:
     reset_uploaded_image()
     st.session_state.pop("manual_observation", None)
+    st.session_state.pop("sidebar_draft_observation", None)
 
 
 def _query_value(name: str) -> str:
@@ -2040,6 +694,59 @@ def _set_query_value(name: str, value: str) -> None:
 
 def _valid_identity_token(value: str, prefix: str) -> bool:
     return bool(re.fullmatch(rf"{prefix}_[A-Za-z0-9_-]{{12,80}}", value or ""))
+
+
+PRODUCT_VIEWS = {"chat", "workspace", "knowledge", "analytics", "settings"}
+
+
+def current_product_view() -> str:
+    state_view = str(st.session_state.get("product_view") or "").lower()
+    if state_view in PRODUCT_VIEWS:
+        return state_view
+    query_view = _query_value("view").lower()
+    view = query_view if query_view in PRODUCT_VIEWS else "chat"
+    st.session_state.product_view = view
+    return view
+
+
+def preserve_sidebar_draft() -> None:
+    """Keep unsent visual input alive while navigating within the product shell."""
+    observation = st.session_state.get("manual_observation")
+    if isinstance(observation, str):
+        st.session_state.sidebar_draft_observation = observation
+
+    uploaded_image = st.session_state.get(image_uploader_key())
+    if uploaded_image is None:
+        return
+    try:
+        prepared = prepare_image_for_vision(
+            uploaded_image.getvalue(),
+            filename=getattr(uploaded_image, "name", "uploaded-image"),
+            mime_type=getattr(uploaded_image, "type", ""),
+        )
+    except (AttributeError, vision_client.VisionAPIError):
+        return
+    st.session_state.sidebar_draft_image_bytes = prepared.data
+    st.session_state.sidebar_draft_image_mime_type = prepared.mime_type
+    st.session_state.sidebar_draft_image_name = str(
+        getattr(uploaded_image, "name", "uploaded-image")
+    )
+
+
+def select_product_view(view: str) -> None:
+    normalized = str(view or "").lower()
+    if normalized not in PRODUCT_VIEWS:
+        return
+    preserve_sidebar_draft()
+    st.session_state.product_view = normalized
+    st.session_state.mobile_secondary_open = False
+    _set_query_value("view", normalized)
+
+
+def toggle_mobile_secondary_panel() -> None:
+    st.session_state.mobile_secondary_open = not bool(
+        st.session_state.get("mobile_secondary_open", False)
+    )
 
 
 def _authenticated_identity() -> str:
@@ -2105,7 +812,12 @@ def initialize_memory_identity() -> None:
     if st.session_state.get("memory_restored_session") != session_id:
         if not st.session_state.agent_messages:
             rows = manager.restore_session_messages(user_id, session_id, project_id)
-            restored = restore_ui_messages(rows)
+            restored = restore_ui_messages(
+                rows,
+                manager=manager,
+                user_id=user_id,
+                project_id=project_id,
+            )
             for message in restored:
                 if message.get("kind") != "analysis_legacy":
                     continue
@@ -2146,6 +858,8 @@ def start_new_conversation() -> None:
     st.session_state.last_result = None
     st.session_state.last_vision_context = None
     reset_sidebar_inputs()
+    st.session_state.product_view = "chat"
+    _set_query_value("view", "chat")
 
 
 def init_state() -> None:
@@ -2155,14 +869,74 @@ def init_state() -> None:
     st.session_state.setdefault("last_vision_context", None)
     st.session_state.setdefault("clear_sidebar_inputs", False)
     st.session_state.setdefault("image_uploader_version", 0)
+    st.session_state.setdefault("sidebar_draft_observation", "")
+    st.session_state.setdefault("mobile_secondary_open", False)
     initialize_memory_identity()
     if st.session_state.clear_sidebar_inputs:
         reset_sidebar_inputs()
         st.session_state.clear_sidebar_inputs = False
 
 
-def render_sidebar() -> tuple[str, bool, bytes | None, str]:
+def render_product_secondary_panel(view: str) -> None:
+    panel_content = {
+        "workspace": {
+            "eyebrow": "CITRUS AI · WORKSPACE",
+            "title": "工作台",
+            "description": "集中查看最近任务、历史分析与保存方案。",
+            "items": (("最近任务", "Recent tasks"), ("历史分析", "Analysis history"), ("批次与方案", "Batches & plans")),
+        },
+        "knowledge": {
+            "eyebrow": "CITRUS AI · KNOWLEDGE",
+            "title": "知识库",
+            "description": "检索可追溯的柑橘加工文献与参数来源。",
+            "items": (("全部文献", "All literature"), ("加工分类", "Categories"), ("索引状态", "Index status")),
+        },
+        "analytics": {
+            "eyebrow": "CITRUS AI · ANALYTICS",
+            "title": "分析",
+            "description": "基于真实运行与文献索引的决策概览。",
+            "items": (("使用概览", "Usage overview"), ("知识覆盖", "Knowledge coverage"), ("运行质量", "Run quality")),
+        },
+        "settings": {
+            "eyebrow": "CITRUS AI · SETTINGS",
+            "title": "设置",
+            "description": "查看模型、数据与隐私边界的当前配置。",
+            "items": (("常规", "General"), ("模型与能力", "Models"), ("数据与隐私", "Data & privacy")),
+        },
+    }[view]
+    ui_components.render_secondary_intro(
+        panel_content["eyebrow"],
+        panel_content["title"],
+        panel_content["description"],
+    )
+    st.button(
+        "＋ 新建对话",
+        width="stretch",
+        on_click=start_new_conversation,
+        key=f"new_conversation_from_{view}",
+    )
+    rows = "".join(
+        '<div class="secondary-nav-row">'
+        f'<span>{html.escape(zh)}</span><small>{html.escape(en)}</small>'
+        "</div>"
+        for zh, en in panel_content["items"]
+    )
+    st.markdown(
+        f'<div class="secondary-section-label">页面结构</div><div class="secondary-nav-stack">{rows}</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<div class="secondary-note">页面数据为只读视图。Agent、模型配置与知识库内容不会在这里被静默修改。</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def render_sidebar(view: str = "chat") -> tuple[str, bool, bytes | None, str]:
     with st.sidebar:
+        if view != "chat":
+            render_product_secondary_panel(view)
+            return "", False, None, "image/jpeg"
+
         st.markdown(
             f"""
             <div class="sidebar-brand">
@@ -2179,14 +953,23 @@ def render_sidebar() -> tuple[str, bool, bytes | None, str]:
             "＋ 新建对话",
             width="stretch",
             on_click=start_new_conversation,
+            key="new_conversation",
         )
 
-        st.markdown('<div class="sidebar-section-title">视觉输入</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="sidebar-section-title">视觉输入<small>Visual Input</small></div>',
+            unsafe_allow_html=True,
+        )
         uploader_version = int(st.session_state.image_uploader_version)
+        st.markdown(
+            '<div class="secondary-field-heading upload-field"><span>上传柑橘图片</span><small>Upload Citrus Image</small></div>',
+            unsafe_allow_html=True,
+        )
         uploaded_image = st.file_uploader(
             "上传柑橘图片",
             type=list(SUPPORTED_UPLOAD_EXTENSIONS),
             key=image_uploader_key(),
+            label_visibility="collapsed",
         )
         prepared_image = None
         if uploaded_image:
@@ -2199,27 +982,51 @@ def render_sidebar() -> tuple[str, bool, bytes | None, str]:
             except vision_client.VisionAPIError as error:
                 st.error(str(error))
             else:
-                st.image(prepared_image.data, caption="图片预览", width="stretch")
-                st.info("图片会在本轮分析中自动调用视觉模型识别；下方外观描述可作为人工补充。")
-                st.button(
-                    "× 删除图片",
-                    width="stretch",
-                    key=f"remove_uploaded_image_{uploader_version}",
-                    on_click=reset_uploaded_image,
-                )
+                st.session_state.sidebar_draft_image_bytes = prepared_image.data
+                st.session_state.sidebar_draft_image_mime_type = prepared_image.mime_type
+                st.session_state.sidebar_draft_image_name = str(uploaded_image.name)
 
+        image_bytes = prepared_image.data if prepared_image else st.session_state.get(
+            "sidebar_draft_image_bytes"
+        )
+        image_mime_type = (
+            prepared_image.mime_type
+            if prepared_image
+            else str(st.session_state.get("sidebar_draft_image_mime_type") or "image/jpeg")
+        )
+        if image_bytes:
+            caption = "图片预览" if prepared_image else "已保留的待发送图片"
+            st.image(image_bytes, caption=caption, width="stretch")
+            st.info("图片会在本轮分析中自动调用视觉模型识别；下方外观描述可作为人工补充。")
+            st.button(
+                "× 删除图片",
+                width="stretch",
+                key=f"remove_uploaded_image_{uploader_version}",
+                on_click=reset_uploaded_image,
+            )
+
+        st.markdown(
+            '<div class="secondary-field-heading appearance-field"><span>外观描述</span><small>Appearance Description</small></div>',
+            unsafe_allow_html=True,
+        )
+        if "manual_observation" not in st.session_state:
+            st.session_state.manual_observation = str(
+                st.session_state.get("sidebar_draft_observation") or ""
+            )
         manual_observation = st.text_area(
             "外观描述",
             placeholder="例如：果皮完整，颜色偏成熟，无明显霉斑或腐烂。",
-            height=120,
+            height=110,
             key="manual_observation",
+            label_visibility="collapsed",
         )
+        st.session_state.sidebar_draft_observation = manual_observation
 
         st.divider()
 
         st.markdown(
             f"""
-            <div class="sidebar-section-title">语言模型</div>
+            <div class="sidebar-section-title model-heading">语言模型<small>Language Model</small></div>
             <div class="status-list">
                 <div class="status-row"><span>DeepSeek</span><span class="status-pill">{DEEPSEEK_MODEL}</span></div>
                 <div class="status-row"><span>Qwen Vision</span><span class="status-pill">{get_vision_model()}</span></div>
@@ -2228,9 +1035,7 @@ def render_sidebar() -> tuple[str, bool, bytes | None, str]:
             unsafe_allow_html=True,
         )
 
-    image_bytes = prepared_image.data if prepared_image else None
-    image_mime_type = prepared_image.mime_type if prepared_image else "image/jpeg"
-    return manual_observation, prepared_image is not None, image_bytes, image_mime_type
+    return manual_observation, image_bytes is not None, image_bytes, image_mime_type
 
 
 def score_table(result: dict[str, Any]) -> pd.DataFrame:
@@ -2584,9 +1389,17 @@ def render_message(message: dict[str, Any]) -> None:
             '<div class="message-row assistant"><div class="message-avatar assistant">Citrus AI</div><div class="message-bubble">已完成批次分析，工具调用结果如下。</div></div>',
             unsafe_allow_html=True,
         )
-        st.markdown('<div class="analysis-shell">', unsafe_allow_html=True)
-        render_analysis_payload(message["payload"])
-        st.markdown('</div>', unsafe_allow_html=True)
+        payload = message["payload"]
+        shell_identity = str(
+            message.get("message_id")
+            or payload.get("report_path")
+            or payload.get("run_id")
+            or content_text
+            or id(message)
+        )
+        shell_key = hashlib.sha256(shell_identity.encode("utf-8")).hexdigest()[:12]
+        with st.container(key=f"analysis_shell_{shell_key}"):
+            render_analysis_payload(payload)
         return
 
     if message.get("kind") == "analysis_legacy":
@@ -2594,9 +1407,12 @@ def render_message(message: dict[str, Any]) -> None:
             '<div class="message-row assistant"><div class="message-avatar assistant">Citrus AI</div><div class="message-bubble">已完成批次分析，工具调用结果如下。</div></div>',
             unsafe_allow_html=True,
         )
-        st.markdown('<div class="analysis-shell">', unsafe_allow_html=True)
-        st.markdown(restore_flattened_markdown(content_text))
-        st.markdown('</div>', unsafe_allow_html=True)
+        shell_identity = str(
+            message.get("message_id") or message.get("run_id") or content_text or id(message)
+        )
+        shell_key = hashlib.sha256(shell_identity.encode("utf-8")).hexdigest()[:12]
+        with st.container(key=f"analysis_shell_{shell_key}"):
+            st.markdown(restore_flattened_markdown(content_text))
         return
 
     if role == "user":
@@ -2606,6 +1422,11 @@ def render_message(message: dict[str, Any]) -> None:
             image_data = base64.b64encode(image_bytes).decode("ascii")
             st.markdown(
                 f'<div class="user-attachment-row"><img class="user-attachment" src="data:{image_mime_type};base64,{image_data}" alt="本轮上传图片"></div>',
+                unsafe_allow_html=True,
+            )
+        elif message.get("attachment_missing"):
+            st.markdown(
+                '<div class="user-attachment-missing">图片附件不可用或已被移除</div>',
                 unsafe_allow_html=True,
             )
         content = html.escape(content_text).replace("\n", "<br>")
@@ -2629,22 +1450,50 @@ def render_empty_state(api_key: str) -> tuple[str | None, Any]:
     selected_prompt = None
     with st.container(key="empty_state_shell"):
         with st.container(key="welcome_content"):
-            st.markdown('<div class="hero"><h1>柑橘产业链决策</h1></div>', unsafe_allow_html=True)
+            st.markdown(
+                f"""
+                <div class="hero">
+                    <div class="hero-symbol">{ui_components.icon_svg("file-text", 26)}</div>
+                    <h1>柑橘产业链决策</h1>
+                    <div class="hero-english">CITRUS INDUSTRY CHAIN DECISION MAKING</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
             if not api_key:
                 st.warning("请先在 agent/llm_config.py 中填入 DeepSeek API Key；未填时仍可运行本地规则工具，但不能生成大模型总结。")
 
-            left, center, right = st.columns([1, 2.25, 1])
-            with center:
-                st.markdown('<div class="prompt-grid-label">请选择本次需要开展的工作</div>', unsafe_allow_html=True)
-                for row_start in range(0, len(EXAMPLE_CARDS), 2):
-                    cols = st.columns(2)
-                    for card_index, (col, card) in enumerate(
-                        zip(cols, EXAMPLE_CARDS[row_start : row_start + 2]),
-                        start=row_start,
-                    ):
-                        label = f"{card['title']}\n{card['description']}"
-                        if col.button(label, width="stretch", key=f"example_card_{card_index}"):
-                            selected_prompt = card["prompt"]
+            st.markdown(
+                '<div class="prompt-grid-label">请选择本次需要开展的工作'
+                '<small>Please select the task you would like to proceed with</small></div>',
+                unsafe_allow_html=True,
+            )
+            for row_start in range(0, len(EXAMPLE_CARDS), 2):
+                cols = st.columns(2)
+                for card_index, (col, card) in enumerate(
+                    zip(cols, EXAMPLE_CARDS[row_start : row_start + 2]),
+                    start=row_start,
+                ):
+                    with col:
+                        with st.container(key=f"task_card_shell_{card_index}"):
+                            st.markdown(
+                                f"""
+                                <article class="task-card">
+                                    <div class="task-card-icon">{ui_components.icon_svg(str(card['icon']), 21)}</div>
+                                    <div class="task-card-title">{html.escape(str(card['title']))}</div>
+                                    <div class="task-card-title-en">{html.escape(str(card['title_en']))}</div>
+                                    <div class="task-card-description">{html.escape(str(card['description']))}</div>
+                                    <div class="task-card-description-en">{html.escape(str(card['description_en']))}</div>
+                                </article>
+                                """,
+                                unsafe_allow_html=True,
+                            )
+                            if st.button(
+                                str(card["title"]),
+                                width="stretch",
+                                key=f"example_card_{card_index}",
+                            ):
+                                selected_prompt = card["prompt"]
         progress_slot = st.empty()
     return selected_prompt, progress_slot
 
@@ -3072,6 +1921,10 @@ def finalize_memory_turn(
     message_metadata: dict[str, Any] = {"run_id": run_id, "audit_trace": audit_trace}
     if mode == "analysis":
         message_metadata["analysis_payload"] = build_persisted_analysis_payload(payload)
+    elif mode == "vision" and isinstance(vision_payload.get("vision_result"), dict):
+        message_metadata["vision_result"] = _without_raw_model_output(
+            vision_payload["vision_result"]
+        )
 
     try:
         manager.record_message(
@@ -3405,13 +2258,43 @@ def handle_prompt(
 
 
 def main() -> None:
-    st.set_page_config(page_title="柑橘产业链 Agent", layout="wide")
+    st.set_page_config(
+        page_title="Citrus AI · 柑橘产业链决策",
+        page_icon="◌",
+        layout="wide",
+        initial_sidebar_state="expanded",
+    )
     inject_style()
     init_state()
     restore_scroll_position = bool(st.session_state.pop("restore_main_scroll_position", False))
+    active_view = current_product_view()
+    uid = _query_value("uid")
+    sid = _query_value("sid")
+    with st.container(key="product_shell_overlays"):
+        ui_components.render_primary_navigation(
+            active_view,
+            uid,
+            sid,
+            on_view_change=select_product_view,
+        )
+        ui_components.render_top_actions(
+            active_view,
+            uid,
+            sid,
+            on_view_change=select_product_view,
+        )
+        ui_components.render_mobile_panel_toggle(
+            bool(st.session_state.mobile_secondary_open),
+            toggle_mobile_secondary_panel,
+        )
 
     api_key = get_deepseek_api_key()
-    manual_observation, has_image, image_bytes, image_mime_type = render_sidebar()
+    manual_observation, has_image, image_bytes, image_mime_type = render_sidebar(active_view)
+
+    if active_view != "chat":
+        render_product_page(active_view)
+        render_scroll_position_manager(restore=restore_scroll_position)
+        return
 
     if not st.session_state.agent_messages:
         selected_prompt, progress_slot = render_empty_state(api_key)
@@ -3422,8 +2305,11 @@ def main() -> None:
         for message in st.session_state.agent_messages:
             render_message(message)
 
-    typed_prompt = st.chat_input("输入问题，或粘贴批次信息开始分析...")
-    render_scroll_position_manager(restore=restore_scroll_position)
+    typed_prompt = st.chat_input("输入问题或粘贴批次信息… · Ask or paste batch data…")
+    render_scroll_position_manager(
+        restore=restore_scroll_position,
+        reset_to_top=not bool(st.session_state.agent_messages),
+    )
     prompt = typed_prompt or selected_prompt
     if prompt:
         handle_prompt(
