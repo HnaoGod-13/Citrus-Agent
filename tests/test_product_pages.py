@@ -4,6 +4,7 @@ from pathlib import Path
 import sqlite3
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from streamlit.testing.v1 import AppTest
 
@@ -259,6 +260,30 @@ assert product_pages.render_product_page({view!r}) is True
         finally:
             connection.close()
         self.assertIsNone(forbidden_table)
+
+    def test_packaged_literature_index_materializes_only_configured_path(self) -> None:
+        from agent import rag
+
+        runtime_db = Path(self.tempdir.name) / "runtime" / "literature.db"
+        foreign_db = Path(self.tempdir.name) / "foreign" / "literature.db"
+        calls: list[Path] = []
+
+        def materialize(path: Path) -> bool:
+            candidate = Path(path)
+            calls.append(candidate)
+            candidate.parent.mkdir(parents=True, exist_ok=True)
+            candidate.write_bytes(b"fixture")
+            return True
+
+        with (
+            patch.object(rag, "LITERATURE_DB_PATH", runtime_db),
+            patch.object(rag, "ensure_literature_database", side_effect=materialize),
+        ):
+            self.assertFalse(product_pages._prepare_literature_database(foreign_db))
+            self.assertTrue(product_pages._prepare_literature_database(runtime_db))
+
+        self.assertEqual([runtime_db], calls)
+        self.assertEqual(b"fixture", runtime_db.read_bytes())
 
     def test_workspace_analytics_and_storage_are_scope_isolated(self) -> None:
         scope = product_pages._Scope("user_alpha", "project_one")

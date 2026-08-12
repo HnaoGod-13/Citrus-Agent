@@ -3,7 +3,9 @@
 The module intentionally contains no Agent mutations. Workspace and analytics
 queries are always scoped by both ``memory_user_id`` and ``memory_project_id``;
 if either identity is unavailable, those pages render a safe empty state rather
-than falling back to an unscoped query.
+than falling back to an unscoped query. On cloud deployments the immutable,
+packaged literature index may be materialized into its runtime cache before the
+Knowledge page opens it in read-only mode.
 """
 
 from __future__ import annotations
@@ -66,6 +68,22 @@ def _literature_db_path() -> Path:
         return Path(rag.LITERATURE_DB_PATH)
     except (AttributeError, ImportError, TypeError):
         return DEFAULT_LITERATURE_DB_PATH
+
+
+def _prepare_literature_database(path: Path) -> bool:
+    """Materialize the configured packaged index without mutating source data."""
+    candidate = Path(path).expanduser()
+    if candidate.is_file() and candidate.stat().st_size > 0:
+        return True
+    try:
+        from agent import rag
+
+        configured = Path(rag.LITERATURE_DB_PATH).expanduser()
+        if candidate.resolve() != configured.resolve():
+            return False
+        return bool(rag.ensure_literature_database(candidate))
+    except (AttributeError, ImportError, OSError, TypeError, ValueError):
+        return False
 
 
 @contextmanager
@@ -488,6 +506,9 @@ def render_knowledge_page() -> None:
         "Search indexed literature, sources, years and categories",
     )
     path = _literature_db_path()
+    if not path.is_file():
+        with st.spinner("正在准备文献索引…"):
+            _prepare_literature_database(path)
     try:
         facets = _load_knowledge_facets(path)
     except (FileNotFoundError, OSError, sqlite3.Error, ValueError):
