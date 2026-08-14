@@ -58,7 +58,7 @@ class ScrollPositionManagerTests(unittest.TestCase):
         self.assertIn("const commandId = 7;", bootstrap)
         self.assertIn("commandId,", bootstrap)
 
-        self.assertIn("version: 3", installer)
+        self.assertIn("version: 4", installer)
         self.assertIn("window[installerKey] = install;", installer)
         self.assertIn(
             "savedPosition = Number(window.sessionStorage.getItem(storageKey));",
@@ -95,6 +95,101 @@ class ScrollPositionManagerTests(unittest.TestCase):
             installer.index("resetTop();"),
             installer.index("manager.scheduleMotion(resetTop"),
         )
+
+    def test_progress_reveal_uses_composer_boundary_and_short_cancelable_motion(self) -> None:
+        installer = app_main.SCROLL_POSITION_MANAGER_INSTALLER
+        reveal = installer[
+            installer.index("manager.revealOnce = (revealId, selector) => {") : installer.index(
+                "return manager;"
+            )
+        ]
+
+        self.assertIn("manager.lastRevealId === marker", reveal)
+        self.assertIn("manager.lastRevealId = marker", reveal)
+        self.assertIn("doc.querySelector('[data-testid=\"stBottom\"]')", reveal)
+        self.assertIn("const bottomBoundary = Math.min(scrollerRect.bottom, composerTop) - 16;", reveal)
+        self.assertIn(
+            "manager.scheduleMotion(reveal, [0, 40, 120], 180, manager.remember);",
+            reveal,
+        )
+
+    def test_progress_reveal_bootstraps_parent_manager(self) -> None:
+        with patch.object(app_main.st, "iframe") as iframe:
+            app_main.render_progress_reveal("msg_layout_reveal")
+
+        iframe.assert_called_once()
+        bootstrap = iframe.call_args.args[0]
+        self.assertEqual({"height": 1, "tab_index": -1}, iframe.call_args.kwargs)
+        self.assertIn('install({ restore: false, resetToTop: false });', bootstrap)
+        self.assertIn('manager.revealOnce("msg_layout_reveal"', bootstrap)
+        self.assertIn(json.dumps(app_main.AGENT_PROGRESS_SELECTOR), bootstrap)
+
+
+class EmptyStateProgressLayoutTests(unittest.TestCase):
+    def test_loading_slot_follows_the_complete_example_grid(self) -> None:
+        source = Path(app_main.__file__).read_text(encoding="utf-8-sig")
+        empty_state = source[
+            source.index("def render_empty_state") : source.index("def render_agent_progress")
+        ]
+
+        self.assertEqual(4, len(app_main.EXAMPLE_CARDS))
+        self.assertLess(
+            empty_state.index('key=f"example_card_{card_index}"'),
+            empty_state.index('with st.container(key="agent_progress_host")'),
+        )
+        self.assertIn(
+            '\n        with st.container(key="agent_progress_host"):\n'
+            "            progress_slot = st.empty()\n"
+            "    return selected_prompt, progress_slot",
+            empty_state,
+        )
+
+    def test_loading_status_matches_grid_and_expands_the_scroll_area(self) -> None:
+        stylesheet = Path(app_main.__file__).with_name("ui").joinpath("design_system.css")
+        css = stylesheet.read_text(encoding="utf-8-sig")
+
+        grid_start = css.index(
+            '[class*="st-key-welcome_content"] div[data-testid="stHorizontalBlock"] {'
+        )
+        grid_rule = css[grid_start : css.index("}", grid_start) + 1]
+        host_start = css.index('[class*="st-key-agent_progress_host"] {')
+        host_rule = css[host_start : css.index("}", host_start) + 1]
+        progress_start = css.index(".agent-live-progress {")
+        progress_rule = css[progress_start : css.index("}", progress_start) + 1]
+        expansion_start = css.index(
+            '.block-container:has(\n    [class*="st-key-agent_progress_host"] .agent-live-progress'
+        )
+        expansion_rule = css[expansion_start : css.index("}", expansion_start) + 1]
+
+        expected_width = "width: min(var(--task-grid-max), 100%);"
+        self.assertIn(expected_width, grid_rule)
+        self.assertIn("margin: 0 auto;", grid_rule)
+        self.assertIn(expected_width, host_rule)
+        self.assertIn("margin-inline: auto;", host_rule)
+        self.assertIn("overflow-anchor: none;", host_rule)
+        self.assertIn("width: 100%;", progress_rule)
+        self.assertIn("margin: 16px 0 24px;", progress_rule)
+        self.assertIn("flex: 0 0 auto !important;", expansion_rule)
+
+    def test_only_the_first_progress_update_requests_reveal(self) -> None:
+        source = Path(app_main.__file__).read_text(encoding="utf-8-sig")
+        handle_prompt = source[
+            source.index("def handle_prompt") : source.index("def main()")
+        ]
+
+        self.assertIn("progress_revealed = False", handle_prompt)
+        self.assertIn("nonlocal progress_revealed", handle_prompt)
+        self.assertIn(
+            "reveal_id = user_message_id if should_reveal_progress and not progress_revealed else None",
+            handle_prompt,
+        )
+        self.assertEqual(1, handle_prompt.count("render_agent_progress("))
+        for message in (
+            "正在启动批次分析流程",
+            "正在读取图片并回答本轮问题",
+            "正在全面检索本地文献并组织专业回答",
+        ):
+            self.assertIn(f'update_progress("{message}")', handle_prompt)
 
 
 class VisionStateRecoveryTests(unittest.TestCase):

@@ -995,6 +995,12 @@ section[data-testid="stAppScrollToBottomContainer"]:has([class*="st-key-empty_st
     padding-bottom: 204px;
 }
 
+.block-container:has(
+    [class*="st-key-agent_progress_host"] .agent-live-progress
+) {
+    flex: 0 0 auto !important;
+}
+
 .block-container:has([class*="st-key-empty_state_shell"])
     > [data-testid="stVerticalBlock"] {
     gap: 0 !important;
@@ -1013,6 +1019,12 @@ section[data-testid="stAppScrollToBottomContainer"]:has([class*="st-key-empty_st
 
 [class*="st-key-welcome_content"] {
     width: 100%;
+}
+
+[class*="st-key-agent_progress_host"] {
+    width: min(var(--task-grid-max), 100%);
+    margin-inline: auto;
+    overflow-anchor: none;
 }
 
 .hero {
@@ -1989,11 +2001,11 @@ div[data-testid="stDataFrame"] * {
 
 .agent-live-progress {
     display: flex;
-    width: min(620px, 100%);
+    width: 100%;
     box-sizing: border-box;
     align-items: center;
     gap: 14px;
-    margin: 16px auto 24px;
+    margin: 16px 0 24px;
     padding: 16px;
     color: var(--text-primary);
     background: var(--surface);

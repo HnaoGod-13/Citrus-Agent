@@ -534,17 +534,19 @@ SCROLL_POSITION_MANAGER_INSTALLER = r"""
         manager.markUserScroll = () => {};
         manager.remember = () => {};
         manager.cancelMotion = () => {};
+        manager.revealOnce = () => {};
     };
 
     const createManager = () => {
         const manager = {
-            version: 3,
+            version: 4,
             restoring: false,
             userScrollUntil: 0,
             scroller: null,
             boundScroller: null,
             motionToken: 0,
             motionTimers: [],
+            lastRevealId: null,
         };
 
         manager.cancelMotion = () => {
@@ -605,6 +607,47 @@ SCROLL_POSITION_MANAGER_INSTALLER = r"""
         manager.handleScroll = () => {
             if (!manager.restoring && Date.now() <= manager.userScrollUntil) manager.remember();
         };
+        manager.revealOnce = (revealId, selector) => {
+            const marker = String(revealId || "");
+            if (!marker || manager.lastRevealId === marker) return;
+            manager.lastRevealId = marker;
+
+            const reveal = () => {
+                const scroller = manager.scroller || doc.querySelector(
+                    '[data-testid="stAppScrollToBottomContainer"], [data-testid="stMain"]'
+                );
+                const target = selector ? doc.querySelector(selector) : null;
+                if (!scroller || !target) return;
+
+                const scrollerRect = scroller.getBoundingClientRect();
+                const targetRect = target.getBoundingClientRect();
+                const composer = doc.querySelector('[data-testid="stBottom"]');
+                const composerRect = composer ? composer.getBoundingClientRect() : null;
+                const topBoundary = Math.max(scrollerRect.top + 16, 64);
+                const composerTop = composerRect && composerRect.top > scrollerRect.top
+                    ? composerRect.top
+                    : scrollerRect.bottom;
+                const bottomBoundary = Math.min(scrollerRect.bottom, composerTop) - 16;
+                const availableHeight = Math.max(0, bottomBoundary - topBoundary);
+                let delta = 0;
+
+                if (targetRect.height > availableHeight || targetRect.top < topBoundary) {
+                    delta = targetRect.top - topBoundary;
+                } else if (targetRect.bottom > bottomBoundary) {
+                    delta = targetRect.bottom - bottomBoundary;
+                }
+
+                if (Math.abs(delta) > 1) {
+                    scroller.scrollTo({
+                        top: Math.max(0, scroller.scrollTop + delta),
+                        left: scroller.scrollLeft,
+                        behavior: "auto",
+                    });
+                }
+            };
+
+            manager.scheduleMotion(reveal, [0, 40, 120], 180, manager.remember);
+        };
         return manager;
     };
 
@@ -615,7 +658,7 @@ SCROLL_POSITION_MANAGER_INSTALLER = r"""
         if (!scroller) return;
 
         let manager = window[managerKey];
-        if (!manager || manager.version !== 3) {
+        if (!manager || manager.version !== 4) {
             teardown(manager);
             manager = createManager();
             window[managerKey] = manager;
@@ -686,7 +729,7 @@ SCROLL_POSITION_MANAGER_INSTALLER = r"""
         }
     };
 
-    install.version = 3;
+    install.version = 4;
     window[installerKey] = install;
 })();
 """
@@ -729,7 +772,7 @@ def render_scroll_position_manager(
             const doc = host.document;
             const commandId = {command_marker};
             const installerKey = "__citrusAgentInstallScrollManager";
-            if (!host[installerKey] || host[installerKey].version !== 3) {{
+            if (!host[installerKey] || host[installerKey].version !== 4) {{
                 const loader = doc.createElement("script");
                 loader.textContent = {installer_source};
                 (doc.head || doc.documentElement).appendChild(loader);
@@ -743,6 +786,63 @@ def render_scroll_position_manager(
                     resetToTop: {reset_requested},
                     commandId,
                 }});
+            }}
+        }})();
+        </script>
+        """,
+        height=1,
+        tab_index=-1,
+    )
+
+
+AGENT_PROGRESS_SELECTOR = '[class*="st-key-agent_progress_host"] .agent-live-progress'
+
+
+def render_progress_reveal(reveal_id: str) -> None:
+    """Reveal the first empty-state progress update without fighting user scrolling."""
+    installer_source = json.dumps(SCROLL_POSITION_MANAGER_INSTALLER)
+    reveal_marker = json.dumps(str(reveal_id))
+    selector_marker = json.dumps(AGENT_PROGRESS_SELECTOR)
+    st.iframe(
+        f"""
+        <style>
+            html, body {{
+                margin: 0;
+                padding: 0;
+                overflow: hidden;
+                background: transparent;
+            }}
+        </style>
+        <script>
+        (() => {{
+            const frame = window.frameElement;
+            if (frame) {{
+                frame.style.visibility = "hidden";
+                frame.style.opacity = "0";
+                frame.style.border = "0";
+                frame.style.background = "transparent";
+                frame.style.pointerEvents = "none";
+                frame.setAttribute("aria-hidden", "true");
+            }}
+
+            const host = window.parent;
+            const doc = host.document;
+            const installerKey = "__citrusAgentInstallScrollManager";
+            const managerKey = "__citrusAgentScrollManager";
+            if (!host[installerKey] || host[installerKey].version !== 4) {{
+                const loader = doc.createElement("script");
+                loader.textContent = {installer_source};
+                (doc.head || doc.documentElement).appendChild(loader);
+                loader.remove();
+            }}
+
+            const install = host[installerKey];
+            if (typeof install === "function") {{
+                install({{ restore: false, resetToTop: false }});
+            }}
+            const manager = host[managerKey];
+            if (manager && typeof manager.revealOnce === "function") {{
+                manager.revealOnce({reveal_marker}, {selector_marker});
             }}
         }})();
         </script>
@@ -1574,7 +1674,6 @@ def render_empty_state(api_key: str) -> tuple[str | None, Any]:
                 '<small>Please select the task you would like to proceed with</small></div>',
                 unsafe_allow_html=True,
             )
-            progress_slot = st.empty()
             for row_start in range(0, len(EXAMPLE_CARDS), 2):
                 cols = st.columns(2)
                 for card_index, (col, card) in enumerate(
@@ -1605,10 +1704,12 @@ def render_empty_state(api_key: str) -> tuple[str | None, Any]:
                                 key=f"example_card_{card_index}",
                             ):
                                 selected_prompt = card["prompt"]
+        with st.container(key="agent_progress_host"):
+            progress_slot = st.empty()
     return selected_prompt, progress_slot
 
 
-def render_agent_progress(slot: Any, message: str) -> None:
+def render_agent_progress(slot: Any, message: str, *, reveal_id: str | None = None) -> None:
     safe_message = html.escape(message)
     slot.markdown(
         f"""
@@ -1627,6 +1728,8 @@ def render_agent_progress(slot: Any, message: str) -> None:
         """,
         unsafe_allow_html=True,
     )
+    if reveal_id:
+        render_progress_reveal(reveal_id)
 
 
 def build_conversation_history(messages: list[dict[str, Any]]) -> list[dict[str, str]]:
@@ -2139,8 +2242,17 @@ def handle_prompt(
 
     importlib.reload(workflow)
     live_orchestrator = importlib.reload(orchestrator)
+    should_reveal_progress = progress_slot is not None
     if progress_slot is None:
         progress_slot = st.empty()
+    progress_revealed = False
+
+    def update_progress(message: str) -> None:
+        nonlocal progress_revealed
+        reveal_id = user_message_id if should_reveal_progress and not progress_revealed else None
+        render_agent_progress(progress_slot, message, reveal_id=reveal_id)
+        progress_revealed = True
+
     vision_memory = st.session_state.last_vision_context or live_orchestrator.recover_vision_memory_from_messages(
         st.session_state.agent_messages
     )
@@ -2229,9 +2341,6 @@ def handle_prompt(
         assistant_message = {"role": "assistant", "content": assistant_text}
         mode = "previous_evidence"
     elif should_run_full_analysis:
-        def update_progress(message: str) -> None:
-            render_agent_progress(progress_slot, message)
-
         update_progress("正在启动批次分析流程")
         try:
             payload = live_orchestrator.run_analysis_turn(
@@ -2275,7 +2384,7 @@ def handle_prompt(
         general_trace["model_name"] = get_vision_model()
         if stored_image_path:
             vision_payload["stored_image_path"] = stored_image_path
-        render_agent_progress(progress_slot, "正在读取图片并回答本轮问题")
+        update_progress("正在读取图片并回答本轮问题")
         try:
             vision_payload = live_orchestrator.run_vision_turn(
                 user_prompt=prompt,
@@ -2319,7 +2428,7 @@ def handle_prompt(
         assistant_message = {"role": "assistant", "content": assistant_text}
         mode = "request_inputs"
     else:
-        render_agent_progress(progress_slot, "正在全面检索本地文献并组织专业回答")
+        update_progress("正在全面检索本地文献并组织专业回答")
         try:
             assistant_text, general_trace = run_general_turn(
                 resolved_prompt,
