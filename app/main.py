@@ -3,7 +3,6 @@ from __future__ import annotations
 import base64
 import hashlib
 import html
-import importlib
 import json
 import os
 import re
@@ -34,13 +33,6 @@ from agent import (
 from app.ui import components as ui_components
 from app.ui.product_pages import render_product_page
 
-agent_memory = importlib.reload(agent_memory)
-llm_client = importlib.reload(llm_client)
-agent_report = importlib.reload(agent_report)
-agent_tools = importlib.reload(agent_tools)
-workflow = importlib.reload(workflow)
-orchestrator = importlib.reload(orchestrator)
-vision_client = importlib.reload(vision_client)
 DEEPSEEK_MODEL = llm_client.DEEPSEEK_MODEL
 DeepSeekAPIError = llm_client.DeepSeekAPIError
 build_general_chat_messages = llm_client.build_general_chat_messages
@@ -492,6 +484,63 @@ def inject_style() -> None:
     )
 
 
+NAVIGATION_HISTORY_SYNC_INSTALLER = r"""
+(() => {
+    const managerKey = "__citrusAgentNavigationHistorySync";
+    const version = 1;
+    const existing = window[managerKey];
+    if (existing && existing.version === version) return;
+    if (existing && typeof existing.handlePopState === "function") {
+        window.removeEventListener("popstate", existing.handlePopState);
+    }
+
+    const handlePopState = () => {
+        window.setTimeout(() => window.location.reload(), 0);
+    };
+    window.addEventListener("popstate", handlePopState);
+    window[managerKey] = { version, handlePopState };
+})();
+"""
+
+
+def render_navigation_history_sync() -> None:
+    """Reload the Streamlit task when browser history changes its query scope."""
+    installer_source = json.dumps(NAVIGATION_HISTORY_SYNC_INSTALLER)
+    st.iframe(
+        f"""
+        <style>
+            html, body {{
+                margin: 0;
+                padding: 0;
+                overflow: hidden;
+                background: transparent;
+            }}
+        </style>
+        <script>
+        (() => {{
+            const frame = window.frameElement;
+            if (frame) {{
+                frame.style.visibility = "hidden";
+                frame.style.opacity = "0";
+                frame.style.border = "0";
+                frame.style.pointerEvents = "none";
+                frame.setAttribute("aria-hidden", "true");
+            }}
+
+            const host = window.parent;
+            const doc = host.document;
+            const loader = doc.createElement("script");
+            loader.textContent = {installer_source};
+            (doc.head || doc.documentElement).appendChild(loader);
+            loader.remove();
+        }})();
+        </script>
+        """,
+        height=1,
+        tab_index=-1,
+    )
+
+
 SCROLL_POSITION_MANAGER_INSTALLER = r"""
 (() => {
     const installerKey = "__citrusAgentInstallScrollManager";
@@ -859,12 +908,16 @@ def image_uploader_key() -> str:
 
 def reset_uploaded_image() -> None:
     st.session_state.pop(image_uploader_key(), None)
-    st.session_state.pop("sidebar_draft_image_bytes", None)
-    st.session_state.pop("sidebar_draft_image_mime_type", None)
-    st.session_state.pop("sidebar_draft_image_name", None)
+    clear_sidebar_image_draft()
     st.session_state.image_uploader_version = (
         int(st.session_state.get("image_uploader_version", 0)) + 1
     )
+
+
+def clear_sidebar_image_draft() -> None:
+    st.session_state.pop("sidebar_draft_image_bytes", None)
+    st.session_state.pop("sidebar_draft_image_mime_type", None)
+    st.session_state.pop("sidebar_draft_image_name", None)
 
 
 def reset_sidebar_inputs() -> None:
@@ -898,11 +951,21 @@ PRODUCT_VIEWS = {"chat", "workspace", "knowledge", "analytics", "settings"}
 
 
 def current_product_view() -> str:
-    state_view = str(st.session_state.get("product_view") or "").lower()
-    if state_view in PRODUCT_VIEWS:
-        return state_view
     query_view = _query_value("view").lower()
-    view = query_view if query_view in PRODUCT_VIEWS else "chat"
+    state_view = str(st.session_state.get("product_view") or "").lower()
+    if query_view in PRODUCT_VIEWS:
+        view = query_view
+    elif state_view in PRODUCT_VIEWS:
+        view = state_view
+        _set_query_value("view", view)
+    else:
+        view = "chat"
+        _set_query_value("view", view)
+
+    if state_view in PRODUCT_VIEWS and state_view != view:
+        preserve_sidebar_draft()
+        st.session_state.mobile_secondary_open = False
+        st.session_state.reset_main_scroll_position = True
     st.session_state.product_view = view
     return view
 
@@ -923,6 +986,7 @@ def preserve_sidebar_draft() -> None:
             mime_type=getattr(uploaded_image, "type", ""),
         )
     except (AttributeError, vision_client.VisionAPIError):
+        clear_sidebar_image_draft()
         return
     st.session_state.sidebar_draft_image_bytes = prepared.data
     st.session_state.sidebar_draft_image_mime_type = prepared.mime_type
@@ -981,10 +1045,30 @@ def initialize_memory_identity() -> None:
             _set_query_value("uid", raw_user_token)
         user_id = "anon_" + hashlib.sha256(raw_user_token.encode("utf-8")).hexdigest()[:24]
 
-    session_id = str(st.session_state.get("memory_session_id") or _query_value("sid"))
-    if not _valid_identity_token(session_id, "s"):
+    previous_identity = (
+        str(st.session_state.get("memory_user_id") or ""),
+        str(st.session_state.get("memory_project_id") or ""),
+        str(st.session_state.get("memory_session_id") or ""),
+    )
+    query_session_id = _query_value("sid")
+    state_session_id = previous_identity[2]
+    if _valid_identity_token(query_session_id, "s"):
+        session_id = query_session_id
+    elif _valid_identity_token(state_session_id, "s"):
+        session_id = state_session_id
+        _set_query_value("sid", session_id)
+    else:
         session_id = f"s_{uuid4().hex}"
         _set_query_value("sid", session_id)
+
+    identity_changed = bool(any(previous_identity)) and previous_identity != (
+        user_id,
+        project_id,
+        session_id,
+    )
+    if identity_changed:
+        clear_active_conversation_state(clear_sidebar=True)
+        st.session_state.reset_main_scroll_position = True
 
     st.session_state.memory_user_id = user_id
     st.session_state.memory_project_id = project_id
@@ -999,6 +1083,9 @@ def initialize_memory_identity() -> None:
         )
     except agent_memory.MemoryIsolationError:
         session_id = f"s_{uuid4().hex}"
+        clear_active_conversation_state(clear_sidebar=True)
+        identity_changed = True
+        st.session_state.reset_main_scroll_position = True
         st.session_state.memory_session_id = session_id
         _set_query_value("sid", session_id)
         manager.ensure_session(
@@ -1009,7 +1096,7 @@ def initialize_memory_identity() -> None:
         )
 
     if st.session_state.get("memory_restored_session") != session_id:
-        if not st.session_state.agent_messages:
+        if identity_changed or not st.session_state.agent_messages:
             rows = manager.restore_session_messages(user_id, session_id, project_id)
             restored = restore_ui_messages(
                 rows,
@@ -1042,8 +1129,19 @@ def initialize_memory_identity() -> None:
         st.session_state.memory_restored_session = session_id
 
 
+def clear_active_conversation_state(*, clear_sidebar: bool = False) -> None:
+    st.session_state.agent_messages = []
+    st.session_state.current_batch = None
+    st.session_state.last_result = None
+    st.session_state.last_vision_context = None
+    st.session_state.memory_restored_session = None
+    if clear_sidebar:
+        reset_sidebar_inputs()
+
+
 def start_new_conversation() -> None:
     session_id = f"s_{uuid4().hex}"
+    clear_active_conversation_state(clear_sidebar=True)
     st.session_state.memory_session_id = session_id
     st.session_state.memory_restored_session = session_id
     _set_query_value("sid", session_id)
@@ -1052,12 +1150,9 @@ def start_new_conversation() -> None:
         session_id,
         st.session_state.get("memory_project_id", "citrus-agent"),
     )
-    st.session_state.agent_messages = []
-    st.session_state.current_batch = None
-    st.session_state.last_result = None
-    st.session_state.last_vision_context = None
-    reset_sidebar_inputs()
     st.session_state.product_view = "chat"
+    st.session_state.mobile_secondary_open = False
+    st.session_state.reset_main_scroll_position = True
     _set_query_value("view", "chat")
 
 
@@ -1087,7 +1182,7 @@ def render_product_secondary_panel(view: str) -> None:
         "knowledge": {
             "eyebrow": "CITRUS AI · KNOWLEDGE",
             "title": "知识库",
-            "description": "检索可追溯的柑橘加工文献与参数来源。",
+            "description": "检索柑橘直接证据与可迁移工艺参考。",
             "items": (("全部文献", "All literature"), ("加工分类", "Categories"), ("索引状态", "Index status")),
         },
         "analytics": {
@@ -1179,14 +1274,17 @@ def render_sidebar(view: str = "chat") -> tuple[str, bool, bytes | None, str]:
                     mime_type=uploaded_image.type,
                 )
             except vision_client.VisionAPIError as error:
+                clear_sidebar_image_draft()
                 st.error(str(error))
             else:
                 st.session_state.sidebar_draft_image_bytes = prepared_image.data
                 st.session_state.sidebar_draft_image_mime_type = prepared_image.mime_type
                 st.session_state.sidebar_draft_image_name = str(uploaded_image.name)
 
-        image_bytes = prepared_image.data if prepared_image else st.session_state.get(
-            "sidebar_draft_image_bytes"
+        image_bytes = prepared_image.data if prepared_image else (
+            st.session_state.get("sidebar_draft_image_bytes")
+            if uploaded_image is None
+            else None
         )
         image_mime_type = (
             prepared_image.mime_type
@@ -1454,6 +1552,32 @@ def render_vision_result(vision_result: dict[str, Any]) -> None:
         st.warning(str(note))
 
 
+def _compact_analysis_narrative(value: Any) -> str:
+    """Keep the decision summary while moving bulky evidence into its expander."""
+    hidden_sections = (
+        "文献证据及其适用边界",
+        "本次引用文献",
+        "参考文献",
+        "原文证据",
+    )
+    output: list[str] = []
+    skipping = False
+    for line in str(value or "").splitlines():
+        heading_match = re.match(r"^\s*#{1,6}\s+(.+?)\s*$", line)
+        if heading_match:
+            heading = re.sub(r"[*_`~]", "", heading_match.group(1)).strip()
+            if any(label in heading for label in hidden_sections):
+                skipping = True
+                continue
+            skipping = False
+        if skipping:
+            continue
+        if re.match(r"^\s*(?:完整报告|报告路径|报告已保存到)\s*[：:].*$", line):
+            continue
+        output.append(line)
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(output)).strip()
+
+
 def render_analysis_payload(payload: dict[str, Any]) -> None:
     result = payload["result"]
     report_path = Path(str(payload["report_path"]))
@@ -1485,22 +1609,28 @@ def render_analysis_payload(payload: dict[str, Any]) -> None:
     answer = str(payload.get("answer") or llm_answer or summary).strip()
     answer = orchestrator.ensure_primary_processing_flow(result, answer)
 
-    # The recommendation must be followed by an executable route regardless of
-    # how the summarization model phrases its answer.  Render directly from the
-    # structured tool result; this also repairs older stored analysis payloads.
+    parameterized_text = ""
     if processing_plan:
-        render_processing_plan(processing_plan)
         parameterized_text = agent_report.parameterized_plan_markdown(
             result.get("parameterized_plan") or {},
             result.get("parameter_groups") or [],
             result.get("processing_intent") or {},
         )
         parameterized_text = re.sub(r"(?m)^### 5\.\d+\s+", "### ", parameterized_text)
-        st.markdown(parameterized_text)
 
-    narrative_answer = orchestrator.strip_primary_processing_flow(answer)
+    narrative_answer = _compact_analysis_narrative(
+        orchestrator.strip_primary_processing_flow(answer)
+    )
     if narrative_answer:
         st.markdown(narrative_answer)
+
+    # Keep the decision and narrative scannable on small screens. The complete
+    # executable route remains available without filling the first viewport.
+    if processing_plan:
+        with st.expander("完整加工流程与参数", expanded=False):
+            render_processing_plan(processing_plan)
+            if parameterized_text:
+                st.markdown(parameterized_text)
 
     if payload.get("vision_result"):
         with st.expander("图片识别结果", expanded=True):
@@ -2240,8 +2370,7 @@ def handle_prompt(
     except agent_memory.MemoryManagerError as error:
         memory_errors.append(str(error))
 
-    importlib.reload(workflow)
-    live_orchestrator = importlib.reload(orchestrator)
+    live_orchestrator = orchestrator
     should_reveal_progress = progress_slot is not None
     if progress_slot is None:
         progress_slot = st.empty()
@@ -2485,13 +2614,14 @@ def main() -> None:
     )
     inject_style()
     init_state()
+    active_view = current_product_view()
+    render_navigation_history_sync()
     restore_scroll_position = bool(st.session_state.pop("restore_main_scroll_position", False))
     reset_scroll_position = bool(st.session_state.pop("reset_main_scroll_position", False))
     scroll_command_id = int(st.session_state.get("scroll_manager_command_id", 0))
     if restore_scroll_position or reset_scroll_position:
         scroll_command_id += 1
         st.session_state.scroll_manager_command_id = scroll_command_id
-    active_view = current_product_view()
     uid = _query_value("uid")
     sid = _query_value("sid")
     with st.container(key="product_shell_overlays"):
@@ -2543,7 +2673,7 @@ def main() -> None:
     typed_prompt = st.chat_input("输入问题或粘贴批次信息… · Ask or paste batch data…")
     render_scroll_position_manager(
         restore=restore_scroll_position,
-        reset_to_top=reset_scroll_position or not bool(st.session_state.agent_messages),
+        reset_to_top=reset_scroll_position,
         command_id=scroll_command_id,
     )
     prompt = typed_prompt or selected_prompt

@@ -73,6 +73,22 @@ class SidebarImageResetTests(unittest.TestCase):
         self.assertIsNone(app.get("file_uploader")[0].value)
         self.assertNotIn("remove_uploaded_image_0", [button.key for button in app.button])
 
+    def test_invalid_replacement_does_not_reuse_the_previous_image(self) -> None:
+        app = self.run_app()
+        self.upload_image(app)
+
+        app.get("file_uploader")[0].upload(
+            "broken.png",
+            b"not-a-valid-image",
+            "image/png",
+        ).run()
+
+        self.assertEqual([], list(app.exception))
+        self.assertNotIn("sidebar_draft_image_bytes", app.session_state)
+        self.assertNotIn("sidebar_draft_image_mime_type", app.session_state)
+        self.assertNotIn("sidebar_draft_image_name", app.session_state)
+        self.assertNotIn("remove_uploaded_image_0", [button.key for button in app.button])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -13,6 +13,7 @@ from __future__ import annotations
 from collections import Counter
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 import html
 import json
 from pathlib import Path
@@ -32,9 +33,42 @@ DEFAULT_LITERATURE_DB_PATH = PROJECT_ROOT / "data" / "literature" / "literature.
 
 WORKSPACE_LIMIT = 16
 KNOWLEDGE_LIMIT = 200
+KNOWLEDGE_PAGE_SIZE = 30
 ANALYTICS_RECENT_LIMIT = 24
 ANALYTICS_DAY_LIMIT = 30
 CHART_COLOR = "#737373"
+BEIJING_TIMEZONE = timezone(timedelta(hours=8))
+SAMPLE_REVIEW_STATUSES = frozenset({"暂不可放行", "检测待补", "质量复核"})
+DIRECT_CITRUS_TITLE_MARKERS = (
+    "citrus",
+    "orange",
+    "mandarin",
+    "tangerine",
+    "lemon",
+    "lime",
+    "grapefruit",
+    "pomelo",
+    "clementine",
+    "satsuma",
+    "kinnow",
+    "bergamot",
+    "kumquat",
+    "citron",
+    "citri reticulatae",
+    "chenpi",
+    "柑橘",
+    "橙",
+    "柚",
+    "柠檬",
+    "桔",
+    "橘",
+)
+OFF_DOMAIN_TITLE_PATTERN = re.compile(
+    r"(?:near field communication|nfc-enabled|nfc-a4wp|dc-nfc|e-wallet|"
+    r"public surveillance|wireless networks|internet of things|"
+    r"wearable electronic|connected clothing|remote photoactivation)",
+    flags=re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -122,7 +156,7 @@ def _json_list(value: Any) -> list[Any]:
     try:
         decoded = json.loads(str(value))
     except (TypeError, ValueError, json.JSONDecodeError):
-        return [str(value)]
+        return []
     return decoded if isinstance(decoded, list) else []
 
 
@@ -207,15 +241,44 @@ def _tool_result_summary(tool_calls: Any, tool_name: str) -> str:
     return ""
 
 
+def _evidence_count(value: Any) -> int:
+    return len(
+        {
+            str(item).strip()
+            for item in _json_list(value)
+            if str(item).strip()
+        }
+    )
+
+
+def _evidence_label(value: Any) -> str:
+    count = _evidence_count(value)
+    return f"{count} 条证据" if count else "暂无证据"
+
+
 def _workspace_session_row(row: dict[str, Any]) -> dict[str, Any]:
     question = row.get("last_user_message") or row.get("last_run_input")
-    conclusion = row.get("last_assistant_message") or row.get("last_run_output")
+    last_user_message_id = int(row.get("last_user_message_id") or 0)
+    last_assistant_message_id = int(row.get("last_assistant_message_id") or 0)
+    ordering_known = (
+        "last_user_message_id" in row or "last_assistant_message_id" in row
+    )
+    answer_is_current = (
+        not ordering_known
+        or not last_user_message_id
+        or last_assistant_message_id > last_user_message_id
+    )
+    conclusion = (
+        row.get("last_assistant_message") or row.get("last_run_output")
+        if answer_is_current
+        else None
+    )
     turns = int(row.get("user_turn_count") or 0)
-    if str(row.get("last_run_error") or "").strip():
+    if answer_is_current and str(row.get("last_run_error") or "").strip():
         progress = "需要重试"
     elif str(conclusion or "").strip():
         progress = f"已回复 · {turns} 轮" if turns else "已回复"
-    elif int(row.get("run_count") or 0):
+    elif answer_is_current and int(row.get("run_count") or 0):
         progress = "分析中"
     else:
         progress = "待回复"
@@ -240,14 +303,11 @@ def _workspace_run_row(row: dict[str, Any]) -> dict[str, Any]:
         status = "完成 · 待复核" if risk_match and int(risk_match.group(1)) else "完成"
 
     result = route_result or row.get("final_output") or error
-    literature_count = len(
-        {str(item) for item in _json_list(row.get("retrieved_literature_ids_json")) if item}
-    )
     return {
         "分析任务": _task_summary(row.get("original_input"), 82),
         "主要结果": _plain_summary(result, 116),
         "状态": status,
-        "证据": f"{literature_count} 篇文献" if literature_count else "暂无文献",
+        "证据": _evidence_label(row.get("retrieved_literature_ids_json")),
         "时间": _display_time(row.get("created_at")),
     }
 
@@ -304,6 +364,10 @@ def _sample_quality_status(row: dict[str, Any]) -> str:
     return "质量复核" if quality else "检测待补"
 
 
+def _sample_needs_review(row: dict[str, Any]) -> bool:
+    return _sample_quality_status(row) in SAMPLE_REVIEW_STATUSES
+
+
 def _workspace_sample_row(row: dict[str, Any]) -> dict[str, Any]:
     variety = str(row.get("variety") or "").strip() or "品种待补"
     origin = str(row.get("origin") or "").strip() or "产地待补"
@@ -317,8 +381,17 @@ def _workspace_sample_row(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def _display_time(value: Any) -> str:
-    text = str(value or "").strip().replace("T", " ")
-    return text[:16] if len(text) >= 16 else (text or "—")
+    text = str(value or "").strip()
+    if not text:
+        return "—"
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        fallback = text.replace("T", " ")
+        return fallback[:16] if len(fallback) >= 16 else fallback
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(BEIJING_TIMEZONE).strftime("%Y-%m-%d %H:%M")
 
 
 def _short_id(value: Any, left: int = 8, right: int = 4) -> str:
@@ -331,6 +404,36 @@ def _short_id(value: Any, left: int = 8, right: int = 4) -> str:
 def _source_name(value: Any) -> str:
     text = str(value or "").strip().replace("\\", "/")
     return text.rsplit("/", 1)[-1] if text else "—"
+
+
+def _is_off_domain_knowledge_title(value: Any) -> bool:
+    return bool(OFF_DOMAIN_TITLE_PATTERN.search(str(value or "")))
+
+
+def _knowledge_relevance_label(value: Any) -> str:
+    title = str(value or "").casefold()
+    if any(marker in title for marker in DIRECT_CITRUS_TITLE_MARKERS):
+        return "柑橘直接证据"
+    return "工艺参考"
+
+
+def _register_knowledge_functions(connection: sqlite3.Connection) -> None:
+    connection.create_function(
+        "is_off_domain_knowledge_title",
+        1,
+        lambda value: int(_is_off_domain_knowledge_title(value)),
+        deterministic=True,
+    )
+    connection.create_function(
+        "knowledge_relevance_rank",
+        1,
+        lambda value: 0 if _knowledge_relevance_label(value) == "柑橘直接证据" else 1,
+        deterministic=True,
+    )
+
+
+def _set_knowledge_page(page: int) -> None:
+    st.session_state.citrus_product_knowledge_page = max(int(page), 1)
 
 
 def _render_page_header(eyebrow: str, title: str, subtitle: str, english: str) -> None:
@@ -415,20 +518,7 @@ def _load_workspace(path: Path, scope: _Scope) -> dict[str, Any]:
                         SELECT COUNT(*)
                         FROM citrus_samples
                         WHERE user_id = ? AND project_id = ? AND status = 'active'
-                    ) AS samples,
-                    (
-                        SELECT COUNT(*)
-                        FROM citrus_samples
-                        WHERE user_id = ? AND project_id = ? AND status = 'active'
-                          AND (
-                              TRIM(COALESCE(disease_or_quality, '')) = ''
-                              OR disease_or_quality LIKE '%复核%'
-                              OR disease_or_quality LIKE '%风险%'
-                              OR disease_or_quality LIKE '%缺少%'
-                              OR disease_or_quality LIKE '%霉变%'
-                              OR metrics_json LIKE '%"missing"%'
-                          )
-                    ) AS review_samples
+                    ) AS samples
                 """,
                 (
                     scope.user_id,
@@ -445,10 +535,21 @@ def _load_workspace(path: Path, scope: _Scope) -> dict[str, Any]:
                     scope.project_id,
                     scope.user_id,
                     scope.project_id,
-                    scope.user_id,
-                    scope.project_id,
                 ),
             ).fetchone()
+        )
+        review_sample_rows = _row_dicts(
+            connection.execute(
+                """
+                SELECT disease_or_quality, metrics_json
+                FROM citrus_samples
+                WHERE user_id = ? AND project_id = ? AND status = 'active'
+                """,
+                (scope.user_id, scope.project_id),
+            )
+        )
+        counts["review_samples"] = sum(
+            _sample_needs_review(row) for row in review_sample_rows
         )
 
         sessions = _row_dicts(
@@ -505,13 +606,14 @@ def _load_workspace(path: Path, scope: _Scope) -> dict[str, Any]:
                        COALESCE(message_summary.message_count, 0) AS message_count,
                        COALESCE(message_summary.user_turn_count, 0) AS user_turn_count,
                        COALESCE(run_summary.run_count, 0) AS run_count,
+                       message_summary.last_user_message_id AS last_user_message_id,
+                       message_summary.last_assistant_message_id AS last_assistant_message_id,
                        last_user_messages.content AS last_user_message,
                        last_assistant_messages.content AS last_assistant_message,
                        last_runs.original_input AS last_run_input,
                        last_runs.final_output AS last_run_output,
                        last_runs.error AS last_run_error,
                        MAX(
-                           COALESCE(s.updated_at, ''),
                            COALESCE(message_summary.last_message_at, ''),
                            COALESCE(run_summary.last_run_at, '')
                        ) AS activity_at
@@ -600,29 +702,58 @@ def render_workspace_page() -> None:
     sessions_tab, runs_tab, samples_tab = st.tabs(["最近会话", "分析运行", "批次样本"])
     with sessions_tab:
         session_rows = [_workspace_session_row(row) for row in data["sessions"]]
-        _render_table(session_rows, "当前账户还没有有内容的会话。")
+        _render_table(
+            session_rows,
+            "当前账户还没有有内容的会话。",
+            variant="workspace",
+        )
 
     with runs_tab:
         run_rows = [_workspace_run_row(row) for row in data["runs"]]
-        _render_table(run_rows, "当前账户还没有分析运行记录。")
+        _render_table(
+            run_rows,
+            "当前账户还没有分析运行记录。",
+            variant="workspace",
+        )
 
     with samples_tab:
         sample_rows = [_workspace_sample_row(row) for row in data["samples"]]
-        _render_table(sample_rows, "当前账户还没有保存的批次样本。")
+        _render_table(
+            sample_rows,
+            "当前账户还没有保存的批次样本。",
+            variant="workspace",
+        )
 
 
 def _load_knowledge_facets(path: Path) -> dict[str, Any]:
     with _readonly_database(path) as connection:
+        _register_knowledge_functions(connection)
         stats = dict(
             connection.execute(
                 """
                 SELECT
-                    (SELECT COUNT(*) FROM documents) AS documents,
-                    (SELECT COUNT(*) FROM chunks) AS chunks
+                    (
+                        SELECT COUNT(*) FROM documents
+                        WHERE is_off_domain_knowledge_title(title) = 0
+                    ) AS documents,
+                    (
+                        SELECT COUNT(*)
+                        FROM chunks c
+                        JOIN documents d ON d.document_id = c.document_id
+                        WHERE is_off_domain_knowledge_title(d.title) = 0
+                    ) AS chunks
                 """
             ).fetchone()
         )
-        category_rows = _row_dicts(connection.execute("SELECT categories FROM documents"))
+        category_rows = _row_dicts(
+            connection.execute(
+                """
+                SELECT categories
+                FROM documents
+                WHERE is_off_domain_knowledge_title(title) = 0
+                """
+            )
+        )
 
     category_counts: Counter[str] = Counter()
     for row in category_rows:
@@ -639,6 +770,7 @@ def _load_knowledge_documents(
     search: str = "",
     category: str = "",
     limit: int = KNOWLEDGE_LIMIT,
+    offset: int = 0,
 ) -> dict[str, Any]:
     clean_search = " ".join(search.split())
     search_pattern = f"%{clean_search}%"
@@ -654,6 +786,7 @@ def _load_knowledge_documents(
         category_pattern,
     )
     with _readonly_database(path) as connection:
+        _register_knowledge_functions(connection)
         total = int(
             connection.execute(
                 """
@@ -668,6 +801,7 @@ def _load_knowledge_documents(
                     OR COALESCE(d.source_file, '') LIKE ? COLLATE NOCASE
                 )
                 AND (? = '' OR COALESCE(d.categories, '') LIKE ?)
+                AND is_off_domain_knowledge_title(d.title) = 0
                 """,
                 parameters,
             ).fetchone()[0]
@@ -688,35 +822,66 @@ def _load_knowledge_documents(
                     OR COALESCE(d.source_file, '') LIKE ? COLLATE NOCASE
                 )
                 AND (? = '' OR COALESCE(d.categories, '') LIKE ?)
+                AND is_off_domain_knowledge_title(d.title) = 0
                 ORDER BY
+                    knowledge_relevance_rank(d.title),
                     CASE
                         WHEN TRIM(COALESCE(d.year, '')) GLOB '[0-9][0-9][0-9][0-9]'
                         THEN CAST(d.year AS INTEGER)
                         ELSE 0
                     END DESC,
                     d.title COLLATE NOCASE
-                LIMIT ?
+                LIMIT ? OFFSET ?
                 """,
-                (*parameters, max(1, min(int(limit), KNOWLEDGE_LIMIT))),
+                (
+                    *parameters,
+                    max(1, min(int(limit), KNOWLEDGE_LIMIT)),
+                    max(int(offset), 0),
+                ),
             )
         )
     return {"total": total, "rows": rows}
 
 
-def _list_text(value: Any, *, limit: int = 4) -> str:
+def _list_text(
+    value: Any,
+    *,
+    limit: int = 4,
+    allow_plain_text: bool = False,
+) -> str:
     items = [str(item).strip() for item in _json_list(value) if str(item).strip()]
+    if not items and allow_plain_text:
+        raw = str(value or "").strip()
+        if raw:
+            try:
+                decoded = json.loads(raw)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                decoded = raw
+            if isinstance(decoded, str) and decoded.strip():
+                items = [decoded.strip()]
     if not items:
         return "—"
     shown = items[:limit]
     return "、".join(shown) + ("…" if len(items) > limit else "")
 
 
+def _knowledge_quality_label(value: Any) -> str:
+    labels = {
+        "good": "已索引",
+        "fair": "可用",
+        "limited": "内容有限",
+        "poor": "待复核",
+        "ocr_required": "待 OCR",
+    }
+    return labels.get(str(value or "").strip().lower(), "状态未知")
+
+
 def render_knowledge_page() -> None:
     _render_page_header(
         "CITRUS AI · KNOWLEDGE",
         "知识库",
-        "检索已入库文献及其来源、年份与分类。",
-        "Search indexed literature, sources, years and categories",
+        "检索已入库的柑橘直接证据与可迁移工艺参考。",
+        "Search direct citrus evidence and transferable processing references",
     )
     path = _literature_db_path()
     if not path.is_file():
@@ -745,37 +910,87 @@ def render_knowledge_page() -> None:
         )
 
     category = "" if selected_category == "全部" else selected_category
+    filter_signature = json.dumps([search, category], ensure_ascii=False)
+    if st.session_state.get("citrus_product_knowledge_filter") != filter_signature:
+        st.session_state.citrus_product_knowledge_filter = filter_signature
+        st.session_state.citrus_product_knowledge_page = 1
+    requested_page = max(
+        int(st.session_state.get("citrus_product_knowledge_page", 1)),
+        1,
+    )
     try:
-        listing = _load_knowledge_documents(path, search=search, category=category)
+        listing = _load_knowledge_documents(
+            path,
+            search=search,
+            category=category,
+            limit=KNOWLEDGE_PAGE_SIZE,
+            offset=(requested_page - 1) * KNOWLEDGE_PAGE_SIZE,
+        )
     except (FileNotFoundError, OSError, sqlite3.Error, ValueError):
         _render_data_unavailable("知识库检索")
         return
 
+    total = int(listing["total"])
+    page_count = max((total + KNOWLEDGE_PAGE_SIZE - 1) // KNOWLEDGE_PAGE_SIZE, 1)
+    page = min(requested_page, page_count)
+    if page != requested_page:
+        st.session_state.citrus_product_knowledge_page = page
+        listing = _load_knowledge_documents(
+            path,
+            search=search,
+            category=category,
+            limit=KNOWLEDGE_PAGE_SIZE,
+            offset=(page - 1) * KNOWLEDGE_PAGE_SIZE,
+        )
+
     stats = facets["stats"]
     metric_columns = st.columns(3)
-    metric_columns[0].metric("文献", int(stats.get("documents") or 0))
+    metric_columns[0].metric("参考文献", int(stats.get("documents") or 0))
     metric_columns[1].metric("证据片段", int(stats.get("chunks") or 0))
     metric_columns[2].metric("分类", len(categories))
 
-    total = int(listing["total"])
-    st.caption(
-        f"找到 {total} 条文献"
-        + (f"，当前显示前 {KNOWLEDGE_LIMIT} 条" if total > KNOWLEDGE_LIMIT else "")
-    )
-    quality_labels = {"good": "已索引", "fair": "可用", "poor": "待复核"}
+    st.caption(f"找到 {total} 篇参考文献")
+    if page_count > 1:
+        previous_column, page_column, next_column = st.columns([1, 2.4, 1])
+        previous_column.button(
+            "←",
+            help="上一页",
+            disabled=page <= 1,
+            key="citrus_product_knowledge_previous_page",
+            on_click=_set_knowledge_page,
+            args=(page - 1,),
+        )
+        page_column.caption(f"第 {page} / {page_count} 页")
+        next_column.button(
+            "→",
+            help="下一页",
+            disabled=page >= page_count,
+            key="citrus_product_knowledge_next_page",
+            on_click=_set_knowledge_page,
+            args=(page + 1,),
+        )
     rows = [
         {
             "题名": _compact_text(row.get("title"), 112),
-            "作者": _compact_text(_list_text(row.get("authors")), 58),
+            "作者": _compact_text(
+                _list_text(row.get("authors"), allow_plain_text=True),
+                58,
+            ),
             "年份": str(row.get("year") or "—"),
             "分类": _compact_text(_list_text(row.get("categories")), 42),
             "来源": _compact_text(row.get("publication") or _source_name(row.get("source_file")), 58),
+            "用途": _knowledge_relevance_label(row.get("title")),
             "片段": int(row.get("chunk_count") or 0),
-            "状态": quality_labels.get(str(row.get("text_quality") or "").lower(), "已入库"),
+            "状态": _knowledge_quality_label(row.get("text_quality")),
         }
         for row in listing["rows"]
     ]
-    _render_table(rows, "没有符合当前搜索和分类条件的文献。", height=520)
+    _render_table(
+        rows,
+        "没有符合当前搜索和分类条件的文献。",
+        height=520,
+        variant="knowledge",
+    )
 
 
 def _load_analytics(path: Path, scope: _Scope) -> dict[str, Any]:
@@ -784,8 +999,18 @@ def _load_analytics(path: Path, scope: _Scope) -> dict[str, Any]:
             connection.execute(
                 """
                 SELECT
-                    (SELECT COUNT(*) FROM sessions
-                     WHERE user_id = ? AND project_id = ?) AS sessions,
+                    (
+                        SELECT COUNT(*) FROM (
+                            SELECT session_id
+                            FROM conversation_messages
+                            WHERE user_id = ? AND project_id = ?
+                              AND role IN ('user', 'assistant')
+                            UNION
+                            SELECT session_id
+                            FROM agent_runs
+                            WHERE user_id = ? AND project_id = ?
+                        ) scoped_sessions
+                    ) AS sessions,
                     (SELECT COUNT(*) FROM conversation_messages
                      WHERE user_id = ? AND project_id = ?
                        AND role IN ('user', 'assistant')) AS messages,
@@ -813,6 +1038,8 @@ def _load_analytics(path: Path, scope: _Scope) -> dict[str, Any]:
                     scope.project_id,
                     scope.user_id,
                     scope.project_id,
+                    scope.user_id,
+                    scope.project_id,
                 ),
             ).fetchone()
         )
@@ -820,7 +1047,7 @@ def _load_analytics(path: Path, scope: _Scope) -> dict[str, Any]:
         daily = _row_dicts(
             connection.execute(
                 """
-                SELECT SUBSTR(created_at, 1, 10) AS day,
+                SELECT DATE(datetime(created_at), '+8 hours') AS day,
                        COUNT(*) AS runs,
                        SUM(CASE WHEN TRIM(COALESCE(error, '')) = '' THEN 1 ELSE 0 END)
                            AS successful_runs,
@@ -829,7 +1056,8 @@ def _load_analytics(path: Path, scope: _Scope) -> dict[str, Any]:
                 FROM agent_runs
                 WHERE user_id = ? AND project_id = ?
                   AND TRIM(COALESCE(created_at, '')) <> ''
-                GROUP BY SUBSTR(created_at, 1, 10)
+                  AND datetime(created_at) IS NOT NULL
+                GROUP BY DATE(datetime(created_at), '+8 hours')
                 ORDER BY day DESC
                 LIMIT ?
                 """,
@@ -946,7 +1174,7 @@ def render_analytics_page() -> None:
             "任务": _compact_text(row.get("original_input"), 92),
             "模型": _compact_text(row.get("model_name"), 38),
             "工具": len(_json_list(row.get("tool_calls_json"))),
-            "文献": len(_json_list(row.get("retrieved_literature_ids_json"))),
+            "证据": _evidence_label(row.get("retrieved_literature_ids_json")),
             "结果": "异常" if str(row.get("error") or "").strip() else "完成",
             "时间": _display_time(row.get("created_at")),
         }
@@ -1009,8 +1237,18 @@ def _scoped_storage_counts(path: Path, scope: _Scope) -> dict[str, int]:
             connection.execute(
                 """
                 SELECT
-                    (SELECT COUNT(*) FROM sessions
-                     WHERE user_id = ? AND project_id = ?) AS sessions,
+                    (
+                        SELECT COUNT(*) FROM (
+                            SELECT session_id
+                            FROM conversation_messages
+                            WHERE user_id = ? AND project_id = ?
+                              AND role IN ('user', 'assistant')
+                            UNION
+                            SELECT session_id
+                            FROM agent_runs
+                            WHERE user_id = ? AND project_id = ?
+                        ) scoped_sessions
+                    ) AS sessions,
                     (SELECT COUNT(*) FROM conversation_messages
                      WHERE user_id = ? AND project_id = ?) AS messages,
                     (SELECT COUNT(*) FROM agent_runs
@@ -1021,6 +1259,8 @@ def _scoped_storage_counts(path: Path, scope: _Scope) -> dict[str, int]:
                      WHERE user_id = ? AND project_id = ? AND status = 'active') AS samples
                 """,
                 (
+                    scope.user_id,
+                    scope.project_id,
                     scope.user_id,
                     scope.project_id,
                     scope.user_id,

@@ -74,7 +74,11 @@ def render_light_table(
             if column not in columns:
                 columns.append(column)
 
-    safe_variant = "settings-table" if variant == "settings" else ""
+    safe_variant = {
+        "settings": "settings-table",
+        "workspace": "workspace-table",
+        "knowledge": "knowledge-table",
+    }.get(variant, "")
     safe_height = min(max(int(height), 120), 640)
     header_cells = "".join(
         f'<th scope="col">{html.escape(str(column))}</th>' for column in columns
@@ -88,8 +92,10 @@ def render_light_table(
             escaped = html.escape(display)
             title = html.escape(display, quote=True)
             numeric_class = "is-numeric" if isinstance(value, (int, float)) else ""
+            label = html.escape(str(column), quote=True)
             cells.append(
-                f'<td class="{numeric_class}" title="{title}">{escaped}</td>'
+                f'<td class="{numeric_class}" data-label="{label}" '
+                f'title="{title}">{escaped}</td>'
             )
         body_rows.append("<tr>" + "".join(cells) + "</tr>")
 
@@ -173,8 +179,13 @@ def render_primary_navigation(
             )
         with st.container(key="product_nav_actions"):
             for view, _icon, zh_label, en_label in NAV_ITEMS:
+                button_label = (
+                    f"当前页面：{zh_label} · {en_label}"
+                    if view == active_view
+                    else f"{zh_label} · {en_label}"
+                )
                 st.button(
-                    f"{zh_label} · {en_label}",
+                    button_label,
                     key=f"product_nav_button_{view}",
                     on_click=on_view_change,
                     args=(view,),

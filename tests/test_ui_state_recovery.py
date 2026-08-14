@@ -2,13 +2,25 @@ from __future__ import annotations
 
 import hashlib
 import json
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from app import main as app_main
+
+
+class SessionStateStub(dict):
+    def __getattr__(self, name: str) -> object:
+        try:
+            return self[name]
+        except KeyError as error:
+            raise AttributeError(name) from error
+
+    def __setattr__(self, name: str, value: object) -> None:
+        self[name] = value
 
 
 def make_row(
@@ -95,6 +107,20 @@ class ScrollPositionManagerTests(unittest.TestCase):
             installer.index("resetTop();"),
             installer.index("manager.scheduleMotion(resetTop"),
         )
+
+    def test_empty_state_reruns_do_not_force_scroll_reset(self) -> None:
+        source = Path(app_main.__file__).read_text(encoding="utf-8-sig")
+        main_source = source[source.index("def main()") :]
+
+        self.assertIn("reset_to_top=reset_scroll_position,", main_source)
+        self.assertNotIn(
+            "reset_scroll_position or not bool(st.session_state.agent_messages)",
+            main_source,
+        )
+        start_new = source[
+            source.index("def start_new_conversation") : source.index("def init_state")
+        ]
+        self.assertIn("st.session_state.reset_main_scroll_position = True", start_new)
 
     def test_progress_reveal_uses_composer_boundary_and_short_cancelable_motion(self) -> None:
         installer = app_main.SCROLL_POSITION_MANAGER_INSTALLER
@@ -211,6 +237,220 @@ class EmptyStateProgressLayoutTests(unittest.TestCase):
             "正在全面检索本地文献并组织专业回答",
         ):
             self.assertIn(f'update_progress("{message}")', handle_prompt)
+
+
+class ProductRouteStateTests(unittest.TestCase):
+    def test_query_view_overrides_stale_session_view(self) -> None:
+        state = SessionStateStub(
+            product_view="workspace",
+            mobile_secondary_open=True,
+        )
+        with (
+            patch.object(app_main.st, "session_state", state),
+            patch.object(app_main, "_query_value", return_value="knowledge"),
+            patch.object(app_main, "_set_query_value") as set_query,
+            patch.object(app_main, "preserve_sidebar_draft") as preserve_draft,
+        ):
+            view = app_main.current_product_view()
+
+        self.assertEqual("knowledge", view)
+        self.assertEqual("knowledge", state.product_view)
+        self.assertFalse(state.mobile_secondary_open)
+        self.assertTrue(state.reset_main_scroll_position)
+        preserve_draft.assert_called_once_with()
+        set_query.assert_not_called()
+
+    def test_query_sid_switch_restores_only_the_target_conversation(self) -> None:
+        user_token = "u_" + "a" * 32
+        user_id = "anon_" + hashlib.sha256(user_token.encode("utf-8")).hexdigest()[:24]
+        old_session_id = "s_" + "b" * 32
+        target_session_id = "s_" + "c" * 32
+        state = SessionStateStub(
+            agent_messages=[{"role": "assistant", "content": "old conversation"}],
+            current_batch={"batch": "old"},
+            last_result={"result": "old"},
+            last_vision_context={"vision": "old"},
+            clear_sidebar_inputs=False,
+            image_uploader_version=0,
+            sidebar_draft_observation="old observation",
+            sidebar_draft_image_bytes=b"old image",
+            sidebar_draft_image_mime_type="image/png",
+            sidebar_draft_image_name="old.png",
+            manual_observation="old observation",
+            memory_user_id=user_id,
+            memory_project_id="citrus-agent",
+            memory_session_id=old_session_id,
+            memory_restored_session=old_session_id,
+        )
+        manager = SimpleNamespace(
+            ensure_session=Mock(),
+            restore_session_messages=Mock(return_value=[{"message_id": "target-row"}]),
+        )
+        restored_messages = [{"role": "assistant", "content": "target conversation"}]
+
+        def query_value(name: str) -> str:
+            return {"uid": user_token, "sid": target_session_id}.get(name, "")
+
+        with (
+            patch.object(app_main.st, "session_state", state),
+            patch.object(app_main, "_query_value", side_effect=query_value),
+            patch.object(app_main, "_set_query_value"),
+            patch.object(app_main, "_authenticated_identity", return_value=""),
+            patch.object(app_main, "get_memory_manager", return_value=manager),
+            patch.object(app_main, "restore_ui_messages", return_value=restored_messages),
+            patch.object(
+                app_main,
+                "restore_latest_analysis_state",
+                return_value=(
+                    {"batch": "target"},
+                    {"result": "target"},
+                    {"vision": "target"},
+                ),
+            ),
+        ):
+            app_main.initialize_memory_identity()
+
+        self.assertEqual(target_session_id, state.memory_session_id)
+        self.assertEqual(target_session_id, state.memory_restored_session)
+        self.assertEqual(restored_messages, state.agent_messages)
+        self.assertEqual({"batch": "target"}, state.current_batch)
+        self.assertEqual({"result": "target"}, state.last_result)
+        self.assertEqual({"vision": "target"}, state.last_vision_context)
+        self.assertTrue(state.reset_main_scroll_position)
+        self.assertNotIn("sidebar_draft_image_bytes", state)
+        self.assertNotIn("sidebar_draft_observation", state)
+        manager.restore_session_messages.assert_called_once_with(
+            user_id,
+            target_session_id,
+            "citrus-agent",
+        )
+
+    def test_production_path_does_not_reload_agent_modules(self) -> None:
+        source = Path(app_main.__file__).read_text(encoding="utf-8-sig")
+
+        self.assertNotIn("import importlib", source)
+        self.assertNotIn("importlib.reload", source)
+        self.assertIn("live_orchestrator = orchestrator", source)
+
+    def test_browser_history_sync_reloads_after_popstate(self) -> None:
+        with patch.object(app_main.st, "iframe") as iframe:
+            app_main.render_navigation_history_sync()
+
+        iframe.assert_called_once()
+        bootstrap = iframe.call_args.args[0]
+        installer = app_main.NAVIGATION_HISTORY_SYNC_INSTALLER
+        self.assertEqual({"height": 1, "tab_index": -1}, iframe.call_args.kwargs)
+        self.assertIn('window.addEventListener("popstate", handlePopState);', installer)
+        self.assertIn("window.location.reload()", installer)
+        self.assertIn('loader = doc.createElement("script")', bootstrap)
+
+
+class AnalysisPayloadLayoutTests(unittest.TestCase):
+    def test_compact_narrative_moves_evidence_and_report_path_out_of_the_summary(self) -> None:
+        narrative = """### 当前批次事实
+产地：新会；品种：茶枝柑。
+
+### 文献证据及其适用边界
+- [文献1] 很长的原文证据。
+
+### 推荐与备选方向
+- 果皮-陈皮茶。
+
+完整报告：`D:\\workspace\\outputs\\report.md`
+
+### 本次引用文献
+- [文献1] Citation
+"""
+
+        compact = app_main._compact_analysis_narrative(narrative)
+
+        self.assertIn("当前批次事实", compact)
+        self.assertIn("推荐与备选方向", compact)
+        self.assertNotIn("文献证据及其适用边界", compact)
+        self.assertNotIn("很长的原文证据", compact)
+        self.assertNotIn("完整报告", compact)
+        self.assertNotIn("D:\\workspace", compact)
+        self.assertNotIn("本次引用文献", compact)
+        self.assertNotIn("Citation", compact)
+
+    def test_full_process_is_collapsed_after_the_narrative(self) -> None:
+        source = Path(app_main.__file__).read_text(encoding="utf-8-sig")
+        render_source = source[
+            source.index("def render_analysis_payload") : source.index("def render_message")
+        ]
+
+        narrative = "if narrative_answer:\n        st.markdown(narrative_answer)"
+        expander = 'with st.expander("完整加工流程与参数", expanded=False):'
+        self.assertIn(narrative, render_source)
+        self.assertIn(expander, render_source)
+        self.assertLess(render_source.index(narrative), render_source.index(expander))
+        expander_source = render_source[render_source.index(expander) :]
+        self.assertIn("render_processing_plan(processing_plan)", expander_source)
+        self.assertIn("st.markdown(parameterized_text)", expander_source)
+
+    def test_render_keeps_narrative_outside_the_process_expander(self) -> None:
+        events: list[tuple[str, str]] = []
+
+        @contextmanager
+        def expander(label: str, *, expanded: bool = False):
+            del expanded
+            events.append(("enter", label))
+            yield
+            events.append(("exit", label))
+
+        payload = {
+            "result": {
+                "scores": [{"direction": "果肉-柑橘汁/NFC"}],
+                "quality_risks": [],
+                "evidence": [],
+                "parameter_groups": [],
+                "parameterized_plan": {},
+                "processing_intent": {},
+                "report": "# 报告",
+            },
+            "report_path": "outputs/report.md",
+            "summary": "summary",
+            "answer": "answer",
+        }
+        processing_plan = {"stages": [{"name": "验收"}]}
+
+        with (
+            patch.object(app_main, "resolve_processing_plan", return_value=processing_plan),
+            patch.object(
+                app_main.agent_report,
+                "parameterized_plan_markdown",
+                return_value="PARAMETER DETAILS",
+            ),
+            patch.object(
+                app_main.orchestrator,
+                "ensure_primary_processing_flow",
+                return_value="answer with flow",
+            ),
+            patch.object(
+                app_main.orchestrator,
+                "strip_primary_processing_flow",
+                return_value="NARRATIVE",
+            ),
+            patch.object(app_main.orchestrator, "summarize_result", return_value="summary"),
+            patch.object(app_main, "render_processing_plan", side_effect=lambda _plan: events.append(("plan", "rendered"))),
+            patch.object(app_main, "render_tool_steps"),
+            patch.object(app_main.st, "expander", side_effect=expander),
+            patch.object(app_main.st, "markdown", side_effect=lambda value, **_kwargs: events.append(("markdown", str(value)))),
+            patch.object(app_main.st, "info"),
+            patch.object(app_main.st, "caption"),
+            patch.object(app_main.st, "download_button"),
+        ):
+            app_main.render_analysis_payload(payload)
+
+        narrative_index = events.index(("markdown", "NARRATIVE"))
+        process_start = events.index(("enter", "完整加工流程与参数"))
+        plan_index = events.index(("plan", "rendered"))
+        parameter_index = events.index(("markdown", "PARAMETER DETAILS"))
+        process_end = events.index(("exit", "完整加工流程与参数"))
+        self.assertLess(narrative_index, process_start)
+        self.assertLess(process_start, plan_index)
+        self.assertLess(plan_index, parameter_index)
+        self.assertLess(parameter_index, process_end)
 
 
 class VisionStateRecoveryTests(unittest.TestCase):

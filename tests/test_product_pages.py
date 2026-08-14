@@ -250,6 +250,17 @@ class ProductPageTests(unittest.TestCase):
                     "INSERT INTO memories VALUES (?, ?, ?, ?)",
                     (f"memory_{suffix}", user_id, project_id, "active"),
                 )
+            connection.execute(
+                "INSERT INTO sessions VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    "session_alpha_empty",
+                    "user_alpha",
+                    "project_one",
+                    "active",
+                    "2026-08-09T10:00:00+00:00",
+                    "2026-08-09T10:00:00+00:00",
+                ),
+            )
             connection.commit()
         finally:
             connection.close()
@@ -404,6 +415,269 @@ assert product_pages.render_product_page({view!r}) is True
         self.assertNotIn("private task for beta", serialized)
         self.assertNotIn("other_project", serialized)
 
+    def test_json_arrays_are_strict_but_legacy_author_text_is_supported(self) -> None:
+        self.assertEqual([], product_pages._json_list("not-json"))
+        self.assertEqual([], product_pages._json_list('{"value": 1}'))
+        self.assertEqual(["one"], product_pages._json_list('["one"]'))
+        self.assertEqual("—", product_pages._list_text("Legacy Author"))
+        self.assertEqual(
+            "Legacy Author",
+            product_pages._list_text("Legacy Author", allow_plain_text=True),
+        )
+        self.assertEqual(
+            "Legacy Author",
+            product_pages._list_text('"Legacy Author"', allow_plain_text=True),
+        )
+
+    def test_display_time_and_daily_analytics_use_beijing_time(self) -> None:
+        self.assertEqual(
+            "2026-08-02 00:30",
+            product_pages._display_time("2026-08-01T16:30:00Z"),
+        )
+        self.assertEqual(
+            "2026-08-01 18:00",
+            product_pages._display_time("2026-08-01T10:00:00"),
+        )
+
+        connection = sqlite3.connect(self.memory_db)
+        try:
+            connection.execute(
+                "INSERT INTO agent_runs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    "run_alpha_after_midnight",
+                    "user_alpha",
+                    "session_alpha",
+                    "project_one",
+                    "late analysis",
+                    "fixture-model",
+                    "[]",
+                    "[]",
+                    "done",
+                    "",
+                    "2026-08-01T16:30:00+00:00",
+                ),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        analytics = product_pages._load_analytics(
+            self.memory_db,
+            product_pages._Scope("user_alpha", "project_one"),
+        )
+        self.assertEqual(
+            ["2026-08-01", "2026-08-02"],
+            [row["day"] for row in analytics["daily"]],
+        )
+
+    def test_pending_follow_up_does_not_reuse_previous_answer(self) -> None:
+        connection = sqlite3.connect(self.memory_db)
+        try:
+            connection.execute(
+                """
+                INSERT INTO conversation_messages(
+                    message_id, user_id, session_id, project_id,
+                    role, content, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "message_alpha_follow_up",
+                    "user_alpha",
+                    "session_alpha",
+                    "project_one",
+                    "user",
+                    "第二个问题还在等待回答",
+                    "2026-08-01T11:00:00+00:00",
+                ),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        scope = product_pages._Scope("user_alpha", "project_one")
+        workspace = product_pages._load_workspace(self.memory_db, scope)
+        pending = product_pages._workspace_session_row(workspace["sessions"][0])
+        self.assertEqual("第二个问题还在等待回答", pending["主题"])
+        self.assertEqual("—", pending["最新结论"])
+        self.assertEqual("待回复", pending["进度"])
+
+        connection = sqlite3.connect(self.memory_db)
+        try:
+            connection.execute(
+                """
+                INSERT INTO conversation_messages(
+                    message_id, user_id, session_id, project_id,
+                    role, content, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "answer_alpha_follow_up",
+                    "user_alpha",
+                    "session_alpha",
+                    "project_one",
+                    "assistant",
+                    "第二个问题的新结论。",
+                    "2026-08-01T11:01:00+00:00",
+                ),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        workspace = product_pages._load_workspace(self.memory_db, scope)
+        answered = product_pages._workspace_session_row(workspace["sessions"][0])
+        self.assertEqual("第二个问题的新结论。", answered["最新结论"])
+        self.assertEqual("已回复 · 2 轮", answered["进度"])
+
+    def test_workspace_activity_ignores_session_maintenance_updates(self) -> None:
+        connection = sqlite3.connect(self.memory_db)
+        try:
+            connection.execute(
+                "UPDATE sessions SET updated_at = ? WHERE session_id = ?",
+                ("2026-08-14T15:03:29+00:00", "session_alpha"),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        workspace = product_pages._load_workspace(
+            self.memory_db,
+            product_pages._Scope("user_alpha", "project_one"),
+        )
+        row = workspace["sessions"][0]
+        self.assertEqual("2026-08-01T10:00:00+00:00", row["activity_at"])
+        self.assertEqual(
+            "2026-08-01 18:00",
+            product_pages._workspace_session_row(row)["最近时间"],
+        )
+
+    def test_evidence_counts_are_deduplicated_and_malformed_json_is_empty(self) -> None:
+        row = {
+            "original_input": "分析任务",
+            "tool_calls_json": "[]",
+            "retrieved_literature_ids_json": '["chunk_a", "chunk_a", "chunk_b"]',
+            "final_output": "分析完成。",
+            "error": "",
+            "created_at": "2026-08-01T10:00:00+00:00",
+        }
+        self.assertEqual("2 条证据", product_pages._workspace_run_row(row)["证据"])
+        row["retrieved_literature_ids_json"] = "not-json"
+        self.assertEqual("暂无证据", product_pages._workspace_run_row(row)["证据"])
+
+    def test_knowledge_quality_labels_cover_real_and_unknown_states(self) -> None:
+        self.assertEqual("已索引", product_pages._knowledge_quality_label("good"))
+        self.assertEqual("内容有限", product_pages._knowledge_quality_label("limited"))
+        self.assertEqual("待 OCR", product_pages._knowledge_quality_label("ocr_required"))
+        self.assertEqual("状态未知", product_pages._knowledge_quality_label("unexpected"))
+
+    def test_knowledge_filters_technology_false_positives_and_labels_relevance(self) -> None:
+        connection = sqlite3.connect(self.literature_db)
+        try:
+            connection.execute(
+                "INSERT INTO documents VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    "doc_nfc_technology",
+                    "DC-NFC framework for NFC-enabled IoT",
+                    '["Researcher C"]',
+                    "2026",
+                    '["橙汁"]',
+                    "Unrelated Journal",
+                    "",
+                    "橙汁/nfc-iot.pdf",
+                    1,
+                    "good",
+                ),
+            )
+            connection.execute(
+                "INSERT INTO chunks VALUES (?, ?, ?, ?)",
+                (4, "doc_nfc_technology", "橙汁", "wireless network evidence"),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        listing = product_pages._load_knowledge_documents(self.literature_db)
+        facets = product_pages._load_knowledge_facets(self.literature_db)
+        self.assertEqual(2, listing["total"])
+        self.assertEqual(2, facets["stats"]["documents"])
+        self.assertEqual(3, facets["stats"]["chunks"])
+        self.assertTrue(
+            product_pages._is_off_domain_knowledge_title(
+                "Near Field Communication for future payment systems"
+            )
+        )
+        self.assertEqual(
+            "柑橘直接证据",
+            product_pages._knowledge_relevance_label("Citrus peel utilization"),
+        )
+        self.assertEqual(
+            "柑橘直接证据",
+            product_pages._knowledge_relevance_label(
+                "Identification of Citri Reticulatae Pericarpium"
+            ),
+        )
+        self.assertEqual(
+            "工艺参考",
+            product_pages._knowledge_relevance_label("Pineapple peel extraction"),
+        )
+
+    def test_review_sample_count_uses_the_same_status_classifier_as_rows(self) -> None:
+        connection = sqlite3.connect(self.memory_db)
+        try:
+            connection.execute(
+                """
+                INSERT INTO citrus_samples VALUES (
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                )
+                """,
+                (
+                    "sample_alpha_manual_review",
+                    "session_alpha",
+                    "user_alpha",
+                    "project_one",
+                    "沃柑",
+                    "广西",
+                    "外观与检测记录完整，仍需人工确认。",
+                    "复核加工方向",
+                    json.dumps(
+                        {
+                            "weight_kg": 500,
+                            "pesticide_status": "passed",
+                            "microbe_status": "passed",
+                        },
+                        ensure_ascii=False,
+                    ),
+                    "果肉-柑橘汁/NFC",
+                    "待确认",
+                    0.8,
+                    "active",
+                    "2026-08-02T10:00:00+00:00",
+                ),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        workspace = product_pages._load_workspace(
+            self.memory_db,
+            product_pages._Scope("user_alpha", "project_one"),
+        )
+        self.assertEqual(2, workspace["counts"]["samples"])
+        self.assertEqual(2, workspace["counts"]["review_samples"])
+        manual_sample = next(
+            row
+            for row in workspace["samples"]
+            if row["sample_id"] == "sample_alpha_manual_review"
+        )
+        self.assertEqual("质量复核", product_pages._sample_quality_status(manual_sample))
+
+    def test_analytics_uses_evidence_language_instead_of_document_counts(self) -> None:
+        app = self._render_page("analytics")
+        rendered = "\n".join(element.value for element in app.markdown)
+        self.assertIn("证据", rendered)
+        self.assertIn("1 条证据", rendered)
+        self.assertNotIn("<th scope=\"col\">文献</th>", rendered)
+
     def test_workspace_rows_show_business_information_only(self) -> None:
         workspace = product_pages._load_workspace(
             self.memory_db,
@@ -415,7 +689,7 @@ assert product_pages.render_product_page({view!r}) is True
                 "主题": "分析广西沃柑的加工方向",
                 "最新结论": "当前优先方向是 果肉-柑橘汁/NFC。",
                 "进度": "已回复 · 1 轮",
-                "最近时间": "2026-08-01 10:00",
+                "最近时间": "2026-08-01 18:00",
             },
             product_pages._workspace_session_row(workspace["sessions"][0]),
         )
@@ -424,8 +698,8 @@ assert product_pages.render_product_page({view!r}) is True
                 "分析任务": "分析广西沃柑的加工方向",
                 "主要结果": "当前优先方向是 果肉-柑橘汁/NFC（条件性备选）。",
                 "状态": "完成 · 待复核",
-                "证据": "1 篇文献",
-                "时间": "2026-08-01 10:00",
+                "证据": "1 条证据",
+                "时间": "2026-08-01 18:00",
             },
             product_pages._workspace_run_row(workspace["runs"][0]),
         )
@@ -435,7 +709,7 @@ assert product_pages.render_product_page({view!r}) is True
                 "关键指标": "重量 1,500 kg · 糖度 13 °Brix · 酸度 0.6%",
                 "建议方向": "果肉-柑橘汁/NFC",
                 "质控状态": "暂不可放行",
-                "更新时间": "2026-08-01 10:00",
+                "更新时间": "2026-08-01 18:00",
             },
             product_pages._workspace_sample_row(workspace["samples"][0]),
         )
@@ -443,6 +717,9 @@ assert product_pages.render_product_page({view!r}) is True
     def test_workspace_page_hides_internal_identifiers_and_tool_metadata(self) -> None:
         app = self._render_page("workspace")
         rendered = "\n".join(element.value for element in app.markdown)
+
+        self.assertIn("workspace-table", rendered)
+        self.assertIn('data-label="主题"', rendered)
 
         for heading in (
             "主题",
