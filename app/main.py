@@ -1476,6 +1476,7 @@ def render_empty_state(api_key: str) -> tuple[str | None, Any]:
                 '<small>Please select the task you would like to proceed with</small></div>',
                 unsafe_allow_html=True,
             )
+            progress_slot = st.empty()
             for row_start in range(0, len(EXAMPLE_CARDS), 2):
                 cols = st.columns(2)
                 for card_index, (col, card) in enumerate(
@@ -1506,7 +1507,6 @@ def render_empty_state(api_key: str) -> tuple[str | None, Any]:
                                 key=f"example_card_{card_index}",
                             ):
                                 selected_prompt = card["prompt"]
-        progress_slot = st.empty()
     return selected_prompt, progress_slot
 
 
