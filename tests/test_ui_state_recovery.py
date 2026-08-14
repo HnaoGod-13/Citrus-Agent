@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from app import main as app_main
 
@@ -39,6 +40,61 @@ def raw_model_output_keys(value: object) -> list[str]:
         for item in value:
             found.extend(raw_model_output_keys(item))
     return found
+
+
+class ScrollPositionManagerTests(unittest.TestCase):
+    def test_parent_realm_manager_yields_to_user_scroll_and_cleans_up_listeners(self) -> None:
+        with patch.object(app_main.st, "iframe") as iframe:
+            app_main.render_scroll_position_manager(restore=True, command_id=7)
+
+        iframe.assert_called_once()
+        bootstrap = iframe.call_args.args[0]
+        installer = app_main.SCROLL_POSITION_MANAGER_INSTALLER
+        self.assertEqual({"height": 1, "tab_index": -1}, iframe.call_args.kwargs)
+        self.assertIn('loader = doc.createElement("script")', bootstrap)
+        self.assertIn("(doc.head || doc.documentElement).appendChild(loader);", bootstrap)
+        self.assertIn("restore: true", bootstrap)
+        self.assertIn("resetToTop: false", bootstrap)
+        self.assertIn("const commandId = 7;", bootstrap)
+        self.assertIn("commandId,", bootstrap)
+
+        self.assertIn("version: 3", installer)
+        self.assertIn("window[installerKey] = install;", installer)
+        self.assertIn(
+            "savedPosition = Number(window.sessionStorage.getItem(storageKey));",
+            installer,
+        )
+        handle_user_input = installer[
+            installer.index("manager.handleUserInput =") : installer.index(
+                "manager.handlePointerDown ="
+            )
+        ]
+        self.assertLess(
+            handle_user_input.index("manager.cancelMotion();"),
+            handle_user_input.index("manager.userScrollUntil"),
+        )
+        for event_name, handler_name in (
+            ("wheel", "handleUserInput"),
+            ("touchstart", "handleUserInput"),
+            ("pointerdown", "handlePointerDown"),
+            ("keydown", "handleKeyDown"),
+        ):
+            self.assertIn(
+                f'doc.removeEventListener("{event_name}", manager.{handler_name}',
+                installer,
+            )
+            self.assertIn(
+                f'doc.addEventListener("{event_name}", manager.{handler_name}',
+                installer,
+            )
+        self.assertIn(
+            'scroller.addEventListener("scroll", manager.handleScroll',
+            installer,
+        )
+        self.assertLess(
+            installer.index("resetTop();"),
+            installer.index("manager.scheduleMotion(resetTop"),
+        )
 
 
 class VisionStateRecoveryTests(unittest.TestCase):

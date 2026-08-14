@@ -492,10 +492,217 @@ def inject_style() -> None:
     )
 
 
-def render_scroll_position_manager(*, restore: bool, reset_to_top: bool = False) -> None:
+SCROLL_POSITION_MANAGER_INSTALLER = r"""
+(() => {
+    const installerKey = "__citrusAgentInstallScrollManager";
+    const managerKey = "__citrusAgentScrollManager";
+    const storageKey = "citrus-agent:main-scroll-top";
+    const doc = window.document;
+
+    const teardown = (manager) => {
+        if (!manager) return;
+        if (Array.isArray(manager.motionTimers)) {
+            manager.motionTimers.forEach((timer) => window.clearTimeout(timer));
+        }
+        const boundScroller = manager.boundScroller || manager.scroller;
+        if (boundScroller && manager.handleScroll) {
+            boundScroller.removeEventListener("scroll", manager.handleScroll);
+        }
+        if (boundScroller && manager.markUserScroll) {
+            boundScroller.removeEventListener("wheel", manager.markUserScroll);
+            boundScroller.removeEventListener("touchstart", manager.markUserScroll);
+        }
+        if (manager.markUserScroll) {
+            doc.removeEventListener("wheel", manager.markUserScroll, true);
+            doc.removeEventListener("touchstart", manager.markUserScroll, true);
+        }
+        if (manager.handleUserInput) {
+            doc.removeEventListener("wheel", manager.handleUserInput, true);
+            doc.removeEventListener("touchstart", manager.handleUserInput, true);
+        }
+        if (manager.handlePointerDown) {
+            doc.removeEventListener("pointerdown", manager.handlePointerDown, true);
+        }
+        if (manager.handleKeyDown) {
+            doc.removeEventListener("keydown", manager.handleKeyDown, true);
+        }
+
+        manager.emptyResetActive = false;
+        manager.restoring = false;
+        manager.scroller = null;
+        manager.boundScroller = null;
+        manager.markUserScroll = () => {};
+        manager.remember = () => {};
+        manager.cancelMotion = () => {};
+    };
+
+    const createManager = () => {
+        const manager = {
+            version: 3,
+            restoring: false,
+            userScrollUntil: 0,
+            scroller: null,
+            boundScroller: null,
+            motionToken: 0,
+            motionTimers: [],
+        };
+
+        manager.cancelMotion = () => {
+            manager.motionToken += 1;
+            manager.motionTimers.forEach((timer) => window.clearTimeout(timer));
+            manager.motionTimers = [];
+            manager.restoring = false;
+        };
+        manager.scheduleMotion = (callback, delays, releaseDelay, onRelease = null) => {
+            manager.cancelMotion();
+            const token = manager.motionToken;
+            manager.restoring = true;
+            manager.motionTimers = delays.map((delay) => window.setTimeout(() => {
+                if (manager.motionToken !== token || !manager.restoring) return;
+                callback();
+            }, delay));
+            manager.motionTimers.push(window.setTimeout(() => {
+                if (manager.motionToken !== token) return;
+                manager.restoring = false;
+                manager.motionTimers = [];
+                if (typeof onRelease === "function") onRelease();
+            }, releaseDelay));
+        };
+        manager.remember = () => {
+            if (manager.restoring || !manager.scroller) return;
+            try {
+                window.sessionStorage.setItem(storageKey, String(manager.scroller.scrollTop));
+            } catch (_) {
+                // Storage may be unavailable in a hardened browser; scrolling still works normally.
+            }
+        };
+        manager.handleUserInput = (event) => {
+            if (event && event.isTrusted === false) return;
+            manager.cancelMotion();
+            manager.userScrollUntil = Date.now() + 1200;
+        };
+        manager.handlePointerDown = (event) => {
+            manager.handleUserInput(event);
+            const target = event.target;
+            if (target && typeof target.closest === "function" && target.closest("button")) {
+                manager.remember();
+            }
+        };
+        manager.handleKeyDown = (event) => {
+            const target = event.target;
+            const isChatSubmit = event.key === "Enter"
+                && !event.shiftKey
+                && target
+                && typeof target.matches === "function"
+                && target.matches('[data-testid="stChatInputTextArea"]');
+            if (isChatSubmit) manager.remember();
+
+            if (["PageUp", "PageDown", "Home", "End", "ArrowUp", "ArrowDown", " "].includes(event.key)) {
+                manager.handleUserInput(event);
+                window.setTimeout(() => manager.remember(), 0);
+            }
+        };
+        manager.handleScroll = () => {
+            if (!manager.restoring && Date.now() <= manager.userScrollUntil) manager.remember();
+        };
+        return manager;
+    };
+
+    const install = ({ restore = false, resetToTop = false } = {}) => {
+        const scroller = doc.querySelector(
+            '[data-testid="stAppScrollToBottomContainer"], [data-testid="stMain"]'
+        );
+        if (!scroller) return;
+
+        let manager = window[managerKey];
+        if (!manager || manager.version !== 3) {
+            teardown(manager);
+            manager = createManager();
+            window[managerKey] = manager;
+        }
+
+        doc.removeEventListener("wheel", manager.handleUserInput, true);
+        doc.removeEventListener("touchstart", manager.handleUserInput, true);
+        doc.removeEventListener("pointerdown", manager.handlePointerDown, true);
+        doc.removeEventListener("keydown", manager.handleKeyDown, true);
+        doc.addEventListener("wheel", manager.handleUserInput, { capture: true, passive: true });
+        doc.addEventListener("touchstart", manager.handleUserInput, { capture: true, passive: true });
+        doc.addEventListener("pointerdown", manager.handlePointerDown, true);
+        doc.addEventListener("keydown", manager.handleKeyDown, true);
+
+        if (manager.boundScroller) {
+            manager.boundScroller.removeEventListener("scroll", manager.handleScroll);
+        }
+        manager.scroller = scroller;
+        manager.boundScroller = scroller;
+        scroller.addEventListener("scroll", manager.handleScroll, { passive: true });
+
+        if (resetToTop) {
+            try {
+                window.sessionStorage.removeItem(storageKey);
+            } catch (_) {
+                // Empty-state positioning must not depend on storage availability.
+            }
+            const resetTop = () => scroller.scrollTo({
+                top: 0,
+                left: scroller.scrollLeft,
+                behavior: "auto",
+            });
+            resetTop();
+            manager.scheduleMotion(resetTop, [40, 120, 280, 600, 1000], 1100);
+            return;
+        }
+
+        manager.cancelMotion();
+        let hasSavedPosition = false;
+        try {
+            hasSavedPosition = window.sessionStorage.getItem(storageKey) !== null;
+        } catch (_) {
+            // Storage availability is checked again by manager.remember().
+        }
+        if (!hasSavedPosition) manager.remember();
+
+        if (restore) {
+            let savedPosition = Number.NaN;
+            try {
+                savedPosition = Number(window.sessionStorage.getItem(storageKey));
+            } catch (_) {
+                // Ignore unavailable storage and retain Streamlit's default behavior.
+            }
+            if (Number.isFinite(savedPosition)) {
+                const restorePosition = () => scroller.scrollTo({
+                    top: savedPosition,
+                    left: scroller.scrollLeft,
+                    behavior: "auto",
+                });
+                restorePosition();
+                manager.scheduleMotion(
+                    restorePosition,
+                    [40, 120, 280, 600, 1000],
+                    1200,
+                    manager.remember
+                );
+            }
+        }
+    };
+
+    install.version = 3;
+    window[installerKey] = install;
+})();
+"""
+
+
+def render_scroll_position_manager(
+    *,
+    restore: bool,
+    reset_to_top: bool = False,
+    command_id: int = 0,
+) -> None:
     """Preserve the reader's main-page position across the final answer rerun."""
     restore_requested = "true" if restore else "false"
     reset_requested = "true" if reset_to_top else "false"
+    command_marker = max(0, int(command_id))
+    installer_source = json.dumps(SCROLL_POSITION_MANAGER_INSTALLER)
     st.iframe(
         f"""
         <style>
@@ -520,131 +727,22 @@ def render_scroll_position_manager(*, restore: bool, reset_to_top: bool = False)
 
             const host = window.parent;
             const doc = host.document;
-            const scroller = doc.querySelector(
-                '[data-testid="stAppScrollToBottomContainer"], [data-testid="stMain"]'
-            );
-            if (!scroller) return;
-
-            const storageKey = "citrus-agent:main-scroll-top";
-            const managerKey = "__citrusAgentScrollManager";
-            let manager = host[managerKey];
-
-            if (!manager || manager.version !== 1) {{
-                manager = {{
-                    version: 1,
-                    restoring: false,
-                    emptyResetActive: false,
-                    userScrollUntil: 0,
-                    scroller: null,
-                    boundScroller: null,
-                }};
-                host[managerKey] = manager;
-
-                manager.remember = () => {{
-                    if (manager.restoring || !manager.scroller) return;
-                    try {{
-                        host.sessionStorage.setItem(storageKey, String(manager.scroller.scrollTop));
-                    }} catch (_) {{
-                        // Storage may be unavailable in a hardened browser; scrolling still works normally.
-                    }}
-                }};
-                manager.markUserScroll = () => {{
-                    manager.emptyResetActive = false;
-                    manager.userScrollUntil = Date.now() + 1200;
-                }};
-
-                doc.addEventListener("pointerdown", (event) => {{
-                    manager.markUserScroll();
-                    const target = event.target;
-                    if (target && typeof target.closest === "function" && target.closest("button")) {{
-                        manager.remember();
-                    }}
-                }}, true);
-
-                doc.addEventListener("keydown", (event) => {{
-                    const target = event.target;
-                    const isChatSubmit = event.key === "Enter"
-                        && !event.shiftKey
-                        && target
-                        && typeof target.matches === "function"
-                        && target.matches('[data-testid="stChatInputTextArea"]');
-                    if (isChatSubmit) manager.remember();
-
-                    if (["PageUp", "PageDown", "Home", "End", "ArrowUp", "ArrowDown", " "].includes(event.key)) {{
-                        manager.markUserScroll();
-                        host.setTimeout(manager.remember, 0);
-                    }}
-                }}, true);
+            const commandId = {command_marker};
+            const installerKey = "__citrusAgentInstallScrollManager";
+            if (!host[installerKey] || host[installerKey].version !== 3) {{
+                const loader = doc.createElement("script");
+                loader.textContent = {installer_source};
+                (doc.head || doc.documentElement).appendChild(loader);
+                loader.remove();
             }}
 
-            manager.scroller = scroller;
-            if (manager.boundScroller !== scroller) {{
-                scroller.addEventListener("wheel", manager.markUserScroll, {{ passive: true }});
-                scroller.addEventListener("touchstart", manager.markUserScroll, {{ passive: true }});
-                scroller.addEventListener("scroll", () => {{
-                    if (manager.emptyResetActive) {{
-                        host.requestAnimationFrame(() => {{
-                            if (manager.emptyResetActive && manager.scroller) {{
-                                manager.scroller.scrollTop = 0;
-                            }}
-                        }});
-                        return;
-                    }}
-                    if (!manager.restoring && Date.now() <= manager.userScrollUntil) manager.remember();
-                }}, {{ passive: true }});
-                manager.boundScroller = scroller;
-            }}
-            if ({reset_requested}) {{
-                manager.restoring = true;
-                manager.emptyResetActive = true;
-                try {{
-                    host.sessionStorage.removeItem(storageKey);
-                }} catch (_) {{
-                    // Empty-state positioning must not depend on storage availability.
-                }}
-                const resetTop = () => scroller.scrollTo({{
-                    top: 0,
-                    left: scroller.scrollLeft,
-                    behavior: "auto",
+            const install = host[installerKey];
+            if (typeof install === "function") {{
+                install({{
+                    restore: {restore_requested},
+                    resetToTop: {reset_requested},
+                    commandId,
                 }});
-                [0, 40, 120, 280, 600, 1000].forEach(
-                    (delay) => host.setTimeout(resetTop, delay)
-                );
-                host.setTimeout(() => {{ manager.restoring = false; }}, 1100);
-                return;
-            }}
-            manager.emptyResetActive = false;
-            let hasSavedPosition = false;
-            try {{
-                hasSavedPosition = host.sessionStorage.getItem(storageKey) !== null;
-            }} catch (_) {{
-                // Storage availability is checked again by manager.remember().
-            }}
-            if (!hasSavedPosition) manager.remember();
-
-            if ({restore_requested}) {{
-                let savedPosition = Number.NaN;
-                try {{
-                    savedPosition = Number(host.sessionStorage.getItem(storageKey));
-                }} catch (_) {{
-                    // Ignore unavailable storage and retain Streamlit's default behavior.
-                }}
-                if (Number.isFinite(savedPosition)) {{
-                    manager.restoring = true;
-                    scroller.dispatchEvent(new WheelEvent("wheel", {{ bubbles: true, deltaY: -1 }}));
-                    const restorePosition = () => {{
-                        scroller.scrollTo({{
-                            top: savedPosition,
-                            left: scroller.scrollLeft,
-                            behavior: "auto",
-                        }});
-                    }};
-                    [0, 40, 120, 280, 600, 1000].forEach((delay) => host.setTimeout(restorePosition, delay));
-                    host.setTimeout(() => {{
-                        manager.restoring = false;
-                        manager.remember();
-                    }}, 1200);
-                }}
             }}
         }})();
         </script>
@@ -2280,6 +2378,10 @@ def main() -> None:
     init_state()
     restore_scroll_position = bool(st.session_state.pop("restore_main_scroll_position", False))
     reset_scroll_position = bool(st.session_state.pop("reset_main_scroll_position", False))
+    scroll_command_id = int(st.session_state.get("scroll_manager_command_id", 0))
+    if restore_scroll_position or reset_scroll_position:
+        scroll_command_id += 1
+        st.session_state.scroll_manager_command_id = scroll_command_id
     active_view = current_product_view()
     uid = _query_value("uid")
     sid = _query_value("sid")
@@ -2310,6 +2412,7 @@ def main() -> None:
         render_scroll_position_manager(
             restore=restore_scroll_position,
             reset_to_top=reset_scroll_position,
+            command_id=scroll_command_id,
         )
         return
 
@@ -2332,6 +2435,7 @@ def main() -> None:
     render_scroll_position_manager(
         restore=restore_scroll_position,
         reset_to_top=reset_scroll_position or not bool(st.session_state.agent_messages),
+        command_id=scroll_command_id,
     )
     prompt = typed_prompt or selected_prompt
     if prompt:
