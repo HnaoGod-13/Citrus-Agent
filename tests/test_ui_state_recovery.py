@@ -171,6 +171,27 @@ class EmptyStateProgressLayoutTests(unittest.TestCase):
         self.assertIn("margin: 16px 0 24px;", progress_rule)
         self.assertIn("flex: 0 0 auto !important;", expansion_rule)
 
+    def test_loading_spinner_keeps_rotating_with_reduced_motion_enabled(self) -> None:
+        stylesheet = Path(app_main.__file__).with_name("ui").joinpath("design_system.css")
+        css = stylesheet.read_text(encoding="utf-8-sig")
+
+        spinner_start = css.index(".agent-live-spinner {")
+        spinner_rule = css[spinner_start : css.index("}", spinner_start) + 1]
+        self.assertIn("animation: citrus-spin 800ms linear infinite;", spinner_rule)
+        self.assertIn("will-change: transform;", spinner_rule)
+
+        reduced_motion_start = css.rindex("@media (prefers-reduced-motion: reduce) {")
+        reduced_motion_rule = css[reduced_motion_start:]
+        global_reduction = "animation-iteration-count: 1 !important;"
+        spinner_override = ".agent-live-spinner {"
+        infinite_animation = "animation: citrus-spin 800ms linear infinite !important;"
+        self.assertIn(global_reduction, reduced_motion_rule)
+        self.assertIn(infinite_animation, reduced_motion_rule)
+        self.assertLess(
+            reduced_motion_rule.index(global_reduction),
+            reduced_motion_rule.index(spinner_override),
+        )
+
     def test_only_the_first_progress_update_requests_reveal(self) -> None:
         source = Path(app_main.__file__).read_text(encoding="utf-8-sig")
         handle_prompt = source[

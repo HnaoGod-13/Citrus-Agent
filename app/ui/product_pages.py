@@ -16,6 +16,7 @@ from dataclasses import dataclass
 import html
 import json
 from pathlib import Path
+import re
 import sqlite3
 from typing import Any, Iterator
 
@@ -125,11 +126,194 @@ def _json_list(value: Any) -> list[Any]:
     return decoded if isinstance(decoded, list) else []
 
 
+def _json_object(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if value in (None, ""):
+        return {}
+    try:
+        decoded = json.loads(str(value))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
+    return decoded if isinstance(decoded, dict) else {}
+
+
 def _compact_text(value: Any, limit: int = 96) -> str:
     text = " ".join(str(value or "").split())
     if len(text) <= limit:
         return text or "—"
     return text[: max(limit - 1, 1)].rstrip() + "…"
+
+
+def _plain_summary(value: Any, limit: int = 120) -> str:
+    """Return the first useful paragraph without Markdown presentation syntax."""
+    raw = html.unescape(str(value or "")).strip()
+    if not raw:
+        return "—"
+
+    raw = re.sub(r"<!--.*?-->", " ", raw, flags=re.DOTALL)
+    raw = re.sub(r"```(?:[^\n]*)\n?(.*?)```", r"\1", raw, flags=re.DOTALL)
+    for paragraph in re.split(r"\n\s*\n", raw):
+        lines = [line.strip() for line in paragraph.splitlines() if line.strip()]
+        if not lines:
+            continue
+        if len(lines) == 1 and re.match(r"^#{1,6}\s+", lines[0]):
+            continue
+
+        cleaned_lines: list[str] = []
+        for line in lines:
+            if re.fullmatch(r"\|?(?:\s*:?-{3,}:?\s*\|)+", line):
+                continue
+            line = re.sub(r"^\s*(?:#{1,6}\s+|[-*+]\s+|\d+[.)]\s+)", "", line)
+            line = re.sub(r"!\[([^\]]*)\]\([^)]*\)", r"\1", line)
+            line = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", line)
+            line = re.sub(r"[*_~`]", "", line)
+            line = line.strip(" |")
+            if line:
+                cleaned_lines.append(line)
+        if cleaned_lines:
+            return _compact_text(" ".join(cleaned_lines), limit)
+    return "—"
+
+
+def _task_summary(value: Any, limit: int = 92) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return "—"
+    concise = re.split(
+        r"请完整运行\s*(?:Agent\s*)?工作流程\s*[:：]?",
+        raw,
+        maxsplit=1,
+        flags=re.IGNORECASE,
+    )[0].rstrip(" ,，。;；:：")
+    return _plain_summary(concise or raw, limit)
+
+
+def _tool_result_summary(tool_calls: Any, tool_name: str) -> str:
+    wanted = tool_name.casefold()
+    for item in _json_list(tool_calls):
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("tool") or item.get("name") or "").casefold()
+        if wanted not in name:
+            continue
+        summary = (
+            item.get("result_summary")
+            or item.get("observation")
+            or item.get("summary")
+        )
+        if str(summary or "").strip():
+            return str(summary).strip()
+    return ""
+
+
+def _workspace_session_row(row: dict[str, Any]) -> dict[str, Any]:
+    question = row.get("last_user_message") or row.get("last_run_input")
+    conclusion = row.get("last_assistant_message") or row.get("last_run_output")
+    turns = int(row.get("user_turn_count") or 0)
+    if str(row.get("last_run_error") or "").strip():
+        progress = "需要重试"
+    elif str(conclusion or "").strip():
+        progress = f"已回复 · {turns} 轮" if turns else "已回复"
+    elif int(row.get("run_count") or 0):
+        progress = "分析中"
+    else:
+        progress = "待回复"
+    return {
+        "主题": _task_summary(question, 72),
+        "最新结论": _plain_summary(conclusion, 116),
+        "进度": progress,
+        "最近时间": _display_time(row.get("activity_at") or row.get("updated_at")),
+    }
+
+
+def _workspace_run_row(row: dict[str, Any]) -> dict[str, Any]:
+    route_result = _tool_result_summary(
+        row.get("tool_calls_json"), "Evidence-aware Route Ranker"
+    )
+    quality_result = _tool_result_summary(row.get("tool_calls_json"), "Quality Gate")
+    error = str(row.get("error") or "").strip()
+    if error:
+        status = "异常"
+    else:
+        risk_match = re.search(r"发现\s*(\d+)\s*个需复核风险项", quality_result)
+        status = "完成 · 待复核" if risk_match and int(risk_match.group(1)) else "完成"
+
+    result = route_result or row.get("final_output") or error
+    literature_count = len(
+        {str(item) for item in _json_list(row.get("retrieved_literature_ids_json")) if item}
+    )
+    return {
+        "分析任务": _task_summary(row.get("original_input"), 82),
+        "主要结果": _plain_summary(result, 116),
+        "状态": status,
+        "证据": f"{literature_count} 篇文献" if literature_count else "暂无文献",
+        "时间": _display_time(row.get("created_at")),
+    }
+
+
+def _format_metric_number(value: Any) -> str:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return str(value or "").strip()
+    return f"{number:,.0f}" if number.is_integer() else f"{number:,.2f}".rstrip("0").rstrip(".")
+
+
+def _sample_metrics_summary(value: Any) -> str:
+    metrics = _json_object(value)
+    fields = (
+        ("weight_kg", "重量", " kg"),
+        ("brix", "糖度", " °Brix"),
+        ("acidity", "酸度", "%"),
+        ("moisture", "水分", "%"),
+    )
+    parts = []
+    for key, label, suffix in fields:
+        if metrics.get(key) in (None, ""):
+            continue
+        formatted = _format_metric_number(metrics[key])
+        if formatted:
+            parts.append(f"{label} {formatted}{suffix}")
+    return " · ".join(parts) or "指标待补"
+
+
+def _sample_direction(row: dict[str, Any]) -> str:
+    solution = str(row.get("solution") or "").strip()
+    direction = re.split(r"[；;\n]", solution, maxsplit=1)[0].strip()
+    if direction:
+        return _plain_summary(direction, 64)
+    return _plain_summary(row.get("processing_goal"), 64)
+
+
+def _sample_quality_status(row: dict[str, Any]) -> str:
+    quality = str(row.get("disease_or_quality") or "").strip()
+    metrics = _json_object(row.get("metrics_json"))
+    blocking_terms = (
+        "不能输出最终放行",
+        "不可放行",
+        "不得进入",
+        "疑似霉变",
+        "腐烂",
+        "高风险",
+    )
+    if any(term in quality for term in blocking_terms):
+        return "暂不可放行"
+    if any(str(value).strip().lower() == "missing" for value in metrics.values()):
+        return "检测待补"
+    return "质量复核" if quality else "检测待补"
+
+
+def _workspace_sample_row(row: dict[str, Any]) -> dict[str, Any]:
+    variety = str(row.get("variety") or "").strip() or "品种待补"
+    origin = str(row.get("origin") or "").strip() or "产地待补"
+    return {
+        "批次概况": _compact_text(f"{variety} · {origin}", 56),
+        "关键指标": _sample_metrics_summary(row.get("metrics_json")),
+        "建议方向": _sample_direction(row),
+        "质控状态": _sample_quality_status(row),
+        "更新时间": _display_time(row.get("updated_at")),
+    }
 
 
 def _display_time(value: Any) -> str:
@@ -217,11 +401,42 @@ def _load_workspace(path: Path, scope: _Scope) -> dict[str, Any]:
                     ) AS runs,
                     (
                         SELECT COUNT(*)
+                        FROM agent_runs
+                        WHERE user_id = ? AND project_id = ?
+                          AND TRIM(COALESCE(error, '')) = ''
+                    ) AS completed_runs,
+                    (
+                        SELECT COUNT(*)
+                        FROM agent_runs
+                        WHERE user_id = ? AND project_id = ?
+                          AND TRIM(COALESCE(error, '')) <> ''
+                    ) AS failed_runs,
+                    (
+                        SELECT COUNT(*)
                         FROM citrus_samples
                         WHERE user_id = ? AND project_id = ? AND status = 'active'
-                    ) AS samples
+                    ) AS samples,
+                    (
+                        SELECT COUNT(*)
+                        FROM citrus_samples
+                        WHERE user_id = ? AND project_id = ? AND status = 'active'
+                          AND (
+                              TRIM(COALESCE(disease_or_quality, '')) = ''
+                              OR disease_or_quality LIKE '%复核%'
+                              OR disease_or_quality LIKE '%风险%'
+                              OR disease_or_quality LIKE '%缺少%'
+                              OR disease_or_quality LIKE '%霉变%'
+                              OR metrics_json LIKE '%"missing"%'
+                          )
+                    ) AS review_samples
                 """,
                 (
+                    scope.user_id,
+                    scope.project_id,
+                    scope.user_id,
+                    scope.project_id,
+                    scope.user_id,
+                    scope.project_id,
                     scope.user_id,
                     scope.project_id,
                     scope.user_id,
@@ -240,26 +455,38 @@ def _load_workspace(path: Path, scope: _Scope) -> dict[str, Any]:
             connection.execute(
                 """
                 WITH scoped_messages AS (
-                    SELECT id, session_id, content, created_at
+                    SELECT id, session_id, role, content, created_at
                     FROM conversation_messages
                     WHERE user_id = ? AND project_id = ?
                       AND role IN ('user', 'assistant')
                 ),
                 message_summary AS (
                     SELECT session_id, COUNT(*) AS message_count,
-                           MAX(id) AS last_message_id,
+                           SUM(CASE WHEN role = 'user' THEN 1 ELSE 0 END) AS user_turn_count,
+                           MAX(CASE WHEN role = 'user' THEN id END) AS last_user_message_id,
+                           MAX(CASE WHEN role = 'assistant' THEN id END) AS last_assistant_message_id,
                            MAX(created_at) AS last_message_at
                     FROM scoped_messages
                     GROUP BY session_id
                 ),
-                last_messages AS (
+                last_user_messages AS (
                     SELECT message_summary.session_id, scoped_messages.content
                     FROM message_summary
                     JOIN scoped_messages
-                      ON scoped_messages.id = message_summary.last_message_id
+                      ON scoped_messages.id = message_summary.last_user_message_id
+                ),
+                last_assistant_messages AS (
+                    SELECT message_summary.session_id, scoped_messages.content
+                    FROM message_summary
+                    JOIN scoped_messages
+                      ON scoped_messages.id = message_summary.last_assistant_message_id
                 ),
                 scoped_runs AS (
-                    SELECT session_id, created_at
+                    SELECT session_id, original_input, final_output, error, created_at,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY session_id
+                               ORDER BY created_at DESC, run_id DESC
+                           ) AS recency_rank
                     FROM agent_runs
                     WHERE user_id = ? AND project_id = ?
                 ),
@@ -268,11 +495,21 @@ def _load_workspace(path: Path, scope: _Scope) -> dict[str, Any]:
                            MAX(created_at) AS last_run_at
                     FROM scoped_runs
                     GROUP BY session_id
+                ),
+                last_runs AS (
+                    SELECT session_id, original_input, final_output, error
+                    FROM scoped_runs
+                    WHERE recency_rank = 1
                 )
                 SELECT s.session_id, s.status, s.created_at, s.updated_at,
                        COALESCE(message_summary.message_count, 0) AS message_count,
+                       COALESCE(message_summary.user_turn_count, 0) AS user_turn_count,
                        COALESCE(run_summary.run_count, 0) AS run_count,
-                       last_messages.content AS last_message,
+                       last_user_messages.content AS last_user_message,
+                       last_assistant_messages.content AS last_assistant_message,
+                       last_runs.original_input AS last_run_input,
+                       last_runs.final_output AS last_run_output,
+                       last_runs.error AS last_run_error,
                        MAX(
                            COALESCE(s.updated_at, ''),
                            COALESCE(message_summary.last_message_at, ''),
@@ -280,8 +517,10 @@ def _load_workspace(path: Path, scope: _Scope) -> dict[str, Any]:
                        ) AS activity_at
                 FROM sessions s
                 LEFT JOIN message_summary ON message_summary.session_id = s.session_id
-                LEFT JOIN last_messages ON last_messages.session_id = s.session_id
+                LEFT JOIN last_user_messages ON last_user_messages.session_id = s.session_id
+                LEFT JOIN last_assistant_messages ON last_assistant_messages.session_id = s.session_id
                 LEFT JOIN run_summary ON run_summary.session_id = s.session_id
+                LEFT JOIN last_runs ON last_runs.session_id = s.session_id
                 WHERE s.user_id = ? AND s.project_id = ?
                   AND (
                       COALESCE(message_summary.message_count, 0) > 0
@@ -305,8 +544,8 @@ def _load_workspace(path: Path, scope: _Scope) -> dict[str, Any]:
         runs = _row_dicts(
             connection.execute(
                 """
-                SELECT run_id, session_id, original_input, model_name,
-                       tool_calls_json, error, created_at
+                SELECT run_id, session_id, original_input, tool_calls_json,
+                       retrieved_literature_ids_json, final_output, error, created_at
                 FROM agent_runs
                 WHERE user_id = ? AND project_id = ?
                 ORDER BY created_at DESC
@@ -320,7 +559,7 @@ def _load_workspace(path: Path, scope: _Scope) -> dict[str, Any]:
             connection.execute(
                 """
                 SELECT sample_id, session_id, variety, origin, processing_goal,
-                       outcome, confidence, status, updated_at
+                       metrics_json, solution, disease_or_quality, status, updated_at
                 FROM citrus_samples
                 WHERE user_id = ? AND project_id = ? AND status = 'active'
                 ORDER BY updated_at DESC
@@ -353,58 +592,22 @@ def render_workspace_page() -> None:
 
     counts = data["counts"]
     metric_columns = st.columns(4)
-    metric_columns[0].metric("有内容会话", int(counts.get("sessions") or 0))
-    metric_columns[1].metric("对话消息", int(counts.get("messages") or 0))
-    metric_columns[2].metric("分析运行", int(counts.get("runs") or 0))
-    metric_columns[3].metric("批次样本", int(counts.get("samples") or 0))
+    metric_columns[0].metric("近期会话", int(counts.get("sessions") or 0))
+    metric_columns[1].metric("已完成分析", int(counts.get("completed_runs") or 0))
+    metric_columns[2].metric("待复核批次", int(counts.get("review_samples") or 0))
+    metric_columns[3].metric("异常运行", int(counts.get("failed_runs") or 0))
 
     sessions_tab, runs_tab, samples_tab = st.tabs(["最近会话", "分析运行", "批次样本"])
     with sessions_tab:
-        session_rows = [
-            {
-                "会话": _short_id(row.get("session_id")),
-                "状态": "活跃" if row.get("status") == "active" else _compact_text(row.get("status"), 24),
-                "消息": int(row.get("message_count") or 0),
-                "分析": int(row.get("run_count") or 0),
-                "最近内容": _compact_text(row.get("last_message"), 88),
-                "更新时间": _display_time(row.get("activity_at") or row.get("updated_at")),
-            }
-            for row in data["sessions"]
-        ]
+        session_rows = [_workspace_session_row(row) for row in data["sessions"]]
         _render_table(session_rows, "当前账户还没有有内容的会话。")
 
     with runs_tab:
-        run_rows = []
-        for row in data["runs"]:
-            tool_count = len(_json_list(row.get("tool_calls_json")))
-            run_rows.append(
-                {
-                    "运行": _short_id(row.get("run_id")),
-                    "任务": _compact_text(row.get("original_input"), 92),
-                    "模型": _compact_text(row.get("model_name"), 36),
-                    "工具调用": tool_count,
-                    "结果": "异常" if str(row.get("error") or "").strip() else "完成",
-                    "时间": _display_time(row.get("created_at")),
-                }
-            )
+        run_rows = [_workspace_run_row(row) for row in data["runs"]]
         _render_table(run_rows, "当前账户还没有分析运行记录。")
 
     with samples_tab:
-        sample_rows = [
-            {
-                "样本": _short_id(row.get("sample_id")),
-                "品种": _compact_text(row.get("variety"), 28),
-                "产地": _compact_text(row.get("origin"), 28),
-                "加工目标": _compact_text(row.get("processing_goal"), 82),
-                "可信度": (
-                    f"{float(row['confidence']) * 100:.0f}%"
-                    if row.get("confidence") is not None
-                    else "—"
-                ),
-                "更新时间": _display_time(row.get("updated_at")),
-            }
-            for row in data["samples"]
-        ]
+        sample_rows = [_workspace_sample_row(row) for row in data["samples"]]
         _render_table(sample_rows, "当前账户还没有保存的批次样本。")
 
 

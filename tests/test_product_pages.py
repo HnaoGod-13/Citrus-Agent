@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import sqlite3
 import tempfile
@@ -39,6 +40,7 @@ CREATE TABLE agent_runs (
     model_name TEXT,
     tool_calls_json TEXT NOT NULL DEFAULT '[]',
     retrieved_literature_ids_json TEXT NOT NULL DEFAULT '[]',
+    final_output TEXT,
     error TEXT,
     created_at TEXT NOT NULL
 );
@@ -49,7 +51,10 @@ CREATE TABLE citrus_samples (
     project_id TEXT NOT NULL,
     variety TEXT,
     origin TEXT,
+    disease_or_quality TEXT,
     processing_goal TEXT,
+    metrics_json TEXT NOT NULL DEFAULT '{}',
+    solution TEXT,
     outcome TEXT,
     confidence REAL,
     status TEXT NOT NULL,
@@ -127,39 +132,114 @@ class ProductPageTests(unittest.TestCase):
                         session_id,
                         project_id,
                         "user",
-                        f"private message for {suffix}",
+                        (
+                            "分析广西沃柑的加工方向，请完整运行Agent工作流程："
+                            "检索文献、评估路线和质控风险。"
+                            if suffix == "alpha"
+                            else f"private message for {suffix}"
+                        ),
                         timestamp,
                     ),
                 )
                 connection.execute(
                     """
-                    INSERT INTO agent_runs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO conversation_messages(
+                        message_id, user_id, session_id, project_id,
+                        role, content, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        f"answer_{suffix}",
+                        user_id,
+                        session_id,
+                        project_id,
+                        "assistant",
+                        (
+                            "### 综合结论\n\n"
+                            "当前优先方向是 **果肉-柑橘汁/NFC**。"
+                            if suffix == "alpha"
+                            else f"private answer for {suffix}"
+                        ),
+                        timestamp,
+                    ),
+                )
+                tool_calls = [
+                    {
+                        "tool": "Evidence-aware Route Ranker",
+                        "status": "完成",
+                        "result_summary": (
+                            "当前优先方向是 果肉-柑橘汁/NFC（条件性备选）。"
+                            if suffix == "alpha"
+                            else f"private route for {suffix}"
+                        ),
+                    },
+                    {
+                        "tool": "Quality Gate",
+                        "status": "完成",
+                        "result_summary": "发现 2 个需复核风险项。",
+                    },
+                ]
+                connection.execute(
+                    """
+                    INSERT INTO agent_runs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         f"run_{suffix}",
                         user_id,
                         session_id,
                         project_id,
-                        f"private task for {suffix}",
+                        (
+                            "分析广西沃柑的加工方向，请完整运行Agent工作流程："
+                            "检索文献、评估路线和质控风险。"
+                            if suffix == "alpha"
+                            else f"private task for {suffix}"
+                        ),
                         "fixture-model",
-                        '[{"tool": "fixture"}]',
+                        json.dumps(tool_calls, ensure_ascii=False),
                         f'["literature_{suffix}"]',
+                        (
+                            "### 综合结论\n\n"
+                            "当前优先方向是 **果肉-柑橘汁/NFC**。"
+                            if suffix == "alpha"
+                            else f"private result for {suffix}"
+                        ),
                         "",
                         timestamp,
                     ),
                 )
                 connection.execute(
                     """
-                    INSERT INTO citrus_samples VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO citrus_samples VALUES (
+                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    )
                     """,
                     (
                         f"sample_{suffix}",
                         session_id,
                         user_id,
                         project_id,
-                        f"variety_{suffix}",
-                        f"origin_{suffix}",
+                        "沃柑" if suffix == "alpha" else f"variety_{suffix}",
+                        "广西" if suffix == "alpha" else f"origin_{suffix}",
+                        (
+                            "缺少微生物检测，不能输出最终放行结论。"
+                            if suffix == "alpha"
+                            else f"private quality for {suffix}"
+                        ),
                         f"goal_{suffix}",
+                        json.dumps(
+                            {
+                                "weight_kg": 1500,
+                                "brix": 13.0,
+                                "acidity": 0.6,
+                                "microbe_status": "missing",
+                            },
+                            ensure_ascii=False,
+                        ),
+                        (
+                            "果肉-柑橘汁/NFC；待小试和企业 SOP 复核。"
+                            if suffix == "alpha"
+                            else f"private solution for {suffix}"
+                        ),
                         f"outcome_{suffix}",
                         0.75,
                         "active",
@@ -292,7 +372,15 @@ assert product_pages.render_product_page({view!r}) is True
         storage = product_pages._scoped_storage_counts(self.memory_db, scope)
 
         self.assertEqual(
-            {"sessions": 1, "messages": 1, "runs": 1, "samples": 1},
+            {
+                "sessions": 1,
+                "messages": 2,
+                "runs": 1,
+                "completed_runs": 1,
+                "failed_runs": 0,
+                "samples": 1,
+                "review_samples": 1,
+            },
             workspace["counts"],
         )
         self.assertEqual(["run_alpha"], [row["run_id"] for row in workspace["runs"]])
@@ -307,7 +395,7 @@ assert product_pages.render_product_page({view!r}) is True
             [row["run_id"] for row in analytics["recent_runs"]],
         )
         self.assertEqual(
-            {"sessions": 1, "messages": 1, "runs": 1, "memories": 1, "samples": 1},
+            {"sessions": 1, "messages": 2, "runs": 1, "memories": 1, "samples": 1},
             storage,
         )
 
@@ -315,6 +403,69 @@ assert product_pages.render_product_page({view!r}) is True
         self.assertNotIn("private message for beta", serialized)
         self.assertNotIn("private task for beta", serialized)
         self.assertNotIn("other_project", serialized)
+
+    def test_workspace_rows_show_business_information_only(self) -> None:
+        workspace = product_pages._load_workspace(
+            self.memory_db,
+            product_pages._Scope("user_alpha", "project_one"),
+        )
+
+        self.assertEqual(
+            {
+                "主题": "分析广西沃柑的加工方向",
+                "最新结论": "当前优先方向是 果肉-柑橘汁/NFC。",
+                "进度": "已回复 · 1 轮",
+                "最近时间": "2026-08-01 10:00",
+            },
+            product_pages._workspace_session_row(workspace["sessions"][0]),
+        )
+        self.assertEqual(
+            {
+                "分析任务": "分析广西沃柑的加工方向",
+                "主要结果": "当前优先方向是 果肉-柑橘汁/NFC（条件性备选）。",
+                "状态": "完成 · 待复核",
+                "证据": "1 篇文献",
+                "时间": "2026-08-01 10:00",
+            },
+            product_pages._workspace_run_row(workspace["runs"][0]),
+        )
+        self.assertEqual(
+            {
+                "批次概况": "沃柑 · 广西",
+                "关键指标": "重量 1,500 kg · 糖度 13 °Brix · 酸度 0.6%",
+                "建议方向": "果肉-柑橘汁/NFC",
+                "质控状态": "暂不可放行",
+                "更新时间": "2026-08-01 10:00",
+            },
+            product_pages._workspace_sample_row(workspace["samples"][0]),
+        )
+
+    def test_workspace_page_hides_internal_identifiers_and_tool_metadata(self) -> None:
+        app = self._render_page("workspace")
+        rendered = "\n".join(element.value for element in app.markdown)
+
+        for heading in (
+            "主题",
+            "最新结论",
+            "分析任务",
+            "主要结果",
+            "批次概况",
+            "关键指标",
+            "建议方向",
+            "质控状态",
+        ):
+            self.assertIn(heading, rendered)
+        for internal_value in (
+            "session_alpha",
+            "run_alpha",
+            "sample_alpha",
+            "fixture-model",
+            "Evidence-aware Route Ranker",
+            "Quality Gate",
+            "工具调用",
+            "可信度",
+        ):
+            self.assertNotIn(internal_value, rendered)
 
     def test_sql_injection_shaped_scope_values_do_not_expand_results(self) -> None:
         malicious_scopes = [
@@ -328,7 +479,15 @@ assert product_pages.render_product_page({view!r}) is True
                 storage = product_pages._scoped_storage_counts(self.memory_db, scope)
 
                 self.assertEqual(
-                    {"sessions": 0, "messages": 0, "runs": 0, "samples": 0},
+                    {
+                        "sessions": 0,
+                        "messages": 0,
+                        "runs": 0,
+                        "completed_runs": 0,
+                        "failed_runs": 0,
+                        "samples": 0,
+                        "review_samples": 0,
+                    },
                     workspace["counts"],
                 )
                 self.assertEqual([], workspace["sessions"])

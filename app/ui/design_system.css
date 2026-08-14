@@ -2022,6 +2022,7 @@ div[data-testid="stDataFrame"] * {
     border-top-color: var(--text-primary);
     border-radius: var(--radius-round);
     animation: citrus-spin 800ms linear infinite;
+    will-change: transform;
 }
 
 .agent-live-title {
@@ -2961,5 +2962,9 @@ div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label)
         animation-duration: 0.01ms !important;
         animation-iteration-count: 1 !important;
         transition-duration: 0.01ms !important;
+    }
+
+    .agent-live-spinner {
+        animation: citrus-spin 800ms linear infinite !important;
     }
 }
