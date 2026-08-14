@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import html
+import importlib
 import json
 import os
 import re
@@ -31,7 +32,14 @@ from agent import (
     workflow,
 )
 from app.ui import components as ui_components
-from app.ui.product_pages import render_product_page
+from app.ui import product_pages as ui_product_pages
+
+
+def refresh_ui_modules() -> None:
+    """Refresh lightweight UI code after a Streamlit Cloud hot deployment."""
+    importlib.invalidate_caches()
+    importlib.reload(ui_components)
+    importlib.reload(ui_product_pages)
 
 DEEPSEEK_MODEL = llm_client.DEEPSEEK_MODEL
 DeepSeekAPIError = llm_client.DeepSeekAPIError
@@ -2612,6 +2620,7 @@ def main() -> None:
         layout="wide",
         initial_sidebar_state="expanded",
     )
+    refresh_ui_modules()
     inject_style()
     init_state()
     active_view = current_product_view()
@@ -2647,7 +2656,7 @@ def main() -> None:
 
     if active_view != "chat":
         with st.container(key="product_page_shell"):
-            render_product_page(active_view)
+            ui_product_pages.render_product_page(active_view)
         render_scroll_position_manager(
             restore=restore_scroll_position,
             reset_to_top=reset_scroll_position,

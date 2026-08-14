@@ -7,7 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 import tempfile
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 
 from app import main as app_main
 
@@ -325,11 +325,26 @@ class ProductRouteStateTests(unittest.TestCase):
             "citrus-agent",
         )
 
-    def test_production_path_does_not_reload_agent_modules(self) -> None:
+    def test_production_path_only_reloads_lightweight_ui_modules(self) -> None:
         source = Path(app_main.__file__).read_text(encoding="utf-8-sig")
 
-        self.assertNotIn("import importlib", source)
-        self.assertNotIn("importlib.reload", source)
+        with (
+            patch.object(app_main.importlib, "invalidate_caches") as invalidate_caches,
+            patch.object(
+                app_main.importlib,
+                "reload",
+                side_effect=lambda module: module,
+            ) as reload_module,
+        ):
+            app_main.refresh_ui_modules()
+
+        invalidate_caches.assert_called_once_with()
+        self.assertEqual(
+            [call(app_main.ui_components), call(app_main.ui_product_pages)],
+            reload_module.call_args_list,
+        )
+        self.assertNotIn("from app.ui.product_pages import render_product_page", source)
+        self.assertIn("ui_product_pages.render_product_page(active_view)", source)
         self.assertIn("live_orchestrator = orchestrator", source)
 
     def test_browser_history_sync_reloads_after_popstate(self) -> None:
