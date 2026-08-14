@@ -1165,6 +1165,12 @@ section[data-testid="stAppScrollToBottomContainer"]:has([class*="st-key-empty_st
     z-index: 2;
 }
 
+[class*="st-key-task_card_shell_"] > [data-testid="stElementContainer"]:has(
+    div[data-testid="stButton"]
+) {
+    position: static !important;
+}
+
 [class*="st-key-task_card_shell_"] div[data-testid="stButton"] > button {
     width: 100%;
     height: 100%;
@@ -1256,7 +1262,7 @@ section[data-testid="stBottom"],
 [data-testid="stChatInput"] input {
     min-height: 88px !important;
     box-sizing: border-box !important;
-    padding: 24px 78px 22px 68px !important;
+    padding: 32px 78px 14px 68px !important;
     color: var(--text-primary) !important;
     background: var(--surface) !important;
     border: 1px solid var(--border) !important;
@@ -2903,7 +2909,7 @@ div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label)
     [data-testid="stChatInput"] textarea,
     [data-testid="stChatInput"] input {
         min-height: 76px !important;
-        padding: 15px 60px 14px 52px !important;
+        padding: 28px 60px 1px 52px !important;
         font-size: 13px !important;
         line-height: 1.45 !important;
     }
