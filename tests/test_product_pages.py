@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import date
 from pathlib import Path
 import sqlite3
 import tempfile
@@ -470,6 +471,65 @@ assert product_pages.render_product_page({view!r}) is True
             [row["day"] for row in analytics["daily"]],
         )
 
+    def test_run_trend_fills_calendar_days_and_compares_equal_windows(self) -> None:
+        trend = product_pages._build_run_trend(
+            [
+                {
+                    "day": "2026-07-31",
+                    "runs": 2,
+                    "successful_runs": 1,
+                    "failed_runs": 1,
+                },
+                {
+                    "day": "2026-08-01",
+                    "runs": 3,
+                    "successful_runs": 2,
+                    "failed_runs": 1,
+                },
+                {
+                    "day": "2026-08-14",
+                    "runs": 1,
+                    "successful_runs": 1,
+                    "failed_runs": 0,
+                },
+                {"day": "invalid", "runs": 99},
+            ],
+            today=date(2026, 8, 14),
+        )
+
+        self.assertEqual(14, len(trend["days"]))
+        self.assertEqual(date(2026, 8, 1), trend["days"][0]["day"])
+        self.assertEqual(date(2026, 8, 14), trend["days"][-1]["day"])
+        self.assertEqual(4, trend["current_runs"])
+        self.assertEqual(2, trend["previous_runs"])
+        self.assertEqual("较前 14 天 +100%", trend["comparison"])
+        self.assertEqual(2, trend["active_days"])
+        self.assertEqual(1, trend["failed_runs"])
+        self.assertEqual("75%", trend["completion_rate"])
+        self.assertEqual("8月1日 · 3 次", trend["peak_label"])
+        self.assertEqual("今天", trend["latest_activity_label"])
+        self.assertEqual(0, trend["days"][1]["runs"])
+
+    def test_run_trend_distinguishes_no_history_from_recent_inactivity(self) -> None:
+        empty = product_pages._build_run_trend([], today=date(2026, 8, 14))
+        inactive = product_pages._build_run_trend(
+            [
+                {
+                    "day": "2026-07-01",
+                    "runs": 1,
+                    "successful_runs": 1,
+                    "failed_runs": 0,
+                }
+            ],
+            today=date(2026, 8, 14),
+        )
+
+        self.assertFalse(empty["has_history"])
+        self.assertTrue(inactive["has_history"])
+        self.assertEqual(0, inactive["current_runs"])
+        self.assertEqual("近 14 天暂无运行", inactive["comparison"])
+        self.assertEqual("7月1日", inactive["latest_activity_label"])
+
     def test_pending_follow_up_does_not_reuse_previous_answer(self) -> None:
         connection = sqlite3.connect(self.memory_db)
         try:
@@ -674,9 +734,15 @@ assert product_pages.render_product_page({view!r}) is True
     def test_analytics_uses_evidence_language_instead_of_document_counts(self) -> None:
         app = self._render_page("analytics")
         rendered = "\n".join(element.value for element in app.markdown)
+        self.assertIn("analytics-trend-panel", rendered)
+        self.assertIn("活跃天数", rendered)
+        self.assertIn("近 14 天完成率", rendered)
         self.assertIn("证据", rendered)
         self.assertIn("1 条证据", rendered)
         self.assertNotIn("<th scope=\"col\">文献</th>", rendered)
+
+        source = Path(product_pages.__file__).read_text(encoding="utf-8")
+        self.assertNotIn("st.bar_chart", source)
 
     def test_workspace_rows_show_business_information_only(self) -> None:
         workspace = product_pages._load_workspace(

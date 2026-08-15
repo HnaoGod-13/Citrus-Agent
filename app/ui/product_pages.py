@@ -13,7 +13,7 @@ from __future__ import annotations
 from collections import Counter
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 import html
 import json
 from pathlib import Path
@@ -21,7 +21,6 @@ import re
 import sqlite3
 from typing import Any, Iterator
 
-import pandas as pd
 import streamlit as st
 
 from app.ui import components as ui_components
@@ -36,7 +35,7 @@ KNOWLEDGE_LIMIT = 200
 KNOWLEDGE_PAGE_SIZE = 30
 ANALYTICS_RECENT_LIMIT = 24
 ANALYTICS_DAY_LIMIT = 30
-CHART_COLOR = "#737373"
+ANALYTICS_TREND_DAYS = 14
 BEIJING_TIMEZONE = timezone(timedelta(hours=8))
 SAMPLE_REVIEW_STATUSES = frozenset({"暂不可放行", "检测待补", "质量复核"})
 DIRECT_CITRUS_TITLE_MARKERS = (
@@ -1103,12 +1102,221 @@ def _load_analytics(path: Path, scope: _Scope) -> dict[str, Any]:
     }
 
 
-def _render_native_bar_chart(frame: pd.DataFrame) -> None:
+def _analytics_day(value: Any) -> date | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
     try:
-        st.bar_chart(frame, color=CHART_COLOR, height=260)
-    except TypeError:
-        # Compatibility with older supported Streamlit versions.
-        st.bar_chart(frame, height=260)
+        return date.fromisoformat(text[:10])
+    except ValueError:
+        return None
+
+
+def _trend_activity_label(activity_day: date | None, today: date) -> str:
+    if activity_day is None:
+        return "—"
+    days_ago = (today - activity_day).days
+    if days_ago == 0:
+        return "今天"
+    if days_ago == 1:
+        return "昨天"
+    if 1 < days_ago < 7:
+        return f"{days_ago} 天前"
+    return f"{activity_day.month}月{activity_day.day}日"
+
+
+def _build_run_trend(
+    daily_rows: list[dict[str, Any]],
+    *,
+    today: date | None = None,
+) -> dict[str, Any]:
+    reference_day = today or datetime.now(BEIJING_TIMEZONE).date()
+    by_day: dict[date, dict[str, int]] = {}
+    for row in daily_rows:
+        row_day = _analytics_day(row.get("day"))
+        if row_day is None:
+            continue
+        bucket = by_day.setdefault(
+            row_day,
+            {"runs": 0, "successful_runs": 0, "failed_runs": 0},
+        )
+        runs = max(int(row.get("runs") or 0), 0)
+        failed_runs = max(int(row.get("failed_runs") or 0), 0)
+        successful_runs = max(
+            int(row.get("successful_runs") or max(runs - failed_runs, 0)),
+            0,
+        )
+        bucket["runs"] += runs
+        bucket["successful_runs"] += successful_runs
+        bucket["failed_runs"] += failed_runs
+
+    current_start = reference_day - timedelta(days=ANALYTICS_TREND_DAYS - 1)
+    previous_start = current_start - timedelta(days=ANALYTICS_TREND_DAYS)
+    previous_end = current_start - timedelta(days=1)
+    days: list[dict[str, Any]] = []
+    for offset in range(ANALYTICS_TREND_DAYS):
+        row_day = current_start + timedelta(days=offset)
+        counts = by_day.get(
+            row_day,
+            {"runs": 0, "successful_runs": 0, "failed_runs": 0},
+        )
+        days.append({"day": row_day, **counts})
+
+    current_runs = sum(item["runs"] for item in days)
+    current_successful = sum(item["successful_runs"] for item in days)
+    current_failed = sum(item["failed_runs"] for item in days)
+    previous_runs = sum(
+        counts["runs"]
+        for row_day, counts in by_day.items()
+        if previous_start <= row_day <= previous_end
+    )
+
+    if current_runs == previous_runs:
+        comparison = "与前 14 天持平" if current_runs else "近 14 天暂无运行"
+    elif previous_runs == 0:
+        comparison = f"本周期新增 {current_runs} 次"
+    else:
+        change = round((current_runs - previous_runs) / previous_runs * 100)
+        comparison = f"较前 14 天 {change:+d}%"
+
+    active_days = [item for item in days if item["runs"] > 0]
+    peak = max(active_days, key=lambda item: (item["runs"], item["day"]), default=None)
+    peak_label = (
+        f"{peak['day'].month}月{peak['day'].day}日 · {peak['runs']} 次"
+        if peak
+        else "—"
+    )
+    completion_rate = (
+        f"{current_successful / current_runs * 100:.0f}%" if current_runs else "—"
+    )
+    max_runs = max((item["runs"] for item in days), default=0)
+    latest_activity = max(by_day, default=None)
+
+    return {
+        "days": days,
+        "period_label": (
+            f"{current_start.month}月{current_start.day}日"
+            f"至{reference_day.month}月{reference_day.day}日"
+        ),
+        "current_runs": current_runs,
+        "previous_runs": previous_runs,
+        "comparison": comparison,
+        "active_days": len(active_days),
+        "successful_runs": current_successful,
+        "failed_runs": current_failed,
+        "completion_rate": completion_rate,
+        "peak_label": peak_label,
+        "latest_activity_label": _trend_activity_label(latest_activity, reference_day),
+        "max_runs": max_runs,
+        "has_history": bool(by_day),
+    }
+
+
+def _render_run_trend(daily_rows: list[dict[str, Any]]) -> None:
+    trend = _build_run_trend(daily_rows)
+    if not trend["has_history"]:
+        st.markdown(
+            """
+            <section class="analytics-trend-empty" aria-label="运行趋势空状态">
+                <strong>暂无运行记录</strong>
+                <span>当前账户还没有可汇总的分析运行。</span>
+            </section>
+            """,
+            unsafe_allow_html=True,
+        )
+        return
+
+    major_labels = {0, 3, 6, 9, ANALYTICS_TREND_DAYS - 1}
+    bar_columns: list[str] = []
+    max_runs = max(int(trend["max_runs"]), 1)
+    for index, item in enumerate(trend["days"]):
+        runs = int(item["runs"])
+        successful_runs = int(item["successful_runs"])
+        failed_runs = int(item["failed_runs"])
+        bar_height = max(runs / max_runs * 88, 5) if runs else 0
+        successful_share = successful_runs / runs * 100 if runs else 0
+        failed_share = failed_runs / runs * 100 if runs else 0
+        row_day: date = item["day"]
+        axis_label = f"{row_day.month}/{row_day.day}"
+        visible_label = (
+            axis_label
+            if index in major_labels or (runs and trend["active_days"] <= 4)
+            else ""
+        )
+        aria_label = (
+            f"{row_day.month}月{row_day.day}日，{runs} 次运行，"
+            f"{successful_runs} 次完成，{failed_runs} 次异常"
+        )
+        bar_columns.append(
+            f'<div class="analytics-trend-day">'
+            f'<div class="analytics-trend-bar-zone" '
+            f'title="{html.escape(aria_label, quote=True)}">'
+            f'<span class="analytics-trend-bar{" is-empty" if not runs else ""}" '
+            f'role="img" aria-label="{html.escape(aria_label, quote=True)}" '
+            f'style="--bar-height:{bar_height:.2f}%;'
+            f'--success-share:{successful_share:.2f}%;'
+            f'--failed-share:{failed_share:.2f}%">'
+            '<span class="analytics-trend-success"></span>'
+            '<span class="analytics-trend-failed"></span>'
+            '</span></div>'
+            f'<span class="analytics-trend-axis-label">'
+            f'<span class="analytics-trend-axis-desktop">'
+            f'{html.escape(visible_label)}</span>'
+            f'<span class="analytics-trend-axis-mobile">'
+            f'{row_day.day if visible_label else ""}</span>'
+            '</span></div>'
+        )
+
+    completion_note = (
+        f"{trend['failed_runs']} 次异常"
+        if trend["failed_runs"]
+        else f"{trend['successful_runs']} 次完成"
+    )
+    st.markdown(
+        f"""
+        <section class="analytics-trend-panel" aria-label="近十四天运行趋势">
+            <header class="analytics-trend-header">
+                <div>
+                    <div class="analytics-trend-period">近 14 天 · {html.escape(trend['period_label'])}</div>
+                    <div class="analytics-trend-total">
+                        <strong>{trend['current_runs']}</strong><span>次运行</span>
+                    </div>
+                    <div class="analytics-trend-compare">{html.escape(trend['comparison'])}</div>
+                </div>
+                <div class="analytics-trend-legend" aria-label="图例">
+                    <span><i class="is-success"></i>完成</span>
+                    <span><i class="is-failed"></i>异常</span>
+                </div>
+            </header>
+            <div class="analytics-trend-plot">
+                <span class="analytics-trend-grid-line is-top" aria-hidden="true"></span>
+                <span class="analytics-trend-grid-line is-middle" aria-hidden="true"></span>
+                <div class="analytics-trend-bars">
+                    {''.join(bar_columns)}
+                </div>
+            </div>
+            <dl class="analytics-trend-stats">
+                <div>
+                    <dt>活跃天数</dt>
+                    <dd>{trend['active_days']}<small> / 14 天</small></dd>
+                </div>
+                <div>
+                    <dt>近 14 天完成率</dt>
+                    <dd>{html.escape(trend['completion_rate'])}<small>{html.escape(completion_note)}</small></dd>
+                </div>
+                <div>
+                    <dt>峰值日</dt>
+                    <dd>{html.escape(trend['peak_label'])}</dd>
+                </div>
+                <div>
+                    <dt>最近运行</dt>
+                    <dd>{html.escape(trend['latest_activity_label'])}</dd>
+                </div>
+            </dl>
+        </section>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def render_analytics_page() -> None:
@@ -1141,19 +1349,7 @@ def render_analytics_page() -> None:
     metric_columns[3].metric("批次样本", int(counts.get("samples") or 0))
 
     st.subheader("运行趋势")
-    if data["daily"]:
-        daily_frame = pd.DataFrame(
-            [
-                {
-                    "日期": row.get("day") or "未知",
-                    "运行次数": int(row.get("runs") or 0),
-                }
-                for row in data["daily"]
-            ]
-        ).set_index("日期")
-        _render_native_bar_chart(daily_frame)
-    else:
-        st.info("当前账户还没有可绘制的分析运行记录。")
+    _render_run_trend(data["daily"])
 
     st.subheader("模型使用")
     model_rows = [
