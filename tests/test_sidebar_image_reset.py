@@ -52,7 +52,7 @@ class SidebarImageResetTests(unittest.TestCase):
         new_chat_index = next(
             index
             for index, button in enumerate(app.button)
-            if button.label == "＋ 新建对话"
+            if button.label == "新建对话\nNew Chat"
         )
 
         app.button[new_chat_index].click().run()

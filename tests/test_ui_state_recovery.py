@@ -70,7 +70,7 @@ class ScrollPositionManagerTests(unittest.TestCase):
         self.assertIn("const commandId = 7;", bootstrap)
         self.assertIn("commandId,", bootstrap)
 
-        self.assertIn("version: 4", installer)
+        self.assertIn("version: 6", installer)
         self.assertIn("window[installerKey] = install;", installer)
         self.assertIn(
             "savedPosition = Number(window.sessionStorage.getItem(storageKey));",
@@ -101,6 +101,14 @@ class ScrollPositionManagerTests(unittest.TestCase):
             )
         self.assertIn(
             'scroller.addEventListener("scroll", manager.handleScroll',
+            installer,
+        )
+        self.assertIn('target.closest(".citrus-primary-rail")', installer)
+        self.assertIn('target.closest(\'[data-testid="stSidebar"]\')', installer)
+        self.assertIn("event.clientX <= primaryRailWidth", installer)
+        self.assertIn("if (canMoveDown || canMoveUp) return;", installer)
+        self.assertIn(
+            'doc.addEventListener("wheel", manager.handleRailWheel, { capture: true, passive: false });',
             installer,
         )
         self.assertLess(

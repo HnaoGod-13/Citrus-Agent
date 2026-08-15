@@ -26,9 +26,10 @@ _ICON_PATHS: dict[str, str] = {
     "message-circle": '<path d="M21 15a4 4 0 0 1-4 4H8l-5 3v-7a4 4 0 0 1-1-2.65V7a4 4 0 0 1 4-4h11a4 4 0 0 1 4 4z"/><path d="M8 10h.01M12 10h.01M16 10h.01"/>',
     "layout-grid": '<rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/>',
     "book-open": '<path d="M2 4.5A2.5 2.5 0 0 1 4.5 2H11v18H4.5A2.5 2.5 0 0 0 2 22z"/><path d="M22 4.5A2.5 2.5 0 0 0 19.5 2H13v18h6.5A2.5 2.5 0 0 1 22 22z"/>',
-    "chart-no-axes": '<path d="M4 19V9"/><path d="M10 19V5"/><path d="M16 19v-7"/><path d="M22 19V3"/>',
+    "chart-no-axes": '<path d="M3 3v18h18"/><path d="M7 17v-5"/><path d="M12 17V8"/><path d="M17 17V5"/>',
     "settings": '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.09a2 2 0 0 1-1-1.74v-.51a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
     "help-circle": '<circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 1 1 5.83 1c0 2-3 2-3 4"/><path d="M12 18h.01"/>',
+    "sun": '<circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/>',
     "panel-left": '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/>',
     "plus": '<path d="M5 12h14"/><path d="M12 5v14"/>',
     "upload": '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/>',
@@ -41,6 +42,7 @@ _ICON_PATHS: dict[str, str] = {
     "database": '<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/><path d="M3 12c0 1.66 4.03 3 9 3s9-1.34 9-3"/>',
     "activity": '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
     "shield": '<path d="M20 13c0 5-3.5 7.5-8 9-4.5-1.5-8-4-8-9V5l8-3 8 3z"/><path d="m9 12 2 2 4-4"/>',
+    "share": '<path d="M12 15V3"/><path d="m7 8 5-5 5 5"/><path d="M5 13v7a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-7"/>',
     "chevron-down": '<path d="m6 9 6 6 6-6"/>',
 }
 
@@ -137,7 +139,7 @@ def render_primary_navigation(
         active = " is-active" if view == active_view else ""
         current = ' aria-current="page"' if view == active_view else ""
         href = html.escape(_view_url(view, uid, sid), quote=True)
-        item_icon = icon_svg(icon, 20)
+        item_icon = icon_svg(icon, 24)
         items.append(
             f'<a class="primary-nav-item{active}" href="{href}"{current}{passive_link}>'
             f'<span class="primary-nav-icon">{item_icon}</span>'
@@ -155,13 +157,13 @@ def render_primary_navigation(
         f"""
         <nav class="citrus-primary-rail" aria-label="产品导航">
             <a class="primary-brand" href="{chat_href}" aria-label="Citrus AI 首页"{passive_link}>
-                <span class="primary-brand-mark">{icon_svg("citrus", 28)}</span>
+                <span class="primary-brand-mark">{icon_svg("citrus", 32)}</span>
                 <span class="primary-brand-word">CITRUS AI</span>
             </a>
             <div class="primary-nav-list">{"".join(items)}</div>
             <a class="primary-user" href="{settings_href}"{passive_link}>
                 <span class="primary-user-avatar">CA</span>
-                <span class="primary-user-copy"><span>Citrus AI</span><small>Decision Lab · Pro</small></span>
+                <span class="primary-user-copy"><span>Citrus AI</span><small>Pro</small></span>
                 {icon_svg("chevron-down", 15)}
             </a>
         </nav>
@@ -208,11 +210,24 @@ def render_top_actions(
 ) -> None:
     settings_href = html.escape(_view_url("settings", uid, sid), quote=True)
     passive_link = ' tabindex="-1" aria-hidden="true"' if on_view_change else ""
+    current_path = _view_url(active_view, uid, sid)
+    current_url = str(getattr(st.context, "url", "") or "")
+    share_href = (
+        current_url.split("?", 1)[0] + current_path if current_url else current_path
+    )
     st.markdown(
         f"""
         <div class="citrus-top-actions">
-            <a href="{settings_href}" aria-label="帮助与系统信息"{passive_link}>{icon_svg("help-circle", 18)}<span>Help</span></a>
-            <span class="top-status"><i></i>System ready</span>
+            <a class="top-icon-action" href="{settings_href}" aria-label="帮助与系统信息"{passive_link}>
+                {icon_svg("help-circle", 20)}
+            </a>
+            <a class="top-icon-action" href="{settings_href}" aria-label="外观与主题设置"{passive_link}>
+                {icon_svg("sun", 20)}
+            </a>
+            <a class="top-share-action" href="{html.escape(share_href, quote=True)}"
+               target="_blank" rel="noopener noreferrer" aria-label="在新标签页打开分享链接">
+                {icon_svg("share", 20)}<span>Share</span>
+            </a>
         </div>
         """,
         unsafe_allow_html=True,
@@ -222,6 +237,13 @@ def render_top_actions(
             st.button(
                 "帮助与系统信息",
                 key="top_help_button",
+                on_click=on_view_change,
+                args=("settings",),
+            )
+        with st.container(key="top_theme_action"):
+            st.button(
+                "外观与主题设置",
+                key="top_theme_button",
                 on_click=on_view_change,
                 args=("settings",),
             )

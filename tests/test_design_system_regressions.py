@@ -5,6 +5,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 CSS_PATH = ROOT / "app" / "ui" / "design_system.css"
 COMPONENTS_PATH = ROOT / "app" / "ui" / "components.py"
+MAIN_PATH = ROOT / "app" / "main.py"
 
 
 class DesignSystemRegressionTests(unittest.TestCase):
@@ -56,6 +57,55 @@ class DesignSystemRegressionTests(unittest.TestCase):
 
         self.assertIn("outline: 2px solid var(--text-primary) !important;", focus_rule)
         self.assertIn("当前页面：", components)
+
+    def test_font_stack_is_bundled_and_cross_platform(self) -> None:
+        css = CSS_PATH.read_text(encoding="utf-8-sig")
+        self.assertIn(
+            '--font-ui: "CitrusInter", "CitrusNotoSansSC", sans-serif;',
+            css,
+        )
+        self.assertNotIn('"PingFang SC"', css)
+
+    def test_desktop_navigation_hit_area_matches_visual_rows(self) -> None:
+        css = CSS_PATH.read_text(encoding="utf-8-sig")
+        visual_start = css.index(".primary-nav-item {")
+        visual_rule = css[visual_start : css.index("}", visual_start) + 1]
+        hit_start = css.index(
+            '[class*="st-key-product_nav_actions"] [data-testid="stButton"] {'
+        )
+        hit_rule = css[hit_start : css.index("}", hit_start) + 1]
+
+        self.assertIn("min-height: 62px;", visual_rule)
+        self.assertIn("height: 62px;", hit_rule)
+        self.assertIn(
+            '[class*="st-key-product_nav_actions"] [data-testid="stButton"] > button {',
+            css,
+        )
+        self.assertIn("position: absolute !important;", css)
+
+    def test_compact_desktop_stacks_task_cards_before_they_overflow(self) -> None:
+        css = CSS_PATH.read_text(encoding="utf-8-sig")
+        compact_start = css.index("@media (min-width: 900px) and (max-width: 1099px) {")
+        compact_css = css[compact_start : css.index("@media (max-width: 899px) {", compact_start)]
+        self.assertIn("flex-direction: column;", compact_css)
+        self.assertIn("width: 100% !important;", compact_css)
+
+    def test_mobile_panel_icon_is_not_drawn_twice(self) -> None:
+        css = CSS_PATH.read_text(encoding="utf-8-sig")
+        mobile_start = css.index("@media (max-width: 899px) {")
+        mobile_css = css[mobile_start : css.index("@media (max-width: 699px) {", mobile_start)]
+        self.assertIn("background-image: url(", mobile_css)
+        self.assertNotIn(
+            '[class*="st-key-mobile_panel_toggle"] button::before',
+            mobile_css,
+        )
+
+    def test_chat_composer_keeps_bilingual_placeholder(self) -> None:
+        main_source = MAIN_PATH.read_text(encoding="utf-8-sig")
+        self.assertIn(
+            'st.chat_input("输入问题或粘贴批次信息…\\nAsk or paste batch data…")',
+            main_source,
+        )
 
 
 if __name__ == "__main__":

@@ -16,8 +16,8 @@ style = "normal"
 [theme]
 base = "light"
 primaryColor = "#111111"
-backgroundColor = "#FFFFFF"
-secondaryBackgroundColor = "#FAFAFA"
+backgroundColor = "#FCFCFC"
+secondaryBackgroundColor = "#F7F7F7"
 textColor = "#111111"
 font = "CitrusInter, CitrusNotoSansSC, sans-serif"
 headingFont = "CitrusInter, CitrusNotoSansSC, sans-serif"
@@ -25,13 +25,13 @@ baseFontSize = 15
 baseFontWeight = 400
 baseRadius = "10px"
 buttonRadius = "10px"
-borderColor = "#E5E5E5"
-dataframeBorderColor = "#E8E8E8"
-dataframeHeaderBackgroundColor = "#FAFAFA"
+borderColor = "#E9E9EA"
+dataframeBorderColor = "#E9E9EA"
+dataframeHeaderBackgroundColor = "#F7F7F7"
 showWidgetBorder = true
 showSidebarBorder = true
 
 [theme.sidebar]
-backgroundColor = "#FCFCFC"
-secondaryBackgroundColor = "#FAFAFA"
+backgroundColor = "#F9F9F9"
+secondaryBackgroundColor = "#F6F6F7"
 textColor = "#111111"

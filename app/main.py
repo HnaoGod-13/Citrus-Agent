@@ -74,7 +74,7 @@ EXAMPLE_CARDS = [
         "eyebrow": "01 · 路线选择",
         "title": "评估最佳加工方向",
         "title_en": "Evaluate Optimal Processing Direction",
-        "description": "比较整果、果汁与果皮路线",
+        "description": "比较酸度、果汁与果皮路线",
         "description_en": "Compare acidity, juice and peel routes",
         "icon": "activity",
         "prompt": EXAMPLE_PROMPTS[0],
@@ -99,9 +99,9 @@ EXAMPLE_CARDS = [
     },
     {
         "eyebrow": "04 · 风险复核",
-        "title": "复核批次生产风险",
+        "title": "复核生产风险与合规",
         "title_en": "Review Risk & Compliance",
-        "description": "明确补检与人工放行条件",
+        "description": "复核批次生产风险",
         "description_en": "Identify risk and ensure compliance",
         "icon": "shield",
         "prompt": EXAMPLE_PROMPTS[3],
@@ -577,6 +577,9 @@ SCROLL_POSITION_MANAGER_INSTALLER = r"""
             doc.removeEventListener("wheel", manager.handleUserInput, true);
             doc.removeEventListener("touchstart", manager.handleUserInput, true);
         }
+        if (manager.handleRailWheel) {
+            doc.removeEventListener("wheel", manager.handleRailWheel, true);
+        }
         if (manager.handlePointerDown) {
             doc.removeEventListener("pointerdown", manager.handlePointerDown, true);
         }
@@ -596,7 +599,7 @@ SCROLL_POSITION_MANAGER_INSTALLER = r"""
 
     const createManager = () => {
         const manager = {
-            version: 4,
+            version: 6,
             restoring: false,
             userScrollUntil: 0,
             scroller: null,
@@ -639,6 +642,58 @@ SCROLL_POSITION_MANAGER_INSTALLER = r"""
             if (event && event.isTrusted === false) return;
             manager.cancelMotion();
             manager.userScrollUntil = Date.now() + 1200;
+        };
+        manager.handleRailWheel = (event) => {
+            if (
+                !event
+                || event.defaultPrevented
+                || event.ctrlKey
+                || window.innerWidth < 900
+                || !manager.scroller
+                || Math.abs(event.deltaY) <= Math.abs(event.deltaX)
+            ) return;
+
+            const target = event.target;
+            if (!target || typeof target.closest !== "function") return;
+            const rail = target.closest(".citrus-primary-rail");
+            const sidebar = target.closest('[data-testid="stSidebar"]');
+            const primaryRailWidth = Number.parseFloat(
+                window.getComputedStyle(doc.documentElement)
+                    .getPropertyValue("--primary-rail-width")
+            ) || 0;
+            const overPrimaryRail = Boolean(rail) || event.clientX <= primaryRailWidth;
+            const boundary = rail || sidebar;
+            if (!overPrimaryRail && !sidebar) return;
+
+            let node = target;
+            while (boundary && node && node !== boundary.parentElement) {
+                const style = window.getComputedStyle(node);
+                const canOwnScroll = /auto|scroll/.test(style.overflowY)
+                    && node.scrollHeight > node.clientHeight + 1;
+                if (canOwnScroll) {
+                    const canMoveDown = event.deltaY > 0
+                        && node.scrollTop + node.clientHeight < node.scrollHeight - 1;
+                    const canMoveUp = event.deltaY < 0 && node.scrollTop > 1;
+                    if (canMoveDown || canMoveUp) return;
+                }
+                if (node === boundary) break;
+                node = node.parentElement;
+            }
+
+            const scroller = manager.scroller;
+            const canMoveMainDown = event.deltaY > 0
+                && scroller.scrollTop + scroller.clientHeight < scroller.scrollHeight - 1;
+            const canMoveMainUp = event.deltaY < 0 && scroller.scrollTop > 1;
+            if (!canMoveMainDown && !canMoveMainUp) return;
+
+            event.preventDefault();
+            manager.handleUserInput(event);
+            scroller.scrollBy({
+                top: event.deltaY,
+                left: 0,
+                behavior: "auto",
+            });
+            window.requestAnimationFrame(manager.remember);
         };
         manager.handlePointerDown = (event) => {
             manager.handleUserInput(event);
@@ -715,17 +770,19 @@ SCROLL_POSITION_MANAGER_INSTALLER = r"""
         if (!scroller) return;
 
         let manager = window[managerKey];
-        if (!manager || manager.version !== 4) {
+        if (!manager || manager.version !== 6) {
             teardown(manager);
             manager = createManager();
             window[managerKey] = manager;
         }
 
         doc.removeEventListener("wheel", manager.handleUserInput, true);
+        doc.removeEventListener("wheel", manager.handleRailWheel, true);
         doc.removeEventListener("touchstart", manager.handleUserInput, true);
         doc.removeEventListener("pointerdown", manager.handlePointerDown, true);
         doc.removeEventListener("keydown", manager.handleKeyDown, true);
         doc.addEventListener("wheel", manager.handleUserInput, { capture: true, passive: true });
+        doc.addEventListener("wheel", manager.handleRailWheel, { capture: true, passive: false });
         doc.addEventListener("touchstart", manager.handleUserInput, { capture: true, passive: true });
         doc.addEventListener("pointerdown", manager.handlePointerDown, true);
         doc.addEventListener("keydown", manager.handleKeyDown, true);
@@ -786,7 +843,7 @@ SCROLL_POSITION_MANAGER_INSTALLER = r"""
         }
     };
 
-    install.version = 4;
+    install.version = 6;
     window[installerKey] = install;
 })();
 """
@@ -829,7 +886,7 @@ def render_scroll_position_manager(
             const doc = host.document;
             const commandId = {command_marker};
             const installerKey = "__citrusAgentInstallScrollManager";
-            if (!host[installerKey] || host[installerKey].version !== 4) {{
+            if (!host[installerKey] || host[installerKey].version !== 6) {{
                 const loader = doc.createElement("script");
                 loader.textContent = {installer_source};
                 (doc.head || doc.documentElement).appendChild(loader);
@@ -1252,7 +1309,7 @@ def render_sidebar(view: str = "chat") -> tuple[str, bool, bytes | None, str]:
         )
 
         st.button(
-            "＋ 新建对话",
+            "新建对话\nNew Chat",
             width="stretch",
             on_click=start_new_conversation,
             key="new_conversation",
@@ -1824,7 +1881,7 @@ def render_empty_state(api_key: str) -> tuple[str | None, Any]:
                                 f"""
                                 <article class="task-card">
                                     <div class="task-card-head">
-                                        <div class="task-card-icon">{ui_components.icon_svg(str(card['icon']), 20)}</div>
+                                        <div class="task-card-icon">{ui_components.icon_svg(str(card['icon']), 24)}</div>
                                         <div class="task-card-copy">
                                             <div class="task-card-title">{html.escape(str(card['title']))}</div>
                                             <div class="task-card-title-en">{html.escape(str(card['title_en']))}</div>
@@ -2616,7 +2673,7 @@ def handle_prompt(
 def main() -> None:
     st.set_page_config(
         page_title="Citrus AI · 柑橘产业链决策",
-        page_icon="◌",
+        page_icon=":material/nutrition:",
         layout="wide",
         initial_sidebar_state="expanded",
     )
@@ -2679,7 +2736,7 @@ def main() -> None:
         unsafe_allow_html=True,
     )
 
-    typed_prompt = st.chat_input("输入问题或粘贴批次信息… · Ask or paste batch data…")
+    typed_prompt = st.chat_input("输入问题或粘贴批次信息…\nAsk or paste batch data…")
     render_scroll_position_manager(
         restore=restore_scroll_position,
         reset_to_top=reset_scroll_position,
