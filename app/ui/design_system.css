@@ -1,4 +1,10 @@
-@import url("https://cdn-font.hyperos.mi.com/font/css?family=MiSans_VF:VF:Chinese_Simplify&display=swap");
+@font-face {
+    font-family: "CitrusMiSansSemibold";
+    src: url("app/static/fonts/MiSans-Semibold.ttf") format("truetype");
+    font-style: normal;
+    font-weight: 520;
+    font-display: swap;
+}
 
 :root {
     color-scheme: light;
@@ -46,8 +52,8 @@
     --agent-accent-soft: var(--active);
 
     /* Typography */
-    --font-ui: "CitrusRoboto", "MiSans VF", "CitrusNotoSansSC", sans-serif;
-    --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    --font-ui: "CitrusMiSansSemibold", "MiSans Semibold", sans-serif;
+    --font-mono: "CitrusMiSansSemibold", "MiSans Semibold", sans-serif;
     --font-display: 44px;
     --font-page-title: 30px;
     --font-section-title: 18px;
@@ -55,8 +61,8 @@
     --font-body: 15px;
     --font-secondary: 13px;
     --font-caption: 11px;
-    --weight-regular: 330;
-    --weight-medium: 450;
+    --weight-regular: 520;
+    --weight-medium: 520;
     --weight-semibold: 520;
     --leading-tight: 1.2;
     --leading-snug: 1.45;
@@ -121,13 +127,37 @@ body,
 .stFileUploader,
 [data-testid="stMarkdownContainer"],
 [data-testid="stDataFrame"],
+[data-testid="stChatInput"],
+[data-testid="stAlert"],
+[data-testid="stToast"],
+[data-testid="stMetric"],
+[data-testid="stExpander"],
+[data-testid="stTabs"],
+[data-baseweb],
+[role="listbox"],
+[role="option"],
+[role="dialog"],
+[role="tooltip"],
 button,
 input,
 textarea,
 select,
 table,
 label,
+a,
 p,
+li,
+dt,
+dd,
+blockquote,
+figcaption,
+caption,
+th,
+td,
+summary,
+small,
+strong,
+em,
 h1,
 h2,
 h3,
@@ -135,10 +165,61 @@ h4,
 h5,
 h6 {
     font-family: var(--font-ui) !important;
+    font-weight: var(--weight-regular) !important;
     font-optical-sizing: auto;
     font-synthesis: none;
     font-kerning: normal;
     letter-spacing: 0 !important;
+}
+
+[data-testid="stMarkdownContainer"] :where(
+        p,
+        li,
+        a,
+        strong,
+        em,
+        small,
+        code,
+        pre,
+        kbd,
+        samp,
+        blockquote,
+        table,
+        caption,
+        thead,
+        tbody,
+        tr,
+        th,
+        td
+    ),
+.analysis-shell :where(
+        p,
+        li,
+        a,
+        strong,
+        em,
+        small,
+        code,
+        pre,
+        kbd,
+        samp,
+        blockquote,
+        table,
+        caption,
+        thead,
+        tbody,
+        tr,
+        th,
+        td
+    ) {
+    font-family: var(--font-ui) !important;
+    font-weight: var(--weight-regular) !important;
+}
+
+input::placeholder,
+textarea::placeholder {
+    font-family: var(--font-ui) !important;
+    font-weight: var(--weight-regular) !important;
 }
 
 h1,

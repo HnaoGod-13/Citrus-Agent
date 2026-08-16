@@ -1,8 +1,7 @@
-This software uses MiSans for Simplified Chinese text.
+This software bundles MiSans Semibold for all user-interface text.
 
-MiSans is loaded without modification from Xiaomi HyperOS's official
-variable web-font service:
-https://cdn-font.hyperos.mi.com/font/css?family=MiSans_VF:VF:Chinese_Simplify&display=swap
+The font is served locally without modifying its glyph outlines.
+Bundled file: MiSans-Semibold.ttf
 
 Official font page:
 https://hyperos.mi.com/font/en/

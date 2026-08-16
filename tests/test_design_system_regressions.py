@@ -1,3 +1,4 @@
+import hashlib
 from pathlib import Path
 import unittest
 
@@ -7,7 +8,10 @@ CSS_PATH = ROOT / "app" / "ui" / "design_system.css"
 COMPONENTS_PATH = ROOT / "app" / "ui" / "components.py"
 MAIN_PATH = ROOT / "app" / "main.py"
 CONFIG_PATH = ROOT / ".streamlit" / "config.toml"
-ROBOTO_PATH = ROOT / "app" / "static" / "fonts" / "RobotoVariable-Latin.woff2"
+MISANS_SEMIBOLD_PATH = ROOT / "app" / "static" / "fonts" / "MiSans-Semibold.ttf"
+MISANS_SEMIBOLD_SHA256 = (
+    "77c23f31ae124867778344970155a0c8d34a89897dedaab81aeee82ff00a4ce6"
+)
 
 
 class DesignSystemRegressionTests(unittest.TestCase):
@@ -64,22 +68,68 @@ class DesignSystemRegressionTests(unittest.TestCase):
         css = CSS_PATH.read_text(encoding="utf-8-sig")
         config = CONFIG_PATH.read_text(encoding="utf-8-sig")
         self.assertIn(
-            '--font-ui: "CitrusRoboto", "MiSans VF", "CitrusNotoSansSC", sans-serif;',
+            '--font-ui: "CitrusMiSansSemibold", "MiSans Semibold", sans-serif;',
             css,
         )
-        self.assertIn("cdn-font.hyperos.mi.com", css)
-        self.assertIn('family = "CitrusRoboto"', config)
         self.assertIn(
-            'font = "CitrusRoboto, MiSans VF, CitrusNotoSansSC, sans-serif"',
+            '--font-mono: "CitrusMiSansSemibold", "MiSans Semibold", sans-serif;',
+            css,
+        )
+        self.assertIn('family = "CitrusMiSansSemibold"', config)
+        self.assertIn('url = "app/static/fonts/MiSans-Semibold.ttf"', config)
+        self.assertIn('weight = "520"', config)
+        self.assertIn(
+            'font = "CitrusMiSansSemibold, sans-serif"',
             config,
         )
-        self.assertTrue(ROBOTO_PATH.is_file())
-        self.assertGreater(ROBOTO_PATH.stat().st_size, 40_000)
-        self.assertIn("--weight-regular: 330;", css)
-        self.assertIn("--weight-medium: 450;", css)
+        self.assertIn('headingFont = "CitrusMiSansSemibold, sans-serif"', config)
+        self.assertIn('codeFont = "CitrusMiSansSemibold, sans-serif"', config)
+        self.assertTrue(MISANS_SEMIBOLD_PATH.is_file())
+        self.assertGreater(MISANS_SEMIBOLD_PATH.stat().st_size, 8_000_000)
+        self.assertEqual(
+            hashlib.sha256(MISANS_SEMIBOLD_PATH.read_bytes()).hexdigest(),
+            MISANS_SEMIBOLD_SHA256,
+        )
+        self.assertIn("--weight-regular: 520;", css)
+        self.assertIn("--weight-medium: 520;", css)
         self.assertIn("--weight-semibold: 520;", css)
-        self.assertIn("baseFontWeight = 330", config)
+        self.assertIn("baseFontWeight = 500", config)
+        self.assertIn("headingFontWeights = 500", config)
+        self.assertIn("codeFontWeight = 500", config)
+        self.assertIn("metricValueFontWeight = 500", config)
+        self.assertNotIn("cdn-font.hyperos.mi.com", css)
+        self.assertNotIn("CitrusRoboto", config)
+        self.assertNotIn("MiSans VF", config)
         self.assertNotIn('"PingFang SC"', css)
+
+    def test_all_visible_text_surfaces_use_misans_semibold(self) -> None:
+        css = CSS_PATH.read_text(encoding="utf-8-sig")
+
+        for selector in (
+            '[data-testid="stMarkdownContainer"]',
+            '[data-testid="stChatMessage"]',
+            '[data-testid="stChatInput"]',
+            '[data-testid="stDataFrame"]',
+            '[data-testid="stAlert"]',
+            '[data-testid="stToast"]',
+            '[data-testid="stMetric"]',
+            '[data-testid="stExpander"]',
+            '[data-testid="stTabs"]',
+            '[data-baseweb]',
+            '[role="listbox"]',
+            '[role="option"]',
+            '[role="dialog"]',
+            '[role="tooltip"]',
+            ".analysis-shell :where(",
+            "input::placeholder",
+            "textarea::placeholder",
+        ):
+            self.assertIn(selector, css)
+
+        self.assertIn("font-family: var(--font-ui) !important;", css)
+        self.assertIn("font-weight: var(--weight-regular) !important;", css)
+        self.assertNotIn("SFMono-Regular", css)
+        self.assertNotIn("Consolas", css)
 
     def test_desktop_main_content_is_not_double_offset_when_sidebar_is_open(self) -> None:
         css = CSS_PATH.read_text(encoding="utf-8-sig")

@@ -2,15 +2,9 @@
 enableStaticServing = true
 
 [[theme.fontFaces]]
-family = "CitrusRoboto"
-url = "app/static/fonts/RobotoVariable-Latin.woff2"
-weight = "100 900"
-style = "normal"
-
-[[theme.fontFaces]]
-family = "CitrusNotoSansSC"
-url = "app/static/fonts/NotoSansSC-VF.ttf"
-weight = "100 900"
+family = "CitrusMiSansSemibold"
+url = "app/static/fonts/MiSans-Semibold.ttf"
+weight = "520"
 style = "normal"
 
 [theme]
@@ -19,10 +13,14 @@ primaryColor = "#111111"
 backgroundColor = "#FCFCFC"
 secondaryBackgroundColor = "#F7F7F7"
 textColor = "#111111"
-font = "CitrusRoboto, MiSans VF, CitrusNotoSansSC, sans-serif"
-headingFont = "CitrusRoboto, MiSans VF, CitrusNotoSansSC, sans-serif"
+font = "CitrusMiSansSemibold, sans-serif"
+headingFont = "CitrusMiSansSemibold, sans-serif"
+codeFont = "CitrusMiSansSemibold, sans-serif"
 baseFontSize = 15
-baseFontWeight = 330
+baseFontWeight = 500
+headingFontWeights = 500
+codeFontWeight = 500
+metricValueFontWeight = 500
 baseRadius = "10px"
 buttonRadius = "10px"
 borderColor = "#E9E9EA"
@@ -35,3 +33,8 @@ showSidebarBorder = true
 backgroundColor = "#F9F9F9"
 secondaryBackgroundColor = "#F6F6F7"
 textColor = "#111111"
+font = "CitrusMiSansSemibold, sans-serif"
+headingFont = "CitrusMiSansSemibold, sans-serif"
+codeFont = "CitrusMiSansSemibold, sans-serif"
+headingFontWeights = 500
+codeFontWeight = 500
