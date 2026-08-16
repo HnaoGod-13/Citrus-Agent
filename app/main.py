@@ -1269,7 +1269,7 @@ def render_product_secondary_panel(view: str) -> None:
         panel_content["description"],
     )
     st.button(
-        "＋ 新建对话",
+        "新建对话\nNew Chat",
         width="stretch",
         on_click=start_new_conversation,
         key=f"new_conversation_from_{view}",
@@ -1378,8 +1378,8 @@ def render_sidebar(view: str = "chat") -> tuple[str, bool, bytes | None, str]:
         manual_observation = st.text_area(
             "外观描述",
             placeholder=(
-                "例如：果皮完整，颜色偏成熟，无明显霉斑或腐烂。\n"
-                "e.g., peel intact, color slightly ripe, no obvious mold or rot."
+                "如：果皮完整、无霉斑腐烂。\n"
+                "e.g. Intact, no mold or rot."
             ),
             height=110,
             key="manual_observation",

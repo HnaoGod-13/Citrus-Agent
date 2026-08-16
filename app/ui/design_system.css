@@ -661,40 +661,40 @@ header[data-testid="stHeader"] {
 .sidebar-section-title {
     margin: 13px 0 0;
     color: var(--text-primary);
-    font-size: 13px;
-    font-weight: var(--weight-medium);
+    font-size: 14px;
+    font-weight: var(--weight-semibold);
     letter-spacing: 0;
-    line-height: 1.4;
+    line-height: 20px;
 }
 
 .sidebar-section-title small,
 .secondary-field-heading small {
     display: block;
-    margin-top: 2px;
+    margin-top: 3px;
     color: var(--text-tertiary);
-    font-size: 11px;
+    font-size: 12px;
     font-weight: var(--weight-regular);
     letter-spacing: 0;
-    line-height: 1.35;
+    line-height: 17px;
 }
 
 .secondary-field-heading {
     color: var(--text-primary);
-    font-size: 13px;
-    font-weight: var(--weight-medium);
-    line-height: 1.4;
+    font-size: 14px;
+    font-weight: var(--weight-semibold);
+    line-height: 20px;
 }
 
 .secondary-field-heading.upload-field {
-    margin: 32px 0 16px;
+    margin: 24px 0 12px;
 }
 
 .secondary-field-heading.appearance-field {
-    margin: 11px 0 16px;
+    margin: 16px 0 12px;
 }
 
 .sidebar-section-title.model-heading {
-    margin-top: 24px;
+    margin-top: 20px;
 }
 
 [data-testid="stSidebar"] [class*="st-key-new_conversation"] {
@@ -702,10 +702,17 @@ header[data-testid="stHeader"] {
 }
 
 [data-testid="stSidebar"] [class*="st-key-new_conversation"] div[data-testid="stButton"] > button {
-    min-height: 72px !important;
+    min-height: 60px !important;
     justify-content: center;
-    gap: 14px;
-    padding: 12px 18px !important;
+    gap: 12px;
+    padding: 10px 16px !important;
+}
+
+[data-testid="stSidebar"] [class*="st-key-new_conversation"] div[data-testid="stButton"] > button > div,
+[data-testid="stSidebar"] [class*="st-key-new_conversation"] div[data-testid="stButton"] > button > div > span,
+[data-testid="stSidebar"] [class*="st-key-new_conversation"] div[data-testid="stButton"] > button [data-testid="stMarkdownContainer"] {
+    width: auto !important;
+    flex: 0 0 auto !important;
 }
 
 [data-testid="stSidebar"] [class*="st-key-new_conversation"] button::before {
@@ -719,8 +726,16 @@ header[data-testid="stHeader"] {
 [data-testid="stSidebar"] [class*="st-key-new_conversation"] div[data-testid="stButton"] > button p {
     width: auto !important;
     white-space: pre-line;
-    font-size: 13px !important;
-    line-height: 1.5 !important;
+    font-size: 12px !important;
+    font-weight: var(--weight-regular) !important;
+    line-height: 17px !important;
+    text-align: left !important;
+}
+
+[data-testid="stSidebar"] [class*="st-key-new_conversation"] div[data-testid="stButton"] > button p::first-line {
+    font-size: 14px;
+    font-weight: var(--weight-semibold);
+    line-height: 20px;
 }
 
 .secondary-section-label {
@@ -749,7 +764,7 @@ header[data-testid="stHeader"] {
 
 .secondary-nav-row small {
     color: var(--text-tertiary) !important;
-    font-size: 10px !important;
+    font-size: 12px !important;
 }
 
 .secondary-nav-stack + .secondary-note {
@@ -762,18 +777,25 @@ header[data-testid="stHeader"] {
     border-top: 1px solid var(--border) !important;
 }
 
-[data-testid="stSidebar"] label,
-[data-testid="stSidebar"] [data-testid="stWidgetLabel"] p {
+[data-testid="stWidgetLabel"] p {
     color: var(--text-primary) !important;
     font-size: 13px !important;
     font-weight: var(--weight-medium) !important;
-    line-height: 1.4 !important;
+    line-height: 18px !important;
+}
+
+[data-testid="stSidebar"] label,
+[data-testid="stSidebar"] [data-testid="stWidgetLabel"] p {
+    color: var(--text-primary) !important;
+    font-size: 14px !important;
+    font-weight: var(--weight-medium) !important;
+    line-height: 20px !important;
 }
 
 [data-testid="stSidebar"] .stCaption,
 [data-testid="stSidebar"] small {
     color: var(--text-tertiary) !important;
-    font-size: 11px !important;
+    font-size: 12px !important;
 }
 
 .status-list {
@@ -785,16 +807,18 @@ header[data-testid="stHeader"] {
 .status-row {
     position: relative;
     display: grid;
-    height: 62px;
+    height: 64px;
     box-sizing: border-box;
     align-content: center;
     gap: 2px;
-    padding: 10px 36px 10px 45px;
+    padding: 12px 36px 12px 45px;
     color: var(--text-primary);
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: var(--radius-input);
-    font-size: 13px;
+    font-size: 14px;
+    font-weight: var(--weight-medium);
+    line-height: 20px;
 }
 
 .status-row::before {
@@ -841,8 +865,10 @@ header[data-testid="stHeader"] {
 .status-pill {
     color: var(--text-secondary);
     font-family: var(--font-ui) !important;
-    font-size: 11px;
+    font-size: 12px;
+    font-weight: var(--weight-regular);
     letter-spacing: 0;
+    line-height: 18px;
 }
 
 .sidebar-note,
@@ -869,25 +895,27 @@ header[data-testid="stHeader"] {
 
 /* Controls -------------------------------------------------------------- */
 div[data-testid="stButton"] > button,
+button[data-testid^="stBaseButton-"],
 .stDownloadButton > button,
 .stLinkButton > a {
-    min-height: 42px;
+    min-height: 44px;
     box-sizing: border-box;
     justify-content: center;
-    padding: 9px 14px;
+    padding: 10px 16px;
     color: var(--text-primary) !important;
     background: var(--surface) !important;
     border: 1px solid var(--border) !important;
     border-radius: var(--radius-button) !important;
-    font-size: 13px;
+    font-size: 14px;
     font-weight: var(--weight-medium);
-    line-height: 1.35;
+    line-height: 20px;
     box-shadow: none !important;
     transition: color var(--transition), background var(--transition),
         border-color var(--transition), transform var(--transition), box-shadow var(--transition);
 }
 
 div[data-testid="stButton"] > button:hover,
+button[data-testid^="stBaseButton-"]:hover,
 .stDownloadButton > button:hover,
 .stLinkButton > a:hover {
     color: var(--text-primary) !important;
@@ -897,6 +925,7 @@ div[data-testid="stButton"] > button:hover,
 }
 
 div[data-testid="stButton"] > button:active,
+button[data-testid^="stBaseButton-"]:active,
 .stDownloadButton > button:active {
     background: var(--active) !important;
     transform: none;
@@ -919,6 +948,7 @@ div[data-testid="stButton"] > button:active,
 }
 
 div[data-testid="stButton"] > button:focus-visible,
+button[data-testid^="stBaseButton-"]:focus-visible,
 .stDownloadButton > button:focus-visible,
 input:focus-visible,
 textarea:focus-visible,
@@ -929,6 +959,7 @@ select:focus-visible {
 }
 
 div[data-testid="stButton"] > button:disabled,
+button[data-testid^="stBaseButton-"]:disabled,
 .stDownloadButton > button:disabled {
     color: var(--text-disabled) !important;
     background: var(--surface-secondary) !important;
@@ -947,7 +978,8 @@ div[data-testid="stButton"] > button:disabled,
 [data-testid="stSidebar"] div[data-testid="stButton"] > button p {
     width: 100%;
     color: var(--text-primary) !important;
-    font-size: 13px;
+    font-size: 14px;
+    line-height: 20px;
     text-align: left;
 }
 
@@ -979,6 +1011,20 @@ div[data-baseweb="select"] > div,
     border-radius: 0 !important;
     box-shadow: none !important;
     outline: 0 !important;
+    font-size: 14px !important;
+    line-height: 22px !important;
+}
+
+[data-testid="stTextInputRootElement"] input,
+.stSelectbox .react-aria-ComboBox > div[role="group"] input {
+    height: 42px !important;
+    padding: 10px 12px !important;
+}
+
+[data-testid="stTextAreaRootElement"] textarea {
+    padding: 14px 16px !important;
+    line-height: 22px !important;
+    transition: padding var(--transition);
 }
 
 .stSelectbox .react-aria-ComboBox > div[role="group"] > button,
@@ -1011,10 +1057,12 @@ div[data-baseweb="select"] > div:focus-within,
 }
 
 [data-testid="stFileUploader"] section {
-    min-height: 98px;
+    min-height: 96px;
     box-sizing: border-box;
-    padding: 14px !important;
-    background: var(--surface) !important;
+    justify-content: center;
+    gap: 8px !important;
+    padding: 14px 16px !important;
+    background: var(--surface-secondary) !important;
     border: 1px solid var(--border) !important;
     border-radius: var(--radius-input) !important;
 }
@@ -1025,10 +1073,30 @@ div[data-baseweb="select"] > div:focus-within,
 }
 
 [data-testid="stFileUploader"] button {
+    min-height: 42px !important;
+    padding: 0 14px !important;
     color: var(--text-primary) !important;
-    background: transparent !important;
-    border: 0 !important;
+    background: var(--surface) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: var(--radius-button) !important;
     box-shadow: none !important;
+}
+
+[data-testid="stFileUploader"] button p {
+    font-size: 14px !important;
+    font-weight: var(--weight-medium) !important;
+    line-height: 20px !important;
+}
+
+[data-testid="stFileUploader"] button [data-testid="stIconMaterial"] {
+    display: inline-flex;
+    width: 18px;
+    height: 18px;
+    flex: 0 0 18px;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px !important;
+    line-height: 18px !important;
 }
 
 [data-testid="stFileUploader"] small {
@@ -1040,13 +1108,32 @@ div[data-baseweb="select"] > div:focus-within,
 }
 
 [data-testid="stFileUploaderDropzoneInstructions"] span::after {
-    content: "200MB per file · JPG, JPEG, PNG, TIFF";
+    content: "JPG / PNG / TIFF · max 200MB";
     color: var(--text-secondary);
     font-family: var(--font-ui);
-    font-size: 11px;
+    font-size: 12px;
     font-weight: var(--weight-regular);
-    line-height: 1.45;
-    white-space: nowrap;
+    line-height: 18px;
+    white-space: normal;
+}
+
+[data-testid="stSidebar"] [data-testid="stTextAreaRootElement"] {
+    height: 104px;
+}
+
+[data-testid="stSidebar"] [data-testid="stTextAreaRootElement"] textarea {
+    height: 102px !important;
+    min-height: 102px !important;
+    color: var(--text-primary) !important;
+}
+
+[data-testid="stSidebar"] [data-testid="stTextAreaRootElement"] textarea::placeholder {
+    color: #777777 !important;
+}
+
+[data-testid="stSidebar"] [data-testid="stTextAreaRootElement"] textarea:placeholder-shown {
+    padding-top: 29px !important;
+    padding-bottom: 29px !important;
 }
 
 [data-testid="stImage"] img,
@@ -2950,7 +3037,7 @@ div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label)
 
     :root {
         --primary-rail-width: 0px;
-        --secondary-panel-width: min(320px, 88vw);
+        --secondary-panel-width: min(344px, 92vw);
         --font-display: 42px;
         --font-page-title: 28px;
         --main-pad-start: 20px;
@@ -3203,7 +3290,7 @@ div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label)
 
     [data-testid="stSidebar"] > div,
     [data-testid="stSidebarContent"] {
-        padding: 72px 32px 28px !important;
+        padding: 72px 24px 28px !important;
     }
 
     [data-testid="stSidebar"] [data-testid="stSidebarCollapseButton"] {

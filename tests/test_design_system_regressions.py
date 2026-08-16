@@ -107,6 +107,32 @@ class DesignSystemRegressionTests(unittest.TestCase):
             main_source,
         )
 
+    def test_sidebar_controls_share_a_deliberate_type_scale(self) -> None:
+        css = CSS_PATH.read_text(encoding="utf-8-sig")
+        main_source = MAIN_PATH.read_text(encoding="utf-8-sig")
+
+        self.assertIn('font-size: 14px !important;', css)
+        self.assertIn(
+            '[data-testid="stSidebar"] [data-testid="stTextAreaRootElement"] textarea:placeholder-shown',
+            css,
+        )
+        self.assertIn('padding-top: 29px !important;', css)
+        self.assertIn('content: "JPG / PNG / TIFF · max 200MB";', css)
+        self.assertIn('button[data-testid^="stBaseButton-"]', css)
+        self.assertIn('[data-testid="stWidgetLabel"] p {', css)
+        self.assertIn('flex: 0 0 18px;', css)
+        self.assertIn('"新建对话\\nNew Chat"', main_source)
+        self.assertNotIn('"＋ 新建对话"', main_source)
+        self.assertIn('"如：果皮完整、无霉斑腐烂。\\n"', main_source)
+
+    def test_mobile_sidebar_preserves_readable_control_width(self) -> None:
+        css = CSS_PATH.read_text(encoding="utf-8-sig")
+        mobile_start = css.index("@media (max-width: 899px) {")
+        mobile_css = css[mobile_start : css.index("@media (max-width: 699px) {", mobile_start)]
+
+        self.assertIn("--secondary-panel-width: min(344px, 92vw);", mobile_css)
+        self.assertIn("padding: 72px 24px 28px !important;", mobile_css)
+
 
 if __name__ == "__main__":
     unittest.main()
