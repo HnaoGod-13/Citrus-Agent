@@ -396,7 +396,7 @@ class AnalysisPayloadLayoutTests(unittest.TestCase):
         self.assertNotIn("本次引用文献", compact)
         self.assertNotIn("Citation", compact)
 
-    def test_full_process_is_collapsed_after_the_narrative(self) -> None:
+    def test_full_process_is_visible_before_the_narrative(self) -> None:
         source = Path(app_main.__file__).read_text(encoding="utf-8-sig")
         render_source = source[
             source.index("def render_analysis_payload") : source.index("def render_message")
@@ -405,13 +405,13 @@ class AnalysisPayloadLayoutTests(unittest.TestCase):
         narrative = "if narrative_answer:\n        st.markdown(narrative_answer)"
         expander = 'with st.expander("完整加工流程与参数", expanded=False):'
         self.assertIn(narrative, render_source)
-        self.assertIn(expander, render_source)
-        self.assertLess(render_source.index(narrative), render_source.index(expander))
-        expander_source = render_source[render_source.index(expander) :]
-        self.assertIn("render_processing_plan(processing_plan)", expander_source)
-        self.assertIn("st.markdown(parameterized_text)", expander_source)
+        self.assertNotIn(expander, render_source)
+        self.assertIn("render_processing_plan(processing_plan)", render_source)
+        self.assertIn("st.markdown(parameterized_text)", render_source)
+        self.assertLess(render_source.index("render_processing_plan(processing_plan)"), render_source.index(narrative))
+        self.assertLess(render_source.index("st.markdown(parameterized_text)"), render_source.index(narrative))
 
-    def test_render_keeps_narrative_outside_the_process_expander(self) -> None:
+    def test_render_places_visible_process_before_narrative(self) -> None:
         events: list[tuple[str, str]] = []
 
         @contextmanager
@@ -465,15 +465,12 @@ class AnalysisPayloadLayoutTests(unittest.TestCase):
         ):
             app_main.render_analysis_payload(payload)
 
-        narrative_index = events.index(("markdown", "NARRATIVE"))
-        process_start = events.index(("enter", "完整加工流程与参数"))
         plan_index = events.index(("plan", "rendered"))
         parameter_index = events.index(("markdown", "PARAMETER DETAILS"))
-        process_end = events.index(("exit", "完整加工流程与参数"))
-        self.assertLess(narrative_index, process_start)
-        self.assertLess(process_start, plan_index)
+        narrative_index = events.index(("markdown", "NARRATIVE"))
         self.assertLess(plan_index, parameter_index)
-        self.assertLess(parameter_index, process_end)
+        self.assertLess(parameter_index, narrative_index)
+        self.assertNotIn(("enter", "完整加工流程与参数"), events)
 
 
 class VisionStateRecoveryTests(unittest.TestCase):

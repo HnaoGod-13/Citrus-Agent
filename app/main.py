@@ -1683,19 +1683,18 @@ def render_analysis_payload(payload: dict[str, Any]) -> None:
         )
         parameterized_text = re.sub(r"(?m)^### 5\.\d+\s+", "### ", parameterized_text)
 
+    # The recommendation must be followed by the executable route. Render the
+    # structured result directly so the flow cannot disappear behind model prose.
+    if processing_plan:
+        render_processing_plan(processing_plan)
+        if parameterized_text:
+            st.markdown(parameterized_text)
+
     narrative_answer = _compact_analysis_narrative(
         orchestrator.strip_primary_processing_flow(answer)
     )
     if narrative_answer:
         st.markdown(narrative_answer)
-
-    # Keep the decision and narrative scannable on small screens. The complete
-    # executable route remains available without filling the first viewport.
-    if processing_plan:
-        with st.expander("完整加工流程与参数", expanded=False):
-            render_processing_plan(processing_plan)
-            if parameterized_text:
-                st.markdown(parameterized_text)
 
     if payload.get("vision_result"):
         with st.expander("图片识别结果", expanded=True):
