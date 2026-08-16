@@ -23,12 +23,14 @@ from typing import Any, Iterator
 
 import streamlit as st
 
+from app import knowledge_catalog as catalog_index
 from app.ui import components as ui_components
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_MEMORY_DB_PATH = PROJECT_ROOT / "data" / "memory" / "memory.db"
 DEFAULT_LITERATURE_DB_PATH = PROJECT_ROOT / "data" / "literature" / "literature.db"
+DEFAULT_KNOWLEDGE_CATALOG_PATH = PROJECT_ROOT / "data" / "literature" / "knowledge_catalog.db"
 
 WORKSPACE_LIMIT = 16
 KNOWLEDGE_LIMIT = 200
@@ -38,36 +40,9 @@ ANALYTICS_DAY_LIMIT = 30
 ANALYTICS_TREND_DAYS = 14
 BEIJING_TIMEZONE = timezone(timedelta(hours=8))
 SAMPLE_REVIEW_STATUSES = frozenset({"暂不可放行", "检测待补", "质量复核"})
-DIRECT_CITRUS_TITLE_MARKERS = (
-    "citrus",
-    "orange",
-    "mandarin",
-    "tangerine",
-    "lemon",
-    "lime",
-    "grapefruit",
-    "pomelo",
-    "clementine",
-    "satsuma",
-    "kinnow",
-    "bergamot",
-    "kumquat",
-    "citron",
-    "citri reticulatae",
-    "chenpi",
-    "柑橘",
-    "橙",
-    "柚",
-    "柠檬",
-    "桔",
-    "橘",
-)
-OFF_DOMAIN_TITLE_PATTERN = re.compile(
-    r"(?:near field communication|nfc-enabled|nfc-a4wp|dc-nfc|e-wallet|"
-    r"public surveillance|wireless networks|internet of things|"
-    r"wearable electronic|connected clothing|remote photoactivation)",
-    flags=re.IGNORECASE,
-)
+DIRECT_CITRUS_TITLE_MARKERS = catalog_index.DIRECT_CITRUS_TITLE_MARKERS
+OFF_DOMAIN_TITLE_MARKERS = catalog_index.OFF_DOMAIN_TITLE_MARKERS
+OFF_DOMAIN_TITLE_PATTERN = catalog_index.OFF_DOMAIN_TITLE_PATTERN
 
 
 @dataclass(frozen=True)
@@ -104,6 +79,16 @@ def _literature_db_path() -> Path:
         return Path(rag.LITERATURE_DB_PATH)
     except (AttributeError, ImportError, TypeError):
         return DEFAULT_LITERATURE_DB_PATH
+
+
+def _knowledge_browse_db_path() -> Path:
+    """Prefer the metadata-only browser catalog over the full RAG database."""
+    try:
+        if DEFAULT_KNOWLEDGE_CATALOG_PATH.is_file() and DEFAULT_KNOWLEDGE_CATALOG_PATH.stat().st_size > 0:
+            return DEFAULT_KNOWLEDGE_CATALOG_PATH
+    except OSError:
+        pass
+    return _literature_db_path()
 
 
 def _prepare_literature_database(path: Path) -> bool:
@@ -406,29 +391,38 @@ def _source_name(value: Any) -> str:
 
 
 def _is_off_domain_knowledge_title(value: Any) -> bool:
-    return bool(OFF_DOMAIN_TITLE_PATTERN.search(str(value or "")))
+    return catalog_index.is_off_domain_title(value)
 
 
 def _knowledge_relevance_label(value: Any) -> str:
-    title = str(value or "").casefold()
-    if any(marker in title for marker in DIRECT_CITRUS_TITLE_MARKERS):
+    if catalog_index.relevance_rank(value) == 0:
         return "柑橘直接证据"
     return "工艺参考"
 
 
-def _register_knowledge_functions(connection: sqlite3.Connection) -> None:
-    connection.create_function(
-        "is_off_domain_knowledge_title",
-        1,
-        lambda value: int(_is_off_domain_knowledge_title(value)),
-        deterministic=True,
+def _escape_like_literal(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("%", r"\%").replace("_", r"\_")
+
+
+def _title_contains_any_sql(markers: tuple[str, ...]) -> tuple[str, tuple[str, ...]]:
+    clause = " OR ".join(
+        "COALESCE(d.title, '') LIKE ? ESCAPE char(92) COLLATE NOCASE"
+        for _ in markers
     )
-    connection.create_function(
-        "knowledge_relevance_rank",
-        1,
-        lambda value: 0 if _knowledge_relevance_label(value) == "柑橘直接证据" else 1,
-        deterministic=True,
-    )
+    parameters = tuple(f"%{_escape_like_literal(marker)}%" for marker in markers)
+    return f"({clause})", parameters
+
+
+def _database_signature(path: Path) -> tuple[str, int, int]:
+    resolved = Path(path).expanduser().resolve()
+    stat = resolved.stat()
+    return str(resolved), int(stat.st_mtime_ns), int(stat.st_size)
+
+
+def _is_knowledge_catalog(connection: sqlite3.Connection) -> bool:
+    return connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'catalog_meta'"
+    ).fetchone() is not None
 
 
 def _set_knowledge_page(page: int) -> None:
@@ -724,33 +718,63 @@ def render_workspace_page() -> None:
         )
 
 
-def _load_knowledge_facets(path: Path) -> dict[str, Any]:
+def _query_knowledge_facets(path: Path) -> dict[str, Any]:
     with _readonly_database(path) as connection:
-        _register_knowledge_functions(connection)
+        if _is_knowledge_catalog(connection):
+            meta = {
+                str(row["key"]): str(row["value"])
+                for row in connection.execute(
+                    """
+                    SELECT key, value
+                    FROM catalog_meta
+                    WHERE key IN ('visible_documents', 'visible_chunks')
+                    """
+                )
+            }
+            category_counts = Counter(
+                {
+                    str(row["category"]): int(row["document_count"])
+                    for row in connection.execute(
+                        "SELECT category, document_count FROM category_counts ORDER BY category"
+                    )
+                }
+            )
+            return {
+                "stats": {
+                    "documents": int(meta.get("visible_documents") or 0),
+                    "chunks": int(meta.get("visible_chunks") or 0),
+                },
+                "categories": category_counts,
+            }
+
+        off_domain_sql, off_domain_parameters = _title_contains_any_sql(
+            OFF_DOMAIN_TITLE_MARKERS
+        )
         stats = dict(
             connection.execute(
-                """
+                f"""
+                WITH eligible_documents AS (
+                    SELECT d.document_id
+                    FROM documents d
+                    WHERE NOT {off_domain_sql}
+                )
                 SELECT
-                    (
-                        SELECT COUNT(*) FROM documents
-                        WHERE is_off_domain_knowledge_title(title) = 0
-                    ) AS documents,
+                    (SELECT COUNT(*) FROM eligible_documents) AS documents,
                     (
                         SELECT COUNT(*)
                         FROM chunks c
-                        JOIN documents d ON d.document_id = c.document_id
-                        WHERE is_off_domain_knowledge_title(d.title) = 0
+                        WHERE c.document_id IN (
+                            SELECT document_id FROM eligible_documents
+                        )
                     ) AS chunks
-                """
+                """,
+                off_domain_parameters,
             ).fetchone()
         )
         category_rows = _row_dicts(
             connection.execute(
-                """
-                SELECT categories
-                FROM documents
-                WHERE is_off_domain_knowledge_title(title) = 0
-                """
+                f"SELECT d.categories FROM documents d WHERE NOT {off_domain_sql}",
+                off_domain_parameters,
             )
         )
 
@@ -763,7 +787,21 @@ def _load_knowledge_facets(path: Path) -> dict[str, Any]:
     return {"stats": stats, "categories": category_counts}
 
 
-def _load_knowledge_documents(
+@st.cache_data(show_spinner=False, max_entries=8)
+def _load_knowledge_facets_cached(
+    path_text: str,
+    modified_ns: int,
+    size: int,
+) -> dict[str, Any]:
+    del modified_ns, size
+    return _query_knowledge_facets(Path(path_text))
+
+
+def _load_knowledge_facets(path: Path) -> dict[str, Any]:
+    return _load_knowledge_facets_cached(*_database_signature(path))
+
+
+def _query_knowledge_documents(
     path: Path,
     *,
     search: str = "",
@@ -774,7 +812,7 @@ def _load_knowledge_documents(
     clean_search = " ".join(search.split())
     search_pattern = f"%{clean_search}%"
     category_pattern = f"%{category}%"
-    parameters = (
+    fallback_parameters = (
         clean_search,
         search_pattern,
         search_pattern,
@@ -785,10 +823,72 @@ def _load_knowledge_documents(
         category_pattern,
     )
     with _readonly_database(path) as connection:
-        _register_knowledge_functions(connection)
+        if _is_knowledge_catalog(connection):
+            catalog_parameters = (
+                clean_search,
+                search_pattern,
+                search_pattern,
+                search_pattern,
+                search_pattern,
+                search_pattern,
+                category,
+                category,
+            )
+            catalog_where = """
+                d.is_off_domain = 0
+                AND (
+                    ? = ''
+                    OR COALESCE(d.title, '') LIKE ? COLLATE NOCASE
+                    OR COALESCE(d.authors, '') LIKE ? COLLATE NOCASE
+                    OR COALESCE(d.doi, '') LIKE ? COLLATE NOCASE
+                    OR COALESCE(d.publication, '') LIKE ? COLLATE NOCASE
+                    OR COALESCE(d.source_file, '') LIKE ? COLLATE NOCASE
+                )
+                AND (
+                    ? = ''
+                    OR EXISTS (
+                        SELECT 1
+                        FROM document_categories dc
+                        WHERE dc.document_id = d.document_id AND dc.category = ?
+                    )
+                )
+            """
+            total = int(
+                connection.execute(
+                    f"SELECT COUNT(*) FROM documents d WHERE {catalog_where}",
+                    catalog_parameters,
+                ).fetchone()[0]
+            )
+            rows = _row_dicts(
+                connection.execute(
+                    f"""
+                    SELECT d.document_id, d.title, d.authors, d.year, d.categories,
+                           d.publication, d.doi, d.source_file, d.chunk_count,
+                           d.text_quality
+                    FROM documents d
+                    WHERE {catalog_where}
+                    ORDER BY d.relevance_rank, d.year_sort DESC, d.title COLLATE NOCASE
+                    LIMIT ? OFFSET ?
+                    """,
+                    (
+                        *catalog_parameters,
+                        max(1, min(int(limit), KNOWLEDGE_LIMIT)),
+                        max(int(offset), 0),
+                    ),
+                )
+            )
+            return {"total": total, "rows": rows}
+
+        off_domain_sql, off_domain_parameters = _title_contains_any_sql(
+            OFF_DOMAIN_TITLE_MARKERS
+        )
+        direct_citrus_sql, direct_citrus_parameters = _title_contains_any_sql(
+            DIRECT_CITRUS_TITLE_MARKERS
+        )
+        where_parameters = (*fallback_parameters, *off_domain_parameters)
         total = int(
             connection.execute(
-                """
+                f"""
                 SELECT COUNT(*)
                 FROM documents d
                 WHERE (
@@ -800,14 +900,14 @@ def _load_knowledge_documents(
                     OR COALESCE(d.source_file, '') LIKE ? COLLATE NOCASE
                 )
                 AND (? = '' OR COALESCE(d.categories, '') LIKE ?)
-                AND is_off_domain_knowledge_title(d.title) = 0
+                AND NOT {off_domain_sql}
                 """,
-                parameters,
+                where_parameters,
             ).fetchone()[0]
         )
         rows = _row_dicts(
             connection.execute(
-                """
+                f"""
                 SELECT d.document_id, d.title, d.authors, d.year, d.categories,
                        d.publication, d.doi, d.source_file, d.chunk_count,
                        d.text_quality
@@ -821,9 +921,9 @@ def _load_knowledge_documents(
                     OR COALESCE(d.source_file, '') LIKE ? COLLATE NOCASE
                 )
                 AND (? = '' OR COALESCE(d.categories, '') LIKE ?)
-                AND is_off_domain_knowledge_title(d.title) = 0
+                AND NOT {off_domain_sql}
                 ORDER BY
-                    knowledge_relevance_rank(d.title),
+                    CASE WHEN {direct_citrus_sql} THEN 0 ELSE 1 END,
                     CASE
                         WHEN TRIM(COALESCE(d.year, '')) GLOB '[0-9][0-9][0-9][0-9]'
                         THEN CAST(d.year AS INTEGER)
@@ -833,13 +933,54 @@ def _load_knowledge_documents(
                 LIMIT ? OFFSET ?
                 """,
                 (
-                    *parameters,
+                    *where_parameters,
+                    *direct_citrus_parameters,
                     max(1, min(int(limit), KNOWLEDGE_LIMIT)),
                     max(int(offset), 0),
                 ),
             )
         )
     return {"total": total, "rows": rows}
+
+
+@st.cache_data(show_spinner=False, max_entries=64)
+def _load_knowledge_documents_cached(
+    path_text: str,
+    modified_ns: int,
+    size: int,
+    search: str,
+    category: str,
+    limit: int,
+    offset: int,
+) -> dict[str, Any]:
+    del modified_ns, size
+    return _query_knowledge_documents(
+        Path(path_text),
+        search=search,
+        category=category,
+        limit=limit,
+        offset=offset,
+    )
+
+
+def _load_knowledge_documents(
+    path: Path,
+    *,
+    search: str = "",
+    category: str = "",
+    limit: int = KNOWLEDGE_LIMIT,
+    offset: int = 0,
+) -> dict[str, Any]:
+    path_text, modified_ns, size = _database_signature(path)
+    return _load_knowledge_documents_cached(
+        path_text,
+        modified_ns,
+        size,
+        search,
+        category,
+        limit,
+        offset,
+    )
 
 
 def _list_text(
@@ -882,10 +1023,12 @@ def render_knowledge_page() -> None:
         "检索已入库的柑橘直接证据与可迁移工艺参考。",
         "Search direct citrus evidence and transferable processing references",
     )
-    path = _literature_db_path()
+    path = _knowledge_browse_db_path()
     if not path.is_file():
         with st.spinner("正在准备文献索引…"):
-            _prepare_literature_database(path)
+            full_database_path = _literature_db_path()
+            _prepare_literature_database(full_database_path)
+            path = full_database_path
     try:
         facets = _load_knowledge_facets(path)
     except (FileNotFoundError, OSError, sqlite3.Error, ValueError):
@@ -1474,6 +1617,21 @@ def _scoped_storage_counts(path: Path, scope: _Scope) -> dict[str, int]:
 
 def _knowledge_storage_counts(path: Path) -> dict[str, int]:
     with _readonly_database(path) as connection:
+        if _is_knowledge_catalog(connection):
+            meta = {
+                str(row["key"]): int(row["value"])
+                for row in connection.execute(
+                    """
+                    SELECT key, value
+                    FROM catalog_meta
+                    WHERE key IN ('source_documents', 'source_chunks')
+                    """
+                )
+            }
+            return {
+                "documents": int(meta.get("source_documents") or 0),
+                "chunks": int(meta.get("source_chunks") or 0),
+            }
         return dict(
             connection.execute(
                 """
@@ -1544,8 +1702,10 @@ def render_settings_page() -> None:
                 }
             )
 
-    literature_path = _literature_db_path()
-    _prepare_literature_database(literature_path)
+    literature_path = _knowledge_browse_db_path()
+    if not literature_path.is_file():
+        literature_path = _literature_db_path()
+        _prepare_literature_database(literature_path)
     try:
         knowledge_counts = _knowledge_storage_counts(literature_path)
     except (FileNotFoundError, OSError, sqlite3.Error, ValueError):

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import closing
 from datetime import date
 from pathlib import Path
 import sqlite3
@@ -10,6 +11,7 @@ from unittest.mock import patch
 
 from streamlit.testing.v1 import AppTest
 
+from app import knowledge_catalog as catalog_index
 from app.ui import product_pages
 
 
@@ -316,13 +318,17 @@ class ProductPageTests(unittest.TestCase):
         source = f"""
 from pathlib import Path
 import streamlit as st
+from unittest.mock import patch
 from app.ui import product_pages
 
-product_pages._memory_db_path = lambda: Path({str(self.memory_db)!r})
-product_pages._literature_db_path = lambda: Path({str(self.literature_db)!r})
-st.session_state.memory_user_id = "user_alpha"
-st.session_state.memory_project_id = "project_one"
-assert product_pages.render_product_page({view!r}) is True
+with (
+    patch.object(product_pages, "_memory_db_path", return_value=Path({str(self.memory_db)!r})),
+    patch.object(product_pages, "_literature_db_path", return_value=Path({str(self.literature_db)!r})),
+    patch.object(product_pages, "_knowledge_browse_db_path", return_value=Path({str(self.literature_db)!r})),
+):
+    st.session_state.memory_user_id = "user_alpha"
+    st.session_state.memory_project_id = "project_one"
+    assert product_pages.render_product_page({view!r}) is True
 """
         return AppTest.from_string(source, default_timeout=30).run()
 
@@ -376,6 +382,106 @@ assert product_pages.render_product_page({view!r}) is True
 
         self.assertEqual([runtime_db], calls)
         self.assertEqual(b"fixture", runtime_db.read_bytes())
+
+    def test_packaged_knowledge_catalog_matches_the_full_index_manifest(self) -> None:
+        catalog_path = product_pages.DEFAULT_KNOWLEDGE_CATALOG_PATH
+        self.assertTrue(catalog_path.is_file())
+        self.assertLess(catalog_path.stat().st_size, 32 * 1024 * 1024)
+        with closing(sqlite3.connect(catalog_path)) as connection:
+            self.assertEqual("ok", connection.execute("PRAGMA integrity_check").fetchone()[0])
+            meta = dict(connection.execute("SELECT key, value FROM catalog_meta"))
+
+        manifest_path = catalog_path.parent / "package" / "manifest.json"
+        if manifest_path.is_file():
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            self.assertEqual(int(manifest["documents"]), int(meta["source_documents"]))
+            self.assertEqual(int(manifest["chunks"]), int(meta["source_chunks"]))
+        else:
+            with closing(sqlite3.connect(product_pages.DEFAULT_LITERATURE_DB_PATH)) as connection:
+                self.assertEqual(
+                    int(connection.execute("SELECT COUNT(*) FROM documents").fetchone()[0]),
+                    int(meta["source_documents"]),
+                )
+                self.assertEqual(
+                    int(connection.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]),
+                    int(meta["source_chunks"]),
+                )
+
+    def test_lightweight_catalog_preserves_filters_counts_and_storage_totals(self) -> None:
+        connection = sqlite3.connect(self.literature_db)
+        try:
+            connection.execute(
+                "INSERT INTO documents VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    "doc_nfc_technology",
+                    "DC-NFC framework for NFC-enabled IoT",
+                    '["Researcher C"]',
+                    "2026",
+                    '["橙汁"]',
+                    "Unrelated Journal",
+                    "",
+                    "橙汁/nfc-iot.pdf",
+                    999,
+                    "good",
+                ),
+            )
+            connection.execute(
+                "INSERT INTO chunks VALUES (?, ?, ?, ?)",
+                (4, "doc_nfc_technology", "橙汁", "wireless network evidence"),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        catalog_path = Path(self.tempdir.name) / "knowledge_catalog.db"
+        built = catalog_index.build_catalog(self.literature_db, catalog_path)
+        self.assertLess(catalog_path.stat().st_size, 2 * 1024 * 1024)
+        self.assertEqual(3, built["source_documents"])
+        self.assertEqual(4, built["source_chunks"])
+        self.assertEqual(2, built["visible_documents"])
+        self.assertEqual(3, built["visible_chunks"])
+
+        with closing(sqlite3.connect(catalog_path)) as catalog:
+            tables = {
+                row[0]
+                for row in catalog.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'"
+                )
+            }
+        self.assertNotIn("chunks", tables)
+        self.assertIn("catalog_meta", tables)
+
+        facets = product_pages._load_knowledge_facets(catalog_path)
+        listing = product_pages._load_knowledge_documents(catalog_path)
+        storage = product_pages._knowledge_storage_counts(catalog_path)
+        self.assertEqual({"documents": 2, "chunks": 3}, facets["stats"])
+        self.assertEqual(["doc_juice", "doc_peel"], [row["document_id"] for row in listing["rows"]])
+        self.assertEqual({"documents": 3, "chunks": 4}, storage)
+
+    def test_knowledge_render_uses_catalog_without_materializing_full_database(self) -> None:
+        catalog_path = Path(self.tempdir.name) / "knowledge_catalog.db"
+        missing_full_path = Path(self.tempdir.name) / "runtime" / "literature.db"
+        catalog_index.build_catalog(self.literature_db, catalog_path)
+        source = f"""
+from pathlib import Path
+import streamlit as st
+from unittest.mock import patch
+from app.ui import product_pages
+
+def fail_materialization(path):
+    raise AssertionError("full database must not be materialized")
+
+with (
+    patch.object(product_pages, "DEFAULT_KNOWLEDGE_CATALOG_PATH", Path({str(catalog_path)!r})),
+    patch.object(product_pages, "_literature_db_path", return_value=Path({str(missing_full_path)!r})),
+    patch.object(product_pages, "_prepare_literature_database", side_effect=fail_materialization),
+):
+    st.session_state.memory_user_id = "user_alpha"
+    st.session_state.memory_project_id = "project_one"
+    product_pages.render_knowledge_page()
+"""
+        app = AppTest.from_string(source, default_timeout=30).run()
+        self.assertEqual([], list(app.exception))
 
     def test_workspace_analytics_and_storage_are_scope_isolated(self) -> None:
         scope = product_pages._Scope("user_alpha", "project_one")
@@ -659,8 +765,16 @@ assert product_pages.render_product_page({view!r}) is True
         listing = product_pages._load_knowledge_documents(self.literature_db)
         facets = product_pages._load_knowledge_facets(self.literature_db)
         self.assertEqual(2, listing["total"])
+        self.assertEqual(
+            ["doc_juice", "doc_peel"],
+            [row["document_id"] for row in listing["rows"]],
+        )
         self.assertEqual(2, facets["stats"]["documents"])
         self.assertEqual(3, facets["stats"]["chunks"])
+        self.assertEqual(
+            {"橙汁": 1, "副产物": 1, "果胶": 1},
+            dict(facets["categories"]),
+        )
         self.assertTrue(
             product_pages._is_off_domain_knowledge_title(
                 "Near Field Communication for future payment systems"
