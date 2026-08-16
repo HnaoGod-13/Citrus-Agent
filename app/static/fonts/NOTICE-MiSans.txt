@@ -1,0 +1,11 @@
+This software uses MiSans for Simplified Chinese text.
+
+MiSans is loaded without modification from Xiaomi HyperOS's official
+variable web-font service:
+https://cdn-font.hyperos.mi.com/font/css?family=MiSans_VF:VF:Chinese_Simplify&display=swap
+
+Official font page:
+https://hyperos.mi.com/font/en/
+
+MiSans intellectual-property license agreement:
+https://hyperos.mi.com/font-download/MiSans%E5%AD%97%E4%BD%93%E7%9F%A5%E8%AF%86%E4%BA%A7%E6%9D%83%E8%AE%B8%E5%8F%AF%E5%8D%8F%E8%AE%AE.pdf

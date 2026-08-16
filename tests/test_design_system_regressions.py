@@ -6,6 +6,8 @@ ROOT = Path(__file__).resolve().parents[1]
 CSS_PATH = ROOT / "app" / "ui" / "design_system.css"
 COMPONENTS_PATH = ROOT / "app" / "ui" / "components.py"
 MAIN_PATH = ROOT / "app" / "main.py"
+CONFIG_PATH = ROOT / ".streamlit" / "config.toml"
+ROBOTO_PATH = ROOT / "app" / "static" / "fonts" / "RobotoVariable-Latin.woff2"
 
 
 class DesignSystemRegressionTests(unittest.TestCase):
@@ -60,11 +62,47 @@ class DesignSystemRegressionTests(unittest.TestCase):
 
     def test_font_stack_is_bundled_and_cross_platform(self) -> None:
         css = CSS_PATH.read_text(encoding="utf-8-sig")
+        config = CONFIG_PATH.read_text(encoding="utf-8-sig")
         self.assertIn(
-            '--font-ui: "CitrusInter", "CitrusNotoSansSC", sans-serif;',
+            '--font-ui: "CitrusRoboto", "MiSans VF", "CitrusNotoSansSC", sans-serif;',
             css,
         )
+        self.assertIn("cdn-font.hyperos.mi.com", css)
+        self.assertIn('family = "CitrusRoboto"', config)
+        self.assertIn(
+            'font = "CitrusRoboto, MiSans VF, CitrusNotoSansSC, sans-serif"',
+            config,
+        )
+        self.assertTrue(ROBOTO_PATH.is_file())
+        self.assertGreater(ROBOTO_PATH.stat().st_size, 40_000)
+        self.assertIn("--weight-regular: 330;", css)
+        self.assertIn("--weight-medium: 450;", css)
+        self.assertIn("--weight-semibold: 520;", css)
+        self.assertIn("baseFontWeight = 330", config)
         self.assertNotIn('"PingFang SC"', css)
+
+    def test_desktop_main_content_is_not_double_offset_when_sidebar_is_open(self) -> None:
+        css = CSS_PATH.read_text(encoding="utf-8-sig")
+        selector = (
+            'body:has([data-testid="stSidebar"][aria-expanded="false"]) '
+            '[data-testid="stMain"] {'
+        )
+        start = css.index(selector)
+        rule = css[start : css.index("}", start) + 1]
+
+        self.assertIn("margin-left: 0 !important;", rule)
+        self.assertNotIn("secondary-panel-width", rule)
+        self.assertIn("--main-pad-start: 36px;", css)
+        self.assertIn("--main-pad-end: 36px;", css)
+
+    def test_bilingual_product_headers_keep_close_readable_secondary_copy(self) -> None:
+        css = CSS_PATH.read_text(encoding="utf-8-sig")
+        selector = ".product-page-header .product-page-subtitle-en {"
+        start = css.index(selector)
+        rule = css[start : css.index("}", start) + 1]
+
+        self.assertIn("margin-top: 2px;", rule)
+        self.assertIn("--text-tertiary: #727272;", css)
 
     def test_desktop_navigation_hit_area_matches_visual_rows(self) -> None:
         css = CSS_PATH.read_text(encoding="utf-8-sig")

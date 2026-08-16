@@ -2,8 +2,8 @@
 enableStaticServing = true
 
 [[theme.fontFaces]]
-family = "CitrusInter"
-url = "app/static/fonts/InterVariable.woff2"
+family = "CitrusRoboto"
+url = "app/static/fonts/RobotoVariable-Latin.woff2"
 weight = "100 900"
 style = "normal"
 
@@ -19,10 +19,10 @@ primaryColor = "#111111"
 backgroundColor = "#FCFCFC"
 secondaryBackgroundColor = "#F7F7F7"
 textColor = "#111111"
-font = "CitrusInter, CitrusNotoSansSC, sans-serif"
-headingFont = "CitrusInter, CitrusNotoSansSC, sans-serif"
+font = "CitrusRoboto, MiSans VF, CitrusNotoSansSC, sans-serif"
+headingFont = "CitrusRoboto, MiSans VF, CitrusNotoSansSC, sans-serif"
 baseFontSize = 15
-baseFontWeight = 400
+baseFontWeight = 330
 baseRadius = "10px"
 buttonRadius = "10px"
 borderColor = "#E9E9EA"

@@ -1,3 +1,5 @@
+@import url("https://cdn-font.hyperos.mi.com/font/css?family=MiSans_VF:VF:Chinese_Simplify&display=swap");
+
 :root {
     color-scheme: light;
 
@@ -14,7 +16,7 @@
     --surface-panel: #f9f9f9;
     --text-primary: #111111;
     --text-secondary: #666666;
-    --text-tertiary: #929292;
+    --text-tertiary: #727272;
     --text-disabled: #b8b8b8;
     --border-subtle: #eeeeef;
     --border-default: #e9e9ea;
@@ -44,21 +46,21 @@
     --agent-accent-soft: var(--active);
 
     /* Typography */
-    --font-ui: "CitrusInter", "CitrusNotoSansSC", sans-serif;
+    --font-ui: "CitrusRoboto", "MiSans VF", "CitrusNotoSansSC", sans-serif;
     --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-    --font-display: 46px;
+    --font-display: 44px;
     --font-page-title: 30px;
     --font-section-title: 18px;
     --font-card-title: 15px;
     --font-body: 15px;
     --font-secondary: 13px;
     --font-caption: 11px;
-    --weight-regular: 400;
-    --weight-medium: 500;
-    --weight-semibold: 600;
+    --weight-regular: 330;
+    --weight-medium: 450;
+    --weight-semibold: 520;
     --leading-tight: 1.2;
     --leading-snug: 1.45;
-    --leading-body: 1.7;
+    --leading-body: 1.65;
 
     /* Spacing */
     --space-1: 4px;
@@ -94,13 +96,12 @@
     --primary-rail-width: 192px;
     --secondary-panel-width: 336px;
     --main-pad-start: 36px;
-    --main-pad-end: 104px;
+    --main-pad-end: 36px;
     --composer-pad-start: 30px;
-    --composer-pad-end: 98px;
+    --composer-pad-end: 30px;
     --content-max: 1000px;
     --page-content-max: 1040px;
     --reading-max: 820px;
-    --streamlit-collapsed-reserve: 36px;
     --task-grid-max: 682px;
     --z-rail: 1002;
     --z-composer: 998;
@@ -136,7 +137,22 @@ h6 {
     font-family: var(--font-ui) !important;
     font-optical-sizing: auto;
     font-synthesis: none;
+    font-kerning: normal;
     letter-spacing: 0 !important;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+    padding: 0 !important;
+    text-wrap: balance;
+}
+
+p {
+    text-wrap: pretty;
 }
 
 button,
@@ -156,6 +172,7 @@ body,
 
 body {
     font-size: var(--font-body);
+    font-weight: var(--weight-regular);
     letter-spacing: 0;
     line-height: var(--leading-body);
     -webkit-font-smoothing: antialiased;
@@ -297,7 +314,7 @@ header[data-testid="stHeader"] {
 
 .primary-nav-copy small {
     color: var(--text-secondary);
-    font-size: 11px;
+    font-size: 12px;
     font-weight: var(--weight-regular);
     letter-spacing: 0;
 }
@@ -561,9 +578,7 @@ header[data-testid="stHeader"] {
     }
 
     body:has([data-testid="stSidebar"][aria-expanded="false"]) [data-testid="stMain"] {
-        margin-left: calc(
-            var(--secondary-panel-width) - var(--streamlit-collapsed-reserve)
-        ) !important;
+        margin-left: 0 !important;
     }
 }
 
@@ -645,7 +660,7 @@ header[data-testid="stHeader"] {
 .brand-title {
     margin: 15px 0 0;
     color: var(--text-primary);
-    font-size: 19px;
+    font-size: 20px;
     font-weight: var(--weight-semibold);
     letter-spacing: 0;
     line-height: 1.25;
@@ -1242,7 +1257,7 @@ section[data-testid="stAppScrollToBottomContainer"]:has([class*="st-key-empty_st
 .hero-english {
     margin-top: 6px;
     color: var(--text-tertiary);
-    font-size: 14px;
+    font-size: 13px;
     font-weight: var(--weight-medium);
     letter-spacing: 0;
     line-height: 1.4;
@@ -1326,7 +1341,7 @@ section[data-testid="stAppScrollToBottomContainer"]:has([class*="st-key-empty_st
 .task-card-title-en {
     margin-top: 2px;
     color: var(--text-secondary);
-    font-size: 11px;
+    font-size: 12px;
     line-height: 1.4;
 }
 
@@ -1340,8 +1355,8 @@ section[data-testid="stAppScrollToBottomContainer"]:has([class*="st-key-empty_st
 .task-card-description-en {
     margin-top: 2px;
     color: var(--text-tertiary);
-    font-size: 11px;
-    line-height: 1.35;
+    font-size: 12px;
+    line-height: 1.45;
 }
 
 [class*="st-key-task_card_shell_"] div[data-testid="stButton"] {
@@ -2305,7 +2320,7 @@ div[data-testid="stDataFrame"] * {
 
 .product-page-eyebrow {
     color: var(--text-tertiary);
-    font-size: 11px;
+    font-size: 12px;
     font-weight: var(--weight-medium);
     letter-spacing: 0;
     text-transform: uppercase;
@@ -2329,7 +2344,7 @@ div[data-testid="stDataFrame"] * {
     line-height: 1.6;
 }
 
-.product-page-subtitle-en {
+.product-page-header .product-page-subtitle-en {
     margin-top: 2px;
     color: var(--text-tertiary);
     font-size: 12px;
@@ -2733,7 +2748,7 @@ div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label)
 .page-header-eyebrow {
     margin-top: 22px;
     color: var(--text-tertiary);
-    font-size: 11px;
+    font-size: 12px;
     font-weight: var(--weight-medium);
     letter-spacing: 0;
     text-transform: uppercase;
