@@ -1,16 +1,32 @@
 {
-  "format": "zstd-split-sqlite-v1",
-  "built_at": "2026-07-31T18:39:19+08:00",
-  "documents": 1899,
-  "chunks": 99874,
-  "original_size": 581816320,
-  "sha256": "9cbc89f7effa0748b402c4b74a074348335830c8988d8a67d540483101f89c1c",
-  "parts": [
-    "literature.db.zst.part001",
-    "literature.db.zst.part002"
-  ],
-  "part_sha256": {
-    "literature.db.zst.part001": "e1ee68af73a09f9b3404b085c633f2115f7a44e2d1002b52e38e6acec95dd744",
-    "literature.db.zst.part002": "0ab49fadb9d078179174c6d29966bbdda1115404c23103f141944021572f1019"
-  }
+    "format":  "zstd-split-sqlite-v1",
+    "built_at":  "2026-08-16T19:28:33+08:00",
+    "documents":  17300,
+    "chunks":  365119,
+    "original_size":  2525892608,
+    "sha256":  "e198fa20f87f8fcf5d53eb5d3e52613f13332652ba9bc31ca0355146fcf94dd6",
+    "parts":  [
+                  "literature.db.zst.part001",
+                  "literature.db.zst.part002",
+                  "literature.db.zst.part003",
+                  "literature.db.zst.part004",
+                  "literature.db.zst.part005",
+                  "literature.db.zst.part006",
+                  "literature.db.zst.part007",
+                  "literature.db.zst.part008",
+                  "literature.db.zst.part009",
+                  "literature.db.zst.part010"
+              ],
+    "part_sha256":  {
+                        "literature.db.zst.part001":  "47dc2bc8ab9af630999ae6502da3f4dcda64c311898d338c7de67ec3f7e508dd",
+                        "literature.db.zst.part002":  "57e24509cfd4776a20adf7eff175cb330d180fd4fa7cdb67d4a3ed1197ce8496",
+                        "literature.db.zst.part003":  "a33044f93647e8225107a4dcd2e383fc26f3a6e646d151bef7b370db46811d02",
+                        "literature.db.zst.part004":  "044e89397e14d3bdaf90183a4a56c16ef69c0122eef4a3dbacf0d0abf45967e6",
+                        "literature.db.zst.part005":  "f014efb92b8269f3ab623e83f758cc916bfab310e08b3740142909807a6d9466",
+                        "literature.db.zst.part006":  "89167e598662dd1622c8530fc25709a4875389ce937008850f82905cd46d81c2",
+                        "literature.db.zst.part007":  "38c8314c4651d803505891a085d771aae3dc2c6ccfac4bb2a4bdd0dd934afd01",
+                        "literature.db.zst.part008":  "6c7326970adcf2dea97e56e391584dbc781abe81af2f080adaac493a8b80b6d4",
+                        "literature.db.zst.part009":  "7e4f7706b2d6b3cbcee8607512701dbd0912634000329d4b9b6ee93f46c3991f",
+                        "literature.db.zst.part010":  "719a137b0c311e328487c908630ad8029686a88a65bf98b2ffe5f3376f6aa59e"
+                    }
 }
