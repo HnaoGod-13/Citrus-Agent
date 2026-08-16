@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
@@ -27,6 +28,7 @@ from .tools import (
 ROOT = Path(__file__).resolve().parents[1]
 REPORT_DIR = ROOT / "outputs" / "reports"
 AUDIT_LOG = ROOT / "logs" / "audit.jsonl"
+_AUDIT_WRITE_LOCK = threading.Lock()
 
 
 @dataclass
@@ -307,7 +309,7 @@ def run_demo_agent(
 
 def save_report(markdown: str, batch_id: str) -> Path:
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
-    filename = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{batch_id or 'batch'}.md"
+    filename = f"{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}_{batch_id or 'batch'}.md"
     path = REPORT_DIR / filename
     path.write_text(markdown, encoding="utf-8")
     return path
@@ -341,8 +343,9 @@ def write_audit_event(result: dict[str, Any], report_path: Path) -> None:
         "report_path": str(report_path),
         "tool_result_path": str(tool_result_path),
     }
-    with AUDIT_LOG.open("a", encoding="utf-8") as file:
-        file.write(json.dumps(event, ensure_ascii=False) + "\n")
+    with _AUDIT_WRITE_LOCK:
+        with AUDIT_LOG.open("a", encoding="utf-8") as file:
+            file.write(json.dumps(event, ensure_ascii=False) + "\n")
 
 
 def serialize_result(result: dict[str, Any]) -> dict[str, Any]:

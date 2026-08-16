@@ -226,25 +226,20 @@ class EmptyStateProgressLayoutTests(unittest.TestCase):
             reduced_motion_rule.index(spinner_override),
         )
 
-    def test_only_the_first_progress_update_requests_reveal(self) -> None:
+    def test_background_progress_reveals_once_without_rendering_from_worker(self) -> None:
         source = Path(app_main.__file__).read_text(encoding="utf-8-sig")
-        handle_prompt = source[
-            source.index("def handle_prompt") : source.index("def main()")
+        monitor = source[
+            source.index("def render_agent_job_monitor") : source.index("def handle_prompt")
+        ]
+        worker = source[
+            source.index("def _execute_agent_job") : source.index("def _active_agent_job_snapshot")
         ]
 
-        self.assertIn("progress_revealed = False", handle_prompt)
-        self.assertIn("nonlocal progress_revealed", handle_prompt)
-        self.assertIn(
-            "reveal_id = user_message_id if should_reveal_progress and not progress_revealed else None",
-            handle_prompt,
-        )
-        self.assertEqual(1, handle_prompt.count("render_agent_progress("))
-        for message in (
-            "正在启动批次分析流程",
-            "正在读取图片并回答本轮问题",
-            "正在全面检索本地文献并组织专业回答",
-        ):
-            self.assertIn(f'update_progress("{message}")', handle_prompt)
+        self.assertIn("active_agent_progress_revealed", monitor)
+        self.assertIn("reveal_id = snapshot.job_id", monitor)
+        self.assertEqual(1, monitor.count("render_agent_progress("))
+        self.assertNotIn("render_agent_progress(", worker)
+        self.assertNotIn("st.session_state", worker)
 
 
 class ProductRouteStateTests(unittest.TestCase):

@@ -191,7 +191,10 @@ class DesignSystemRegressionTests(unittest.TestCase):
     def test_chat_composer_keeps_bilingual_placeholder(self) -> None:
         main_source = MAIN_PATH.read_text(encoding="utf-8-sig")
         self.assertIn(
-            'st.chat_input("输入问题或粘贴批次信息…\\nAsk or paste batch data…")',
+            'typed_prompt = st.chat_input(\n'
+            '        "输入问题或粘贴批次信息…\\nAsk or paste batch data…",\n'
+            '        disabled=active_job is not None,\n'
+            '    )',
             main_source,
         )
 

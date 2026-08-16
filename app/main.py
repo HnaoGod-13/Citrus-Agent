@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from agent import (
+    background_tasks as agent_background,
     llm_client,
     memory as agent_memory,
     memory_config,
@@ -60,6 +61,15 @@ def _get_memory_manager(storage_version: int) -> agent_memory.MemoryManager:
 
 def get_memory_manager() -> agent_memory.MemoryManager:
     return _get_memory_manager(agent_memory.MESSAGE_STORAGE_VERSION)
+
+
+def _release_agent_task_runner(runner: agent_background.TaskRunner) -> None:
+    runner.shutdown()
+
+
+@st.cache_resource(show_spinner=False, on_release=_release_agent_task_runner)
+def get_agent_task_runner() -> agent_background.TaskRunner:
+    return agent_background.TaskRunner()
 
 
 EXAMPLE_PROMPTS = [
@@ -1207,6 +1217,8 @@ def clear_active_conversation_state(*, clear_sidebar: bool = False) -> None:
 def start_new_conversation() -> None:
     session_id = f"s_{uuid4().hex}"
     clear_active_conversation_state(clear_sidebar=True)
+    st.session_state.active_agent_job_id = ""
+    st.session_state.active_agent_progress_revealed = False
     st.session_state.memory_session_id = session_id
     st.session_state.memory_restored_session = session_id
     _set_query_value("sid", session_id)
@@ -1230,6 +1242,8 @@ def init_state() -> None:
     st.session_state.setdefault("image_uploader_version", 0)
     st.session_state.setdefault("sidebar_draft_observation", "")
     st.session_state.setdefault("mobile_secondary_open", False)
+    st.session_state.setdefault("active_agent_job_id", "")
+    st.session_state.setdefault("active_agent_progress_revealed", False)
     initialize_memory_identity()
     if st.session_state.clear_sidebar_inputs:
         reset_sidebar_inputs()
@@ -2376,6 +2390,299 @@ def finalize_memory_turn(
 
 
 
+def _current_agent_scope() -> agent_background.TaskScope:
+    return (
+        str(st.session_state.memory_user_id),
+        str(st.session_state.memory_project_id),
+        str(st.session_state.memory_session_id),
+    )
+
+
+def _execute_agent_job(
+    request: dict[str, Any],
+    update_progress: agent_background.ProgressCallback,
+) -> dict[str, Any]:
+    prompt = str(request["prompt"])
+    resolved_prompt = str(request["resolved_prompt"])
+    api_key = str(request.get("api_key") or "")
+    history = list(request.get("history") or [])
+    batch_for_turn = request.get("batch_for_turn")
+    effective_observation = str(request.get("effective_observation") or "")
+    has_image = bool(request.get("has_image"))
+    image_bytes = request.get("image_bytes")
+    image_mime_type = str(request.get("image_mime_type") or "image/jpeg")
+    memory_context = dict(request.get("memory_context") or {})
+    missing_inputs = list(request.get("missing_inputs") or [])
+    stored_image_path = str(request.get("stored_image_path") or "")
+    memory_errors = list(request.get("memory_errors") or [])
+    vision_memory = dict(request.get("vision_memory") or {})
+    previous_result = request.get("previous_result") or {}
+
+    assistant_text = ""
+    assistant_message: dict[str, Any] = {}
+    mode = "chat"
+    result: dict[str, Any] = {}
+    payload: dict[str, Any] = {}
+    vision_payload: dict[str, Any] = {}
+    general_trace: dict[str, Any] = {}
+    state_updates: dict[str, Any] = {}
+
+    try:
+        if request.get("is_previous_evidence_request"):
+            update_progress("正在整理上一轮使用的文献证据")
+            assistant_text = orchestrator.build_previous_evidence_answer(previous_result)
+            result = previous_result
+            assistant_message = {"role": "assistant", "content": assistant_text}
+            mode = "previous_evidence"
+        elif request.get("should_run_full_analysis"):
+            update_progress("正在启动批次分析流程")
+            try:
+                payload = orchestrator.run_analysis_turn(
+                    user_prompt=resolved_prompt,
+                    api_key=api_key,
+                    history=history,
+                    current_batch=batch_for_turn,
+                    manual_observation=effective_observation,
+                    has_image=has_image,
+                    image_bytes=image_bytes,
+                    image_mime_type=image_mime_type,
+                    progress_callback=update_progress,
+                    memory_context=memory_context,
+                )
+            except Exception as error:
+                general_trace["error"] = str(error)
+                assistant_text = f"本轮批次分析未能完成：{error}"
+                assistant_message = {"role": "assistant", "content": assistant_text}
+                mode = "analysis_error"
+            else:
+                result = payload["result"]
+                if stored_image_path:
+                    payload["stored_image_path"] = stored_image_path
+                assistant_text = str(payload.get("answer") or payload.get("summary") or "").strip()
+                if payload.get("vision_result"):
+                    state_updates["last_vision_context"] = orchestrator.build_vision_memory(payload)
+                if has_image:
+                    vision_payload = payload
+                assistant_message = {
+                    "role": "assistant",
+                    "kind": "analysis",
+                    "content": assistant_text,
+                    "payload": payload,
+                }
+                state_updates["current_batch"] = payload["batch"]
+                state_updates["last_result"] = payload["result"]
+                mode = "analysis"
+        elif has_image and image_bytes:
+            general_trace["model_name"] = get_vision_model()
+            if stored_image_path:
+                vision_payload["stored_image_path"] = stored_image_path
+            update_progress("正在读取图片并回答本轮问题")
+            try:
+                vision_payload = orchestrator.run_vision_turn(
+                    user_prompt=prompt,
+                    image_bytes=image_bytes,
+                    image_mime_type=image_mime_type,
+                )
+                if stored_image_path:
+                    vision_payload["stored_image_path"] = stored_image_path
+                assistant_text = vision_payload["answer"]
+                state_updates["last_vision_context"] = orchestrator.build_vision_memory(vision_payload)
+                if orchestrator.should_request_batch_data(
+                    resolved_prompt,
+                    current_batch=batch_for_turn,
+                    manual_observation=effective_observation,
+                    has_image=has_image,
+                ):
+                    assistant_text += (
+                        "\n\n图片已经纳入本轮分析。如需进一步生成加工路线分级和报告，"
+                        + orchestrator.build_batch_data_request(missing_inputs)
+                    )
+            except Exception as error:
+                state_updates["last_vision_context"] = None
+                vision_payload["vision_status"] = "failed"
+                assistant_text = f"图片已经收到，但视觉模型分析失败：{error}"
+                general_trace["error"] = str(error)
+            assistant_message = {
+                "role": "assistant",
+                "content": assistant_text,
+                "vision_result": vision_payload.get("vision_result") or {},
+            }
+            mode = "vision"
+        elif orchestrator.should_request_batch_data(
+            resolved_prompt,
+            current_batch=batch_for_turn,
+            manual_observation=effective_observation,
+            has_image=has_image,
+        ):
+            update_progress("正在核对批次信息")
+            assistant_text = orchestrator.build_batch_data_request(missing_inputs)
+            assistant_message = {"role": "assistant", "content": assistant_text}
+            mode = "request_inputs"
+        else:
+            update_progress("正在全面检索本地文献并组织专业回答")
+            try:
+                assistant_text, general_trace = run_general_turn(
+                    resolved_prompt,
+                    api_key,
+                    history,
+                    memory_context=memory_context,
+                )
+                assistant_text = orchestrator.ensure_vision_follow_up_answer(
+                    assistant_text,
+                    prompt,
+                    vision_memory,
+                )
+            except Exception as error:
+                general_trace["error"] = str(error)
+                assistant_text = f"本轮检索或回答生成失败：{error}"
+            assistant_message = {"role": "assistant", "content": assistant_text}
+    except Exception as error:
+        general_trace["error"] = str(error)
+        assistant_text = f"本轮 Agent 任务未能完成：{error}"
+        assistant_message = {"role": "assistant", "content": assistant_text}
+        mode = "background_error"
+
+    if memory_errors:
+        existing_error = str(general_trace.get("error") or "").strip()
+        general_trace["error"] = "；".join(
+            item for item in [existing_error, *memory_errors] if item
+        )
+
+    assistant_message.setdefault("message_id", f"msg_{uuid4().hex}")
+    manager = agent_memory.MemoryManager()
+    try:
+        finalize_memory_turn(
+            manager=manager,
+            user_id=str(request["user_id"]),
+            session_id=str(request["session_id"]),
+            project_id=str(request["project_id"]),
+            prompt=prompt,
+            assistant_message=assistant_message,
+            assistant_text=assistant_text,
+            mode=mode,
+            memory_context=memory_context,
+            missing_inputs=missing_inputs,
+            result=result,
+            payload=payload,
+            vision_payload=vision_payload,
+            general_trace=general_trace,
+        )
+    except Exception as error:
+        raise RuntimeError(f"回答生成完成，但结果保存失败：{error}") from error
+
+    persisted_messages = manager.restore_session_messages(
+        str(request["user_id"]),
+        str(request["session_id"]),
+        str(request["project_id"]),
+        limit=20,
+    )
+    assistant_message_id = str(assistant_message.get("message_id") or "")
+    if not any(
+        str(item.get("message_id") or "") == assistant_message_id
+        for item in persisted_messages
+    ):
+        raise RuntimeError("回答生成完成，但未能写入对话历史，请重试。")
+
+    return {
+        "scope": (
+            str(request["user_id"]),
+            str(request["project_id"]),
+            str(request["session_id"]),
+        ),
+        "assistant_message": assistant_message,
+        "assistant_text": assistant_text,
+        "mode": mode,
+        "state_updates": state_updates,
+    }
+
+
+def _active_agent_job_snapshot() -> agent_background.TaskSnapshot | None:
+    runner = get_agent_task_runner()
+    scope = _current_agent_scope()
+    job_id = str(st.session_state.get("active_agent_job_id") or "")
+    snapshot = runner.snapshot(job_id) if job_id else None
+    if snapshot is not None and snapshot.scope != scope:
+        st.session_state.active_agent_job_id = ""
+        snapshot = None
+    if snapshot is None:
+        job_id = runner.active_job(scope)
+        if job_id:
+            st.session_state.active_agent_job_id = job_id
+            snapshot = runner.snapshot(job_id)
+    return snapshot
+
+
+def _append_agent_job_outcome(outcome: dict[str, Any]) -> bool:
+    if tuple(outcome.get("scope") or ()) != _current_agent_scope():
+        return False
+    assistant_message = dict(outcome.get("assistant_message") or {})
+    message_id = str(assistant_message.get("message_id") or "")
+    existing_ids = {
+        str(item.get("message_id") or "")
+        for item in st.session_state.agent_messages
+        if isinstance(item, dict)
+    }
+    if not message_id or message_id not in existing_ids:
+        st.session_state.agent_messages.append(assistant_message)
+    for key, value in dict(outcome.get("state_updates") or {}).items():
+        if key in {"current_batch", "last_result", "last_vision_context"}:
+            st.session_state[key] = value
+    st.session_state.clear_sidebar_inputs = True
+    st.session_state.restore_main_scroll_position = True
+    return True
+
+
+def sync_active_agent_job() -> bool:
+    snapshot = _active_agent_job_snapshot()
+    if snapshot is None or not snapshot.done:
+        return False
+    runner = get_agent_task_runner()
+    try:
+        outcome = runner.result(snapshot.job_id)
+    except Exception as error:
+        outcome = {
+            "scope": snapshot.scope,
+            "assistant_message": {
+                "role": "assistant",
+                "content": f"后台 Agent 任务未能完成：{error}",
+                "message_id": f"msg_{uuid4().hex}",
+            },
+            "state_updates": {},
+        }
+        assistant_message = outcome["assistant_message"]
+        try:
+            get_memory_manager().record_message(
+                snapshot.scope[0],
+                snapshot.scope[2],
+                snapshot.scope[1],
+                "assistant",
+                assistant_message["content"],
+                message_id=assistant_message["message_id"],
+            )
+        except agent_memory.MemoryManagerError:
+            pass
+    applied = _append_agent_job_outcome(outcome)
+    if str(st.session_state.get("active_agent_job_id") or "") == snapshot.job_id:
+        st.session_state.active_agent_job_id = ""
+        st.session_state.active_agent_progress_revealed = False
+    return applied
+
+
+@st.fragment(run_every=0.8)
+def render_agent_job_monitor(active_view: str) -> None:
+    if sync_active_agent_job():
+        st.rerun()
+    snapshot = _active_agent_job_snapshot()
+    if snapshot is None:
+        return
+    reveal_id = None
+    if active_view == "chat" and not bool(st.session_state.active_agent_progress_revealed):
+        reveal_id = snapshot.job_id
+        st.session_state.active_agent_progress_revealed = True
+    with st.container(key="background_agent_progress_host"):
+        render_agent_progress(st.empty(), snapshot.progress, reveal_id=reveal_id)
+
+
 def handle_prompt(
     prompt: str,
     api_key: str,
@@ -2385,6 +2692,8 @@ def handle_prompt(
     image_mime_type: str,
     progress_slot: Any | None = None,
 ) -> None:
+    if _active_agent_job_snapshot() is not None:
+        return
     manager = get_memory_manager()
     user_id = str(st.session_state.memory_user_id)
     session_id = str(st.session_state.memory_session_id)
@@ -2432,20 +2741,18 @@ def handle_prompt(
             metadata=user_metadata,
         )
     except agent_memory.MemoryManagerError as error:
-        memory_errors.append(str(error))
+        assistant_message = {
+            "role": "assistant",
+            "content": f"问题未能保存，Agent 任务没有启动：{error}",
+            "message_id": f"msg_{uuid4().hex}",
+        }
+        st.session_state.agent_messages.append(assistant_message)
+        st.session_state.clear_sidebar_inputs = True
+        st.session_state.restore_main_scroll_position = True
+        st.rerun()
+        return
 
     live_orchestrator = orchestrator
-    should_reveal_progress = progress_slot is not None
-    if progress_slot is None:
-        progress_slot = st.empty()
-    progress_revealed = False
-
-    def update_progress(message: str) -> None:
-        nonlocal progress_revealed
-        reveal_id = user_message_id if should_reveal_progress and not progress_revealed else None
-        render_agent_progress(progress_slot, message, reveal_id=reveal_id)
-        progress_revealed = True
-
     vision_memory = st.session_state.last_vision_context or live_orchestrator.recover_vision_memory_from_messages(
         st.session_state.agent_messages
     )
@@ -2519,150 +2826,64 @@ def handle_prompt(
         memory_errors.append(str(error))
         memory_context = {}
 
-    assistant_message: dict[str, Any]
-    assistant_text = ""
-    mode = "chat"
-    result: dict[str, Any] = {}
-    payload: dict[str, Any] = {}
-    vision_payload: dict[str, Any] = {}
-    general_trace: dict[str, Any] = {}
-
-    if is_previous_evidence_request:
-        progress_slot.empty()
-        assistant_text = live_orchestrator.build_previous_evidence_answer(st.session_state.last_result)
-        result = st.session_state.last_result or {}
-        assistant_message = {"role": "assistant", "content": assistant_text}
-        mode = "previous_evidence"
-    elif should_run_full_analysis:
-        update_progress("正在启动批次分析流程")
-        try:
-            payload = live_orchestrator.run_analysis_turn(
-                user_prompt=resolved_prompt,
-                api_key=api_key,
-                history=history,
-                current_batch=batch_for_turn,
-                manual_observation=effective_observation,
-                has_image=has_image,
-                image_bytes=image_bytes,
-                image_mime_type=image_mime_type,
-                progress_callback=update_progress,
-                memory_context=memory_context,
-            )
-        except Exception as error:
-            general_trace["error"] = str(error)
-            assistant_text = f"本轮批次分析未能完成：{error}"
-            assistant_message = {"role": "assistant", "content": assistant_text}
-            mode = "analysis_error"
-            progress_slot.empty()
-        else:
-            progress_slot.empty()
-            st.session_state.current_batch = payload["batch"]
-            st.session_state.last_result = payload["result"]
-            result = payload["result"]
-            if stored_image_path:
-                payload["stored_image_path"] = stored_image_path
-            assistant_text = str(payload.get("answer") or payload.get("summary") or "").strip()
-            if payload.get("vision_result"):
-                st.session_state.last_vision_context = live_orchestrator.build_vision_memory(payload)
-            if has_image:
-                vision_payload = payload
-            assistant_message = {
-                "role": "assistant",
-                "kind": "analysis",
-                "content": assistant_text,
-                "payload": payload,
-            }
-            mode = "analysis"
-    elif has_image and image_bytes:
-        general_trace["model_name"] = get_vision_model()
-        if stored_image_path:
-            vision_payload["stored_image_path"] = stored_image_path
-        update_progress("正在读取图片并回答本轮问题")
-        try:
-            vision_payload = live_orchestrator.run_vision_turn(
-                user_prompt=prompt,
-                image_bytes=image_bytes,
-                image_mime_type=image_mime_type,
-            )
-            if stored_image_path:
-                vision_payload["stored_image_path"] = stored_image_path
-            assistant_text = vision_payload["answer"]
-            st.session_state.last_vision_context = live_orchestrator.build_vision_memory(vision_payload)
-            if live_orchestrator.should_request_batch_data(
-                resolved_prompt,
-                current_batch=batch_for_turn,
-                manual_observation=effective_observation,
-                has_image=has_image,
-            ):
-                assistant_text += (
-                    "\n\n图片已经纳入本轮分析。如需进一步生成加工路线分级和报告，"
-                    + live_orchestrator.build_batch_data_request(missing_inputs)
-                )
-        except Exception as error:
-            st.session_state.last_vision_context = None
-            vision_payload["vision_status"] = "failed"
-            assistant_text = f"图片已经收到，但视觉模型分析失败：{error}"
-            general_trace["error"] = str(error)
-        finally:
-            progress_slot.empty()
+    job_id = f"job_{uuid4().hex}"
+    scope: agent_background.TaskScope = (user_id, project_id, session_id)
+    request = {
+        "job_id": job_id,
+        "user_id": user_id,
+        "project_id": project_id,
+        "session_id": session_id,
+        "prompt": prompt,
+        "resolved_prompt": resolved_prompt,
+        "api_key": api_key,
+        "history": history,
+        "batch_for_turn": batch_for_turn,
+        "effective_observation": effective_observation,
+        "has_image": has_image,
+        "image_bytes": image_bytes,
+        "image_mime_type": image_mime_type,
+        "memory_context": memory_context,
+        "missing_inputs": missing_inputs,
+        "stored_image_path": stored_image_path,
+        "memory_errors": memory_errors,
+        "vision_memory": vision_memory,
+        "previous_result": st.session_state.last_result or {},
+        "is_previous_evidence_request": is_previous_evidence_request,
+        "should_run_full_analysis": should_run_full_analysis,
+    }
+    try:
+        get_agent_task_runner().submit(
+            job_id,
+            scope,
+            lambda callback: _execute_agent_job(request, callback),
+        )
+    except Exception as error:
         assistant_message = {
             "role": "assistant",
-            "content": assistant_text,
-            "vision_result": vision_payload.get("vision_result") or {},
+            "content": f"Agent 任务未能启动：{error}",
+            "message_id": f"msg_{uuid4().hex}",
         }
-        mode = "vision"
-    elif live_orchestrator.should_request_batch_data(
-        resolved_prompt,
-        current_batch=batch_for_turn,
-        manual_observation=effective_observation,
-        has_image=has_image,
-    ):
-        assistant_text = live_orchestrator.build_batch_data_request(missing_inputs)
-        assistant_message = {"role": "assistant", "content": assistant_text}
-        mode = "request_inputs"
-    else:
-        update_progress("正在全面检索本地文献并组织专业回答")
+        st.session_state.agent_messages.append(assistant_message)
         try:
-            assistant_text, general_trace = run_general_turn(
-                resolved_prompt,
-                api_key,
-                history,
-                memory_context=memory_context,
+            manager.record_message(
+                user_id,
+                session_id,
+                project_id,
+                "assistant",
+                assistant_message["content"],
+                message_id=assistant_message["message_id"],
             )
-            assistant_text = live_orchestrator.ensure_vision_follow_up_answer(
-                assistant_text,
-                prompt,
-                vision_memory,
+        except agent_memory.MemoryManagerError:
+            pass
+    else:
+        st.session_state.active_agent_job_id = job_id
+        st.session_state.active_agent_progress_revealed = progress_slot is not None
+        if progress_slot is not None:
+            render_agent_progress(
+                progress_slot,
+                "正在启动 Agent 任务",
+                reveal_id=user_message_id,
             )
-        except Exception as error:
-            general_trace["error"] = str(error)
-            assistant_text = f"本轮检索或回答生成失败：{error}"
-        finally:
-            progress_slot.empty()
-        assistant_message = {"role": "assistant", "content": assistant_text}
-
-    if memory_errors:
-        existing_error = str(general_trace.get("error") or "").strip()
-        general_trace["error"] = "；".join(
-            item for item in [existing_error, *memory_errors] if item
-        )
-    st.session_state.agent_messages.append(assistant_message)
-    finalize_memory_turn(
-        manager=manager,
-        user_id=user_id,
-        session_id=session_id,
-        project_id=project_id,
-        prompt=prompt,
-        assistant_message=assistant_message,
-        assistant_text=assistant_text,
-        mode=mode,
-        memory_context=memory_context,
-        missing_inputs=missing_inputs,
-        result=result,
-        payload=payload,
-        vision_payload=vision_payload,
-        general_trace=general_trace,
-    )
 
     st.session_state.clear_sidebar_inputs = True
     st.session_state.restore_main_scroll_position = True
@@ -2679,6 +2900,7 @@ def main() -> None:
     refresh_ui_modules()
     inject_style()
     init_state()
+    sync_active_agent_job()
     active_view = current_product_view()
     render_navigation_history_sync()
     restore_scroll_position = bool(st.session_state.pop("restore_main_scroll_position", False))
@@ -2710,6 +2932,20 @@ def main() -> None:
     api_key = get_deepseek_api_key()
     manual_observation, has_image, image_bytes, image_mime_type = render_sidebar(active_view)
 
+    if active_view == "chat":
+        if not st.session_state.agent_messages:
+            selected_prompt, progress_slot = render_empty_state(api_key)
+        else:
+            selected_prompt = None
+            progress_slot = None
+            st.markdown('<div class="chat-transcript-start"></div>', unsafe_allow_html=True)
+            for message in st.session_state.agent_messages:
+                render_message(message)
+
+    active_job = _active_agent_job_snapshot()
+    if active_job is not None:
+        render_agent_job_monitor(active_view)
+
     if active_view != "chat":
         with st.container(key="product_page_shell"):
             ui_product_pages.render_product_page(active_view)
@@ -2720,22 +2956,16 @@ def main() -> None:
         )
         return
 
-    if not st.session_state.agent_messages:
-        selected_prompt, progress_slot = render_empty_state(api_key)
-    else:
-        selected_prompt = None
-        progress_slot = None
-        st.markdown('<div class="chat-transcript-start"></div>', unsafe_allow_html=True)
-        for message in st.session_state.agent_messages:
-            render_message(message)
-
     clearance_state = "is-transcript" if st.session_state.agent_messages else "is-empty"
     st.markdown(
         f'<div class="mobile-composer-clearance {clearance_state}" aria-hidden="true"></div>',
         unsafe_allow_html=True,
     )
 
-    typed_prompt = st.chat_input("输入问题或粘贴批次信息…\nAsk or paste batch data…")
+    typed_prompt = st.chat_input(
+        "输入问题或粘贴批次信息…\nAsk or paste batch data…",
+        disabled=active_job is not None,
+    )
     render_scroll_position_manager(
         restore=restore_scroll_position,
         reset_to_top=reset_scroll_position,
