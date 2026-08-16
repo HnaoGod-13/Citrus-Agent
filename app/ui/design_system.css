@@ -1342,6 +1342,7 @@ section[data-testid="stBottom"],
     left: 22px;
     width: 20px;
     height: 20px;
+    transform: translateY(-50%);
     pointer-events: none;
     background: center / 20px 20px no-repeat url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23111111' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48'/%3E%3C/svg%3E");
 }
@@ -1362,7 +1363,7 @@ section[data-testid="stBottom"],
 [data-testid="stChatInput"] input {
     min-height: 88px !important;
     box-sizing: border-box !important;
-    padding: 20px 82px 20px 68px !important;
+    padding: 21px 82px 21px 68px !important;
     color: var(--text-primary) !important;
     background: var(--surface) !important;
     border: 1px solid var(--border) !important;
@@ -3548,14 +3549,14 @@ div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label)
     [data-testid="stChatInput"] textarea,
     [data-testid="stChatInput"] input {
         min-height: 76px !important;
-        padding: 14px 60px 14px 52px !important;
+        padding: 17px 60px 17px 52px !important;
         font-size: 13px !important;
         line-height: 20px !important;
     }
 
     [data-testid="stChatInput"] button {
         right: 12px;
-        bottom: 11px;
+        bottom: 18px;
         width: 40px;
         height: 40px;
         min-height: 40px;
