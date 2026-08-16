@@ -7,3 +7,4 @@ Pillow>=12.2.0
 pillow-heif>=1.5.0
 zstandard>=0.23.0
 # Full redeploy marker: load atomic sample-memory persistence (2026-08-02).
+# Literature package cache refresh marker (2026-08-16).

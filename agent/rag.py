@@ -114,20 +114,55 @@ ENGLISH_STOPWORDS = {
 _DB_BUILD_LOCK = threading.Lock()
 
 
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        while block := source.read(4 * 1024 * 1024):
+            digest.update(block)
+    return digest.hexdigest().lower()
+
+
+def _database_matches_package(path: Path, manifest: dict[str, Any]) -> bool:
+    if not path.exists() or path.stat().st_size <= 0:
+        return False
+    expected_size = int(manifest.get("original_size") or 0)
+    expected_hash = str(manifest.get("sha256") or "").lower()
+    if expected_size and path.stat().st_size != expected_size:
+        return False
+    if not expected_hash:
+        return True
+    marker = path.with_name(f"{path.name}.sha256")
+    try:
+        if marker.read_text(encoding="utf-8").strip().lower() == expected_hash:
+            return True
+    except OSError:
+        pass
+    if _file_sha256(path) != expected_hash:
+        return False
+    try:
+        marker.write_text(expected_hash + "\n", encoding="utf-8")
+    except OSError:
+        pass
+    return True
+
+
 def ensure_literature_database(path: Path = LITERATURE_DB_PATH) -> bool:
     """Materialize the packaged full index once on cloud deployments."""
-    if path.exists() and path.stat().st_size > 0:
-        return True
     manifest_path = LITERATURE_PACKAGE_DIR / "manifest.json"
     if path != LITERATURE_DB_PATH or not manifest_path.exists():
-        return False
+        return path.exists() and path.stat().st_size > 0
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return path.exists() and path.stat().st_size > 0
+    if _database_matches_package(path, manifest):
+        return True
     with _DB_BUILD_LOCK:
-        if path.exists() and path.stat().st_size > 0:
+        if _database_matches_package(path, manifest):
             return True
         try:
             import zstandard as zstd
 
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             parts = [LITERATURE_PACKAGE_DIR / str(name) for name in manifest.get("parts", [])]
             if not parts or any(not part.exists() for part in parts):
                 return False
@@ -156,6 +191,14 @@ def ensure_literature_database(path: Path = LITERATURE_DB_PATH) -> bool:
                 temporary.unlink(missing_ok=True)
                 return False
             os.replace(temporary, path)
+            marker = path.with_name(f"{path.name}.sha256")
+            try:
+                if expected_hash:
+                    marker.write_text(expected_hash + "\n", encoding="utf-8")
+                else:
+                    marker.unlink(missing_ok=True)
+            except OSError:
+                pass
             return True
         except Exception:
             temporary = path.with_name(f"{path.name}.{os.getpid()}.part")

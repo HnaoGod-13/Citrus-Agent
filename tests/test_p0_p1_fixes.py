@@ -130,6 +130,37 @@ class PackagedDatabaseTests(unittest.TestCase):
                 self.assertTrue(rag.ensure_literature_database(target))
             self.assertEqual(target.read_bytes(), payload)
 
+    def test_stale_cached_database_is_replaced_when_package_changes(self) -> None:
+        payload = b"new-sqlite-payload" * 1000
+        compressed = zstandard.ZstdCompressor(level=3).compress(payload)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            package = root / "package"
+            package.mkdir()
+            (package / "part001").write_bytes(compressed)
+            (package / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        "parts": ["part001"],
+                        "original_size": len(payload),
+                        "sha256": hashlib.sha256(payload).hexdigest(),
+                    }
+                ),
+                encoding="utf-8",
+            )
+            target = root / "cache" / "literature.db"
+            target.parent.mkdir()
+            target.write_bytes(b"stale-database")
+            with patch.object(rag, "LITERATURE_PACKAGE_DIR", package), patch.object(
+                rag, "LITERATURE_DB_PATH", target
+            ):
+                self.assertTrue(rag.ensure_literature_database(target))
+            self.assertEqual(target.read_bytes(), payload)
+            self.assertEqual(
+                target.with_name(f"{target.name}.sha256").read_text(encoding="utf-8").strip(),
+                hashlib.sha256(payload).hexdigest(),
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
