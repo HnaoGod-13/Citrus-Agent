@@ -131,6 +131,54 @@ class DesignSystemRegressionTests(unittest.TestCase):
         self.assertNotIn("SFMono-Regular", css)
         self.assertNotIn("Consolas", css)
 
+    def test_report_draft_has_scoped_document_typography_and_rule_spacing(self) -> None:
+        css = CSS_PATH.read_text(encoding="utf-8-sig")
+        scope = (
+            ':is(.analysis-shell, [class*="st-key-analysis_shell_"])\n'
+            '    div[data-testid="stExpander"]:has(.report-anchor)'
+        )
+        report_start = css.index("/* Report draft typography")
+        report_end = css.index('div[data-testid="stDataFrame"] {', report_start)
+        report_css = css[report_start:report_end]
+
+        self.assertIn(scope, report_css)
+        self.assertIn("--report-body-size: 14px;", report_css)
+        self.assertIn("--report-body-leading: 1.72;", report_css)
+        self.assertIn(
+            '[data-testid="stElementContainer"]:has(.report-anchor) {\n'
+            "    display: none !important;",
+            report_css,
+        )
+        for selector, size, line_height in (
+            ('[data-testid="stMarkdownContainer"] h1 {', "22px", "1.35"),
+            ('[data-testid="stMarkdownContainer"] h2 {', "18px", "1.45"),
+            ('[data-testid="stMarkdownContainer"] h3 {', "15px", "1.5"),
+            ('[data-testid="stMarkdownContainer"] h4 {', "14px", "1.55"),
+        ):
+            start = report_css.index(selector)
+            rule = report_css[start : report_css.index("}", start) + 1]
+            self.assertIn(f"font-size: {size} !important;", rule)
+            self.assertIn(f"line-height: {line_height} !important;", rule)
+
+        h2_start = report_css.index('[data-testid="stMarkdownContainer"] h2 {')
+        h2_rule = report_css[h2_start : report_css.index("}", h2_start) + 1]
+        self.assertIn("margin: 24px 0 10px !important;", h2_rule)
+        self.assertIn("padding: 16px 0 0 !important;", h2_rule)
+        self.assertIn("border-top: 1px solid var(--border) !important;", h2_rule)
+
+        hr_start = report_css.index('[data-testid="stMarkdownContainer"] hr {')
+        hr_rule = report_css[hr_start : report_css.index("}", hr_start) + 1]
+        self.assertIn("margin: 24px 0 !important;", hr_rule)
+        self.assertIn('[data-testid="stMarkdownContainer"] hr + h2 {', report_css)
+
+        analysis_start = css.index(".analysis-shell .stMarkdown,")
+        analysis_end = css.index(
+            '[data-testid="stMarkdownContainer"] h1,',
+            analysis_start,
+        )
+        ordinary_analysis_rule = css[analysis_start:analysis_end]
+        self.assertIn("font-size: 15px;", ordinary_analysis_rule)
+
     def test_desktop_main_content_is_not_double_offset_when_sidebar_is_open(self) -> None:
         css = CSS_PATH.read_text(encoding="utf-8-sig")
         selector = (
