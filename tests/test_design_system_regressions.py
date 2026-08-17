@@ -15,6 +15,27 @@ MISANS_SEMIBOLD_SHA256 = (
 
 
 class DesignSystemRegressionTests(unittest.TestCase):
+    def test_desktop_brand_wordmark_has_balanced_scale_and_hit_area(self) -> None:
+        css = CSS_PATH.read_text(encoding="utf-8-sig")
+        brand_start = css.index(".primary-brand {")
+        brand_rule = css[brand_start : css.index("}", brand_start) + 1]
+        mark_start = css.index(".primary-brand-mark svg {")
+        mark_rule = css[mark_start : css.index("}", mark_start) + 1]
+        word_start = css.index(".primary-brand-word {")
+        word_rule = css[word_start : css.index("}", word_start) + 1]
+        action_start = css.index('[class*="st-key-product_brand_action"] {')
+        action_rule = css[action_start : css.index("}", action_start) + 1]
+
+        self.assertIn("height: 52px;", brand_rule)
+        self.assertIn("gap: 10px;", brand_rule)
+        self.assertIn("width: 30px;", mark_rule)
+        self.assertIn("height: 30px;", mark_rule)
+        self.assertIn("font-size: 15px;", word_rule)
+        self.assertIn("line-height: 20px;", word_rule)
+        self.assertIn("letter-spacing: 0;", word_rule)
+        self.assertIn("width: calc(var(--primary-rail-width) - 31px);", action_rule)
+        self.assertIn("height: 52px;", action_rule)
+
     def test_mobile_navigation_uses_a_real_five_column_button_grid(self) -> None:
         css = CSS_PATH.read_text(encoding="utf-8-sig")
         mobile_start = css.index("@media (max-width: 899px) {")
