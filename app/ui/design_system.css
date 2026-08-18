@@ -1305,6 +1305,13 @@ section[data-testid="stAppScrollToBottomContainer"]:has([class*="st-key-empty_st
     overflow-anchor: none;
 }
 
+[class*="st-key-background_agent_progress_host"] {
+    width: min(var(--content-max), 100%);
+    max-width: var(--content-max);
+    margin-inline: auto;
+    overflow-anchor: none;
+}
+
 .hero {
     width: min(var(--task-grid-max), 100%);
     margin: 0 auto;

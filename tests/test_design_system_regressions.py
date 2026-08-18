@@ -74,6 +74,30 @@ class DesignSystemRegressionTests(unittest.TestCase):
         self.assertIn("overflow-wrap: anywhere;", css)
         self.assertIn("word-break: break-word;", css)
 
+    def test_background_progress_matches_the_chat_composer_width(self) -> None:
+        css = CSS_PATH.read_text(encoding="utf-8-sig")
+        progress_selector = '[class*="st-key-background_agent_progress_host"] {'
+        progress_start = css.index(progress_selector)
+        progress_rule = css[progress_start : css.index("}", progress_start) + 1]
+        composer_selector = (
+            '[data-testid="stBottom"] [data-testid="stVerticalBlock"] {'
+        )
+        composer_start = css.index(composer_selector)
+        composer_rule = css[composer_start : css.index("}", composer_start) + 1]
+        initial_progress_start = css.index('[class*="st-key-agent_progress_host"] {')
+        initial_progress_rule = css[
+            initial_progress_start : css.index("}", initial_progress_start) + 1
+        ]
+
+        self.assertIn("width: min(var(--content-max), 100%);", progress_rule)
+        self.assertIn("max-width: var(--content-max);", progress_rule)
+        self.assertIn("margin-inline: auto;", progress_rule)
+        self.assertIn("overflow-anchor: none;", progress_rule)
+        self.assertIn("width: min(var(--content-max), 100%) !important;", composer_rule)
+        self.assertIn("max-width: var(--content-max) !important;", composer_rule)
+        self.assertIn("margin: 0 auto !important;", composer_rule)
+        self.assertIn("width: min(var(--task-grid-max), 100%);", initial_progress_rule)
+
     def test_keyboard_focus_and_active_navigation_labels_remain_visible(self) -> None:
         css = CSS_PATH.read_text(encoding="utf-8-sig")
         components = COMPONENTS_PATH.read_text(encoding="utf-8-sig")
