@@ -2456,6 +2456,11 @@ div[data-testid="stDataFrame"] * {
     box-shadow: var(--shadow-subtle);
 }
 
+[class*="st-key-background_agent_progress_host"] .agent-live-progress {
+    width: min(var(--task-grid-max), 100%);
+    margin-inline: 0;
+}
+
 .agent-live-spinner {
     width: 18px;
     height: 18px;
