@@ -1351,6 +1351,10 @@ section[data-testid="stAppScrollToBottomContainer"]:has([class*="st-key-empty_st
     line-height: 1.08;
 }
 
+.hero h1 [data-testid="stHeaderActionElements"] {
+    display: none;
+}
+
 .hero-english {
     margin-top: 6px;
     color: var(--text-tertiary);

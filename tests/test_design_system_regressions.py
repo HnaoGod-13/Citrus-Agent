@@ -15,6 +15,14 @@ MISANS_SEMIBOLD_SHA256 = (
 
 
 class DesignSystemRegressionTests(unittest.TestCase):
+    def test_hero_bilingual_title_ignores_streamlit_anchor_width(self) -> None:
+        css = CSS_PATH.read_text(encoding="utf-8-sig")
+        selector = '.hero h1 [data-testid="stHeaderActionElements"] {'
+        rule_start = css.index(selector)
+        rule = css[rule_start : css.index("}", rule_start) + 1]
+
+        self.assertIn("display: none;", rule)
+
     def test_desktop_brand_wordmark_has_balanced_scale_and_hit_area(self) -> None:
         css = CSS_PATH.read_text(encoding="utf-8-sig")
         brand_start = css.index(".primary-brand {")
