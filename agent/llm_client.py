@@ -422,38 +422,67 @@ def chat_with_deepseek(
     if not api_key.strip():
         raise DeepSeekAPIError("请先在 agent/llm_config.py 中填入 DeepSeek API Key。")
 
-    payload = {
+    payload: dict[str, Any] = {
         "model": model,
         "messages": messages,
         "stream": False,
         "temperature": 0.3,
-        "max_tokens": 3200,
+        "max_tokens": 8000,
         "thinking": {"type": "enabled"},
         "reasoning_effort": "high",
     }
-    data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-    request = urllib.request.Request(
-        DEEPSEEK_API_URL,
-        data=data,
-        headers={
-            "Authorization": f"Bearer {api_key.strip()}",
-            "Content-Type": "application/json",
-        },
-        method="POST",
+
+    def request_completion(request_payload: dict[str, Any]) -> dict[str, Any]:
+        data = json.dumps(request_payload, ensure_ascii=False).encode("utf-8")
+        request = urllib.request.Request(
+            DEEPSEEK_API_URL,
+            data=data,
+            headers={
+                "Authorization": f"Bearer {api_key.strip()}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                response_data = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as error:
+            detail = error.read().decode("utf-8", errors="replace")
+            raise DeepSeekAPIError(
+                f"DeepSeek API 请求失败：HTTP {error.code}，{detail}"
+            ) from error
+        except urllib.error.URLError as error:
+            raise DeepSeekAPIError(f"无法连接 DeepSeek API：{error.reason}") from error
+        except TimeoutError as error:
+            raise DeepSeekAPIError("DeepSeek API 请求超时，请稍后重试。") from error
+        if not isinstance(response_data, dict):
+            raise DeepSeekAPIError("DeepSeek API 返回格式异常：顶层结果不是对象。")
+        return response_data
+
+    def final_content(response_data: dict[str, Any]) -> str:
+        try:
+            content = response_data["choices"][0]["message"].get("content")
+        except (KeyError, IndexError, TypeError, AttributeError) as error:
+            raise DeepSeekAPIError("DeepSeek API 返回格式异常：缺少最终回答字段。") from error
+        return str(content or "").strip()
+
+    response_data = request_completion(payload)
+    answer = final_content(response_data)
+    if answer:
+        return answer
+
+    retry_payload = dict(payload)
+    retry_payload["thinking"] = {"type": "disabled"}
+    retry_payload["max_tokens"] = 4800
+    retry_payload.pop("reasoning_effort", None)
+    retry_response = request_completion(retry_payload)
+    answer = final_content(retry_response)
+    if answer:
+        return answer
+
+    finish_reason = str(
+        (retry_response.get("choices") or [{}])[0].get("finish_reason") or "unknown"
     )
-
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            response_data = json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as error:
-        detail = error.read().decode("utf-8", errors="replace")
-        raise DeepSeekAPIError(f"DeepSeek API 请求失败：HTTP {error.code}，{detail}") from error
-    except urllib.error.URLError as error:
-        raise DeepSeekAPIError(f"无法连接 DeepSeek API：{error.reason}") from error
-    except TimeoutError as error:
-        raise DeepSeekAPIError("DeepSeek API 请求超时，请稍后重试。") from error
-
-    try:
-        return response_data["choices"][0]["message"]["content"]
-    except (KeyError, IndexError, TypeError) as error:
-        raise DeepSeekAPIError(f"DeepSeek API 返回格式异常：{response_data}") from error
+    raise DeepSeekAPIError(
+        f"DeepSeek API 未返回可展示的最终回答（finish_reason={finish_reason}）。"
+    )
