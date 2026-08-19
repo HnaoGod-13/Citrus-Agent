@@ -13,7 +13,8 @@ from agent.orchestrator import (
 )
 from agent.report import build_processing_plan, processing_flow
 from agent.rules import ALL_DIRECTIONS, DIRECTION_JUICE, QualityRisk, ScoreResult
-from agent.tools import retrieve_literature, write_report
+from agent.tools import retrieve_literature, retrieve_processing_parameters, write_report
+from agent.workflow import _merge_retrieval_stats
 
 
 class ProcessingPlanTests(unittest.TestCase):
@@ -147,6 +148,101 @@ class ProcessingPlanTests(unittest.TestCase):
         self.assertEqual(result.status, "完成")
         self.assertEqual(result.data[0]["document_id"], "DOC-1")
         self.assertIn("1 篇文献", result.observation)
+
+    @patch("agent.tools.comprehensive_search_knowledge")
+    def test_faceted_literature_retriever_preserves_incomplete_status(self, search_mock) -> None:
+        search_mock.side_effect = [
+            {
+                "evidence": [],
+                "deep_retrieval_stats": {
+                    "fts_rows_returned": 5,
+                    "unique_candidate_count": 3,
+                    "database_available": True,
+                    "retrieval_complete": True,
+                },
+            },
+            {
+                "evidence": [],
+                "deep_retrieval_stats": {
+                    "fts_rows_returned": 7,
+                    "unique_candidate_count": 4,
+                    "database_available": False,
+                    "retrieval_complete": False,
+                    "retrieval_error": "索引加载失败；查询超时",
+                    "timed_out": True,
+                },
+            },
+        ]
+
+        result = retrieve_literature(
+            [{"query": "a", "category": None}, {"query": "b", "category": "橙汁"}, {"query": "c", "category": None}],
+            "柑橘",
+            retrieval_mode="deep",
+        )
+        stats = result.metadata["deep_retrieval_stats"]
+
+        self.assertEqual(result.status, "部分完成")
+        self.assertIn("全库索引未能加载", result.observation)
+        self.assertEqual(search_mock.call_count, 2)
+        self.assertEqual(stats["fts_rows_returned"], 12)
+        self.assertEqual(stats["unique_candidate_count"], 7)
+        self.assertFalse(stats["database_available"])
+        self.assertFalse(stats["retrieval_complete"])
+        self.assertTrue(stats["timed_out"])
+        self.assertEqual(stats["retrieval_error"], "索引加载失败；查询超时")
+
+    def test_workflow_retrieval_stats_keep_any_stage_failure(self) -> None:
+        merged = _merge_retrieval_stats(
+            {
+                "fts_rows_returned": 10,
+                "unique_candidate_count": 6,
+                "database_available": True,
+                "retrieval_complete": True,
+            },
+            {
+                "fts_rows_returned": 4,
+                "unique_candidate_count": 2,
+                "database_available": False,
+                "retrieval_complete": False,
+                "retrieval_error": "索引加载失败",
+            },
+            {
+                "database_available": True,
+                "retrieval_complete": True,
+                "retrieval_error": "索引加载失败；查询超时",
+                "timed_out": True,
+            },
+        )
+
+        self.assertEqual(merged["fts_rows_returned"], 14)
+        self.assertEqual(merged["unique_candidate_count"], 8)
+        self.assertFalse(merged["database_available"])
+        self.assertFalse(merged["retrieval_complete"])
+        self.assertTrue(merged["timed_out"])
+        self.assertEqual(merged["retrieval_error"], "索引加载失败；查询超时")
+
+    @patch("agent.tools.retrieve_processing_evidence")
+    def test_processing_retriever_reports_partial_deep_search(self, retrieve_mock) -> None:
+        retrieve_mock.return_value = {
+            "evidence": [],
+            "subquestions": [{} for _ in range(12)],
+            "deep_retrieval_stats": {
+                "retrieval_mode": "deep",
+                "attempted_subquery_count": 4,
+                "timed_out": True,
+                "retrieval_complete": False,
+            },
+        }
+
+        result = retrieve_processing_parameters(
+            {"primary_product": "柑橘汁", "raw_material": "甜橙"},
+            "柑橘",
+            retrieval_mode="deep",
+        )
+
+        self.assertEqual(result.status, "部分完成")
+        self.assertIn("4/12", result.observation)
+        self.assertIn("时限", result.observation)
 
 if __name__ == "__main__":
     unittest.main()

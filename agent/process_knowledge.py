@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import re
+import time
 from collections import Counter, defaultdict
 from typing import Any, Callable
 
@@ -9,14 +11,25 @@ from .processing_config import (
     PROCESS_CONTEXT_EVIDENCE_LIMIT,
     PROCESS_CONTEXT_PARAMETER_LIMIT,
     PROCESS_CONTEXT_TOKEN_LIMIT,
+    PROCESS_DEEP_NEIGHBOR_LIMIT,
+    PROCESS_DEEP_QUERY_CHARS,
+    PROCESS_DEEP_SUBQUERY_TOP_K,
+    PROCESS_DEEP_TIME_BUDGET_SECONDS,
     PROCESS_EVIDENCE_TOP_K,
     PROCESS_PARAMETER_LIMIT,
     PROCESS_SUBQUERY_TOP_K,
+    PROCESS_UNRESOLVED_PARAMETER_LIMIT,
 )
-from .rag import comprehensive_search_knowledge
+from .rag import (
+    RetrievalMode,
+    comprehensive_search_knowledge,
+    fetch_adjacent_method_result_chunks,
+    is_pending_ocr_entry,
+)
 
 
-SearchFunction = Callable[..., list[dict[str, Any]]]
+SearchFunction = Callable[..., Any]
+AdjacentFunction = Callable[..., dict[str, Any]]
 
 PRODUCT_ALIASES: dict[str, tuple[str, ...]] = {
     "陈皮": ("陈皮", "广陈皮", "橘皮", "柑橘果皮", "chenpi", "dried tangerine peel"),
@@ -61,6 +74,17 @@ PARAMETER_REQUEST_TERMS = (
     "concentration", "pressure", "speed", "flow", "dosage", "moisture", "Brix",
 )
 
+DAY_UNIT_CONTEXT_TERMS = (
+    "天", "昼夜", "day", "days", "duration", "processing time", "reaction time",
+    "treatment time", "storage time", "stored", "incubat", "ferment", "aging",
+    "ageing", "drying time", "dried for",
+)
+
+SIGNIFICANCE_LETTER_TERMS = (
+    "different letters", "letters indicate", "superscript letter", "significant difference",
+    "significantly different", "字母表示", "不同字母", "上标字母", "差异显著性",
+)
+
 STEP_ALIASES: dict[str, tuple[str, ...]] = {
     "原料验收": ("原料验收", "原料筛选", "分选", "挑选", "成熟度", "raw material", "sorting"),
     "清洗消毒": ("清洗", "消毒", "冲洗", "wash", "washing", "sanitize", "disinfection"),
@@ -70,8 +94,15 @@ STEP_ALIASES: dict[str, tuple[str, ...]] = {
     "酶解": ("酶解", "果胶酶", "纤维素酶", "enzyme", "enzymatic", "pectinase"),
     "澄清": ("澄清", "clarification", "flotation", "fining"),
     "过滤/离心": ("过滤", "离心", "超滤", "微滤", "filtration", "centrifug", "ultrafiltration"),
-    "均质": ("均质", "homogenization", "homogenisation", "HPH"),
+    "均质": (
+        "均质", "homogenization", "homogenisation", "homogenize", "homogenized", "homogenised", "HPH",
+    ),
     "脱气": ("脱气", "deaeration", "de-aeration"),
+    "糖酸调整": (
+        "糖酸调整", "糖酸调配", "调糖调酸", "糖酸比调整", "调整糖酸比",
+        "sugar-acid adjustment", "sugar acid adjustment", "sugar-to-acid ratio adjustment",
+        "brix adjustment", "soluble solids adjustment", "acidity adjustment",
+    ),
     "浓缩": ("浓缩", "蒸发", "膜浓缩", "concentration", "evaporation"),
     "杀菌": ("杀菌", "巴氏", "灭菌", "pasteur", "steriliz", "thermal treatment", "high pressure processing", "HHP", "thermosonication", "ultrasound", "cold plasma", "electric field"),
     "干燥": ("干燥", "烘干", "晒干", "冻干", "drying", "dehydration", "freeze-drying"),
@@ -117,8 +148,8 @@ ANALYTICAL_SENTENCE_TERMS = (
 
 ALLOWED_STEPS = {
     "陈皮": {"原料验收", "清洗消毒", "去皮/取皮", "干燥", "陈化", "包装/灌装", "储藏"},
-    "柑橘汁": {"原料验收", "清洗消毒", "破碎/榨汁", "护色", "酶解", "澄清", "过滤/离心", "均质", "脱气", "杀菌", "包装/灌装", "储藏"},
-    "浓缩汁": {"原料验收", "清洗消毒", "破碎/榨汁", "护色", "酶解", "澄清", "过滤/离心", "浓缩", "均质", "脱气", "杀菌", "包装/灌装", "储藏"},
+    "柑橘汁": {"原料验收", "清洗消毒", "破碎/榨汁", "护色", "酶解", "澄清", "过滤/离心", "糖酸调整", "均质", "脱气", "杀菌", "包装/灌装", "储藏"},
+    "浓缩汁": {"原料验收", "清洗消毒", "破碎/榨汁", "护色", "酶解", "澄清", "过滤/离心", "糖酸调整", "浓缩", "均质", "脱气", "杀菌", "包装/灌装", "储藏"},
 }
 
 UNIT_PATTERN = r"(?:°\s*C|°C|℃|K|MPa|kPa|Pa|bar|psi|rpm|r/min|mL/min|L/min|kg/h|L/h|h|min|s|d|小时|分钟|秒|天|%|mg/L|g/L|mg/kg|g/kg|U/g|U/mL|IU/mL|°Brix|Brix)"
@@ -261,11 +292,35 @@ def analyze_processing_intent(
     }
 
 
-def build_processing_subquestions(intent: dict[str, Any]) -> list[dict[str, Any]]:
+def _normalize_retrieval_mode(retrieval_mode: str) -> RetrievalMode:
+    normalized = str(retrieval_mode or "quick").strip().lower()
+    if normalized not in {"quick", "deep"}:
+        raise ValueError("retrieval_mode must be 'quick' or 'deep'")
+    return normalized  # type: ignore[return-value]
+
+
+def _deep_intent_focus(intent: dict[str, Any]) -> str:
+    values = [
+        str(intent.get("user_request") or ""),
+        " ".join(str(item) for item in intent.get("operations") or []),
+        " ".join(str(item) for item in intent.get("parameter_targets") or []),
+        " ".join(str(item) for item in intent.get("equipment") or []),
+    ]
+    return re.sub(r"\s+", " ", " ".join(value for value in values if value).strip())[
+        :PROCESS_DEEP_QUERY_CHARS
+    ]
+
+
+def build_processing_subquestions(
+    intent: dict[str, Any],
+    retrieval_mode: RetrievalMode = "quick",
+) -> list[dict[str, Any]]:
+    mode = _normalize_retrieval_mode(retrieval_mode)
     product = str(intent.get("primary_product") or "柑橘加工品")
     raw = str(intent.get("raw_material") or "柑橘")
     category = PRODUCT_CATEGORY.get(product)
-    common = f"{raw} {product} 材料与方法 工艺参数 实验条件 结果 quality"
+    focus = _deep_intent_focus(intent) if mode == "deep" else ""
+    common = f"{focus} {raw} {product} 材料与方法 工艺参数 实验条件 结果 quality".strip()
     specs = [
         {"id": "route", "facet": "工艺路线", "query": f"{common} 完整工艺流程 process flow unit operation", "category": category},
         {"id": "raw", "facet": "原料要求", "query": f"{common} 原料 成熟度 可溶性固形物 酸度 水分 raw material maturity Brix acidity", "category": category},
@@ -276,6 +331,16 @@ def build_processing_subquestions(intent: dict[str, Any]) -> list[dict[str, Any]
         {"id": "safety", "facet": "安全控制", "query": f"{common} 食品安全 HACCP 微生物 农残 重金属 标准 safety", "category": category},
         {"id": "byproduct", "facet": "副产物", "query": f"{raw} {product} 果皮 果渣 废水 副产物 综合利用 byproduct waste valorization", "category": None},
     ]
+    if focus:
+        specs.insert(
+            0,
+            {
+                "id": "user_focus",
+                "facet": "用户指定重点",
+                "query": f"{focus} {raw} {product} 材料与方法 结果 工艺条件 quality",
+                "category": category,
+            },
+        )
     if product == "陈皮":
         specs.insert(3, {"id": "drying", "facet": "干燥", "query": f"{raw} 陈皮 柑橘果皮 热风 真空 冻干 温度 时间 终点水分 drying temperature time moisture methods", "category": "陈皮"})
         specs.insert(4, {"id": "aging", "facet": "陈化", "query": f"{raw} 陈皮 陈化 仓储 温度 湿度 年限 黄酮 挥发油 aging storage methods results", "category": "陈皮"})
@@ -283,6 +348,23 @@ def build_processing_subquestions(intent: dict[str, Any]) -> list[dict[str, Any]
         specs.insert(3, {"id": "clarification", "facet": "酶解澄清", "query": f"{raw} 橙汁 果汁 果胶酶 酶解 澄清 温度 时间 用量 filtration clarification pectinase methods", "category": "橙汁"})
         specs.insert(4, {"id": "homogenization", "facet": "均质脱气", "query": f"{raw} 橙汁 NFC 高压均质 脱气 压力 循环 温度 悬浮稳定 homogenization pressure deaeration methods", "category": "橙汁"})
         specs.insert(5, {"id": "stabilization", "facet": "杀菌稳定化", "query": f"{raw} 橙汁 杀菌 温度 时间 微生物 热处理 高压 冷等离子 pasteurization microbial inactivation methods", "category": "橙汁"})
+    if mode == "deep":
+        operation_specs = []
+        for index, operation in enumerate(intent.get("operations") or []):
+            aliases = " ".join(STEP_ALIASES.get(str(operation), (str(operation),)))
+            operation_specs.append(
+                {
+                    "id": f"operation_{index}",
+                    "facet": str(operation),
+                    "query": (
+                        f"{raw} {product} {operation} {aliases} 材料与方法 结果 "
+                        "温度 时间 压力 流量 浓度 用量 工艺条件"
+                    ),
+                    "category": category,
+                }
+            )
+        insertion_index = 1 if focus else 0
+        specs[insertion_index:insertion_index] = operation_specs[:6]
     return specs[:12]
 
 
@@ -326,36 +408,162 @@ def _product_relevant(title: str, text: str, product: str, facet: str) -> bool:
     return (_contains(lower, aliases) and _contains(title_lower, aliases)) if aliases else (citrus and citrus_title)
 
 
+def _call_compatible(function: Callable[..., Any], positional: tuple[Any, ...], keywords: dict[str, Any]) -> Any:
+    """Pass new retrieval keywords only when a legacy/custom callback supports them."""
+    try:
+        signature = inspect.signature(function)
+    except (TypeError, ValueError):
+        return function(*positional)
+    accepts_kwargs = any(
+        parameter.kind == inspect.Parameter.VAR_KEYWORD
+        for parameter in signature.parameters.values()
+    )
+    supported = {
+        key: value
+        for key, value in keywords.items()
+        if accepts_kwargs or key in signature.parameters
+    }
+    return function(*positional, **supported)
+
+
+def _merge_search_stats(target: dict[str, Any], source: dict[str, Any]) -> None:
+    for key in (
+        "fts_rows_returned",
+        "database_rows_scanned",
+        "database_candidates",
+        "unique_candidate_count",
+        "legacy_candidates",
+        "ranked_candidates",
+        "ocr_filtered_count",
+        "product_filtered_count",
+        "category_filtered_count",
+        "deduplicated_count",
+    ):
+        target[key] = int(target.get(key) or 0) + int(source.get(key) or 0)
+    for key in (
+        "library_document_count",
+        "library_chunk_count",
+        "library_usable_document_count",
+        "library_ocr_document_count",
+    ):
+        target[key] = max(
+            int(target.get(key) or 0),
+            int(source.get(key) or 0),
+        )
+    source_database_available = source.get("database_available")
+    if source_database_available is False:
+        target["database_available"] = False
+    elif target.get("database_available") is None and source_database_available is True:
+        target["database_available"] = True
+    target["timed_out"] = bool(target.get("timed_out")) or bool(source.get("timed_out"))
+    target["retrieval_complete"] = bool(target.get("retrieval_complete", True)) and bool(
+        source.get("retrieval_complete", True)
+    )
+    source_error = str(source.get("retrieval_error") or "").strip()
+    if source_error:
+        errors = [part for part in str(target.get("retrieval_error") or "").split("；") if part]
+        if source_error not in errors:
+            errors.append(source_error)
+        target["retrieval_error"] = "；".join(errors)
+
+
 def retrieve_processing_evidence(
     intent: dict[str, Any],
     product_filter: str = "柑橘",
     top_k: int = PROCESS_EVIDENCE_TOP_K,
     search_fn: SearchFunction = comprehensive_search_knowledge,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    *,
+    retrieval_mode: RetrievalMode = "quick",
+    adjacent_fn: AdjacentFunction = fetch_adjacent_method_result_chunks,
+    return_metadata: bool = False,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]] | dict[str, Any]:
     """Retrieve each process facet independently, then rerank and diversify evidence."""
-    specs = build_processing_subquestions(intent)
+    started_at = time.monotonic()
+    mode = _normalize_retrieval_mode(retrieval_mode)
+    specs = build_processing_subquestions(intent, retrieval_mode=mode)
+    per_subquery = (
+        max(PROCESS_SUBQUERY_TOP_K, PROCESS_DEEP_SUBQUERY_TOP_K)
+        if mode == "deep"
+        else PROCESS_SUBQUERY_TOP_K
+    )
+    candidate_top_k = max(per_subquery * 3, 24) if mode == "deep" else per_subquery
+    stats: dict[str, Any] = {
+        "retrieval_mode": mode,
+        "subquery_count": len(specs),
+        "attempted_subquery_count": 0,
+        "per_subquery_top_k": per_subquery,
+        "per_subquery_candidate_top_k": candidate_top_k,
+        "requested_top_k": top_k,
+        "raw_candidate_count": 0,
+        "fts_rows_returned": 0,
+        "database_rows_scanned": 0,
+        "database_candidates": 0,
+        "unique_candidate_count": 0,
+        "legacy_candidates": 0,
+        "ranked_candidates": 0,
+        "ocr_filtered_count": 0,
+        "product_filtered_count": 0,
+        "category_filtered_count": 0,
+        "analytical_filtered_count": 0,
+        "score_filtered_count": 0,
+        "deduplicated_count": 0,
+        "adjacent_candidate_count": 0,
+        "adjacent_added_count": 0,
+        "selected_count": 0,
+        "selected_document_count": 0,
+        "library_document_count": 0,
+        "library_chunk_count": 0,
+        "library_usable_document_count": 0,
+        "library_ocr_document_count": 0,
+        "database_available": None,
+        "retrieval_complete": True,
+        "retrieval_error": "",
+        "timed_out": False,
+        "elapsed_ms": 0,
+    }
+    deadline = started_at + PROCESS_DEEP_TIME_BUDGET_SECONDS
     per_facet: list[list[dict[str, Any]]] = []
     for spec in specs:
-        try:
-            items = search_fn(
-                query=str(spec["query"]),
-                product_filter=product_filter,
-                category_filter=spec.get("category"),
-                top_k=PROCESS_SUBQUERY_TOP_K,
-            )
-        except TypeError:
-            items = search_fn(str(spec["query"]), product_filter, PROCESS_SUBQUERY_TOP_K)
+        if mode == "deep" and time.monotonic() >= deadline:
+            stats["timed_out"] = True
+            stats["retrieval_complete"] = False
+            stats["retrieval_error"] = "全库分面检索超过总时限，本轮仅完成部分加工子问题。"
+            break
+        stats["attempted_subquery_count"] = int(stats["attempted_subquery_count"]) + 1
+        search_result = _call_compatible(
+            search_fn,
+            (str(spec["query"]), product_filter, candidate_top_k),
+            {
+                "category_filter": spec.get("category"),
+                "retrieval_mode": mode,
+                "return_metadata": True,
+            },
+        )
+        if isinstance(search_result, dict) and "evidence" in search_result:
+            items = list(search_result.get("evidence") or [])
+            _merge_search_stats(stats, dict(search_result.get("deep_retrieval_stats") or {}))
+        else:
+            items = list(search_result or [])
+        if mode == "deep" and stats.get("database_available") is False:
+            per_facet.append([])
+            break
+        stats["raw_candidate_count"] = int(stats["raw_candidate_count"]) + len(items)
         ranked = []
         for source in items:
             item = dict(source)
+            if mode == "deep" and is_pending_ocr_entry(item):
+                stats["ocr_filtered_count"] = int(stats["ocr_filtered_count"]) + 1
+                continue
             source_title = str(item.get("title") or "")
             source_text = _text(source_title, item.get("chunk_text"))
             if not _product_relevant(source_title, source_text, str(intent.get("primary_product") or ""), str(spec["facet"])):
+                stats["product_filtered_count"] = int(stats["product_filtered_count"]) + 1
                 continue
             if (
                 any(term in source_title.lower() for term in ANALYTICAL_TITLE_TERMS)
                 and spec["facet"] in {"工艺路线", "前处理", "加工参数", "干燥", "陈化", "包装储藏"}
             ):
+                stats["analytical_filtered_count"] = int(stats["analytical_filtered_count"]) + 1
                 continue
             score = _processing_rerank(item, spec, intent)
             item["processing_score"] = round(max(0.0, score) * 100, 3)
@@ -365,17 +573,21 @@ def retrieve_processing_evidence(
             item["retrieval_method"] = "processing_faceted_hybrid+" + str(item.get("retrieval_method") or "hybrid")
             if score >= 0.16:
                 ranked.append(item)
+            else:
+                stats["score_filtered_count"] = int(stats["score_filtered_count"]) + 1
         ranked.sort(key=lambda row: float(row.get("processing_score") or 0), reverse=True)
-        per_facet.append(ranked)
+        per_facet.append(ranked[:per_subquery])
 
     selected: list[dict[str, Any]] = []
     seen_chunks: set[str] = set()
     document_counts: Counter[str] = Counter()
+    per_document_limit = 4 if mode == "deep" else 2
 
     def add(item: dict[str, Any]) -> bool:
         chunk_id = str(item.get("chunk_id") or f"{item.get('document_id')}:{item.get('page') or item.get('page_start')}")
         document_id = str(item.get("document_id") or item.get("source_file") or item.get("title"))
-        if chunk_id in seen_chunks or document_counts[document_id] >= 2:
+        if chunk_id in seen_chunks or document_counts[document_id] >= per_document_limit:
+            stats["deduplicated_count"] = int(stats["deduplicated_count"]) + 1
             return False
         seen_chunks.add(chunk_id)
         document_counts[document_id] += 1
@@ -386,12 +598,72 @@ def retrieve_processing_evidence(
         if items:
             add(items[0])
         if len(selected) >= top_k:
-            return selected[:top_k], specs
-    pool = sorted((item for items in per_facet for item in items), key=lambda row: float(row.get("processing_score") or 0), reverse=True)
-    for item in pool:
-        add(item)
-        if len(selected) >= top_k:
+            selected = selected[:top_k]
             break
+    pool = sorted((item for items in per_facet for item in items), key=lambda row: float(row.get("processing_score") or 0), reverse=True)
+    if len(selected) < top_k:
+        for item in pool:
+            add(item)
+            if len(selected) >= top_k:
+                break
+
+    if mode == "deep" and selected:
+        adjacent_result = _call_compatible(
+            adjacent_fn,
+            (selected,),
+            {
+                "retrieval_mode": mode,
+                "limit": PROCESS_DEEP_NEIGHBOR_LIMIT,
+                "return_metadata": True,
+            },
+        )
+        if isinstance(adjacent_result, dict) and "adjacent_chunks" in adjacent_result:
+            adjacent_by_seed = dict(adjacent_result.get("adjacent_chunks") or {})
+            adjacent_stats = dict(adjacent_result.get("deep_retrieval_stats") or {})
+            stats["adjacent_candidate_count"] = int(adjacent_stats.get("adjacent_candidate_count") or 0)
+        else:
+            adjacent_by_seed = dict(adjacent_result or {})
+        adjacent_added = 0
+        for item in selected:
+            seed_key = str(item.get("chunk_id") or "")
+            document_id = str(item.get("document_id") or "")
+            neighbors: list[dict[str, Any]] = []
+            for source in adjacent_by_seed.get(seed_key, []):
+                neighbor = dict(source)
+                if str(neighbor.get("document_id") or "") != document_id:
+                    continue
+                if is_pending_ocr_entry(neighbor):
+                    stats["ocr_filtered_count"] = int(stats["ocr_filtered_count"]) + 1
+                    continue
+                neighbor["context_only"] = True
+                neighbors.append(neighbor)
+                adjacent_added += 1
+                if adjacent_added >= PROCESS_DEEP_NEIGHBOR_LIMIT:
+                    break
+            if neighbors:
+                item["adjacent_chunks"] = neighbors
+            if adjacent_added >= PROCESS_DEEP_NEIGHBOR_LIMIT:
+                break
+        stats["adjacent_added_count"] = adjacent_added
+
+    stats["selected_count"] = len(selected)
+    stats["selected_document_count"] = len(
+        {
+            str(item.get("document_id") or item.get("source_file") or item.get("title"))
+            for item in selected
+        }
+    )
+    stats["elapsed_ms"] = round((time.monotonic() - started_at) * 1000, 2)
+    if stats["timed_out"]:
+        stats["retrieval_complete"] = False
+        if not stats["retrieval_error"]:
+            stats["retrieval_error"] = "全库分面检索超过时限，本轮结果可能不完整。"
+    if return_metadata:
+        return {
+            "evidence": selected,
+            "subquestions": specs,
+            "deep_retrieval_stats": stats,
+        }
     return selected, specs
 
 
@@ -417,6 +689,19 @@ def _infer_step(text: str, position: int | None = None) -> str:
                 matches.append((distance + direction_penalty, found, step))
                 start = found + max(1, len(alias_lower))
     return min(matches)[2] if matches else "未明确单元操作"
+
+
+def _infer_unique_title_step(title: str, product: str) -> str:
+    lower = str(title or "").lower()
+    matched_steps = {
+        step
+        for step, aliases in STEP_ALIASES.items()
+        if any(alias.lower() in lower for alias in aliases)
+    }
+    if len(matched_steps) != 1:
+        return "未明确单元操作"
+    step = next(iter(matched_steps))
+    return step if _step_allowed(product, step) else "未明确单元操作"
 
 
 def _infer_parameter_name(default: str, sentence: str, start: int) -> str:
@@ -495,17 +780,59 @@ def _effect_sentence(sentences: list[str], index: int) -> str:
     return "文献片段未明确报告该参数对质量的单独影响。"
 
 
+def _parameter_evidence_items(evidence: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Flatten bounded adjacent context without allowing cross-document leakage."""
+    flattened: list[dict[str, Any]] = []
+    seen_chunks: set[str] = set()
+    for source in evidence:
+        seed = dict(source)
+        document_id = str(seed.get("document_id") or "")
+        neighbors = [
+            dict(item)
+            for item in seed.pop("adjacent_chunks", []) or []
+            if str(item.get("document_id") or "") == document_id and not is_pending_ocr_entry(item)
+        ]
+        for item in [seed, *neighbors]:
+            chunk_id = str(
+                item.get("chunk_id")
+                or f"{item.get('document_id')}:{item.get('page') or item.get('page_start')}"
+            )
+            if chunk_id in seen_chunks:
+                continue
+            seen_chunks.add(chunk_id)
+            item.setdefault("parameter_scope_eligible", seed.get("parameter_scope_eligible", True))
+            flattened.append(item)
+    return flattened
+
+
 def extract_processing_parameters(
     evidence: list[dict[str, Any]],
     intent: dict[str, Any],
     limit: int = PROCESS_PARAMETER_LIMIT,
 ) -> list[dict[str, Any]]:
     """Conservatively extract directly reported process conditions with provenance."""
-    records: list[dict[str, Any]] = []
+    recommendable: list[dict[str, Any]] = []
+    resolved_diagnostics: list[dict[str, Any]] = []
+    unresolved_diagnostics: list[dict[str, Any]] = []
     seen: set[str] = set()
     product = str(intent.get("primary_product") or "柑橘加工品")
     fallback_raw = str(intent.get("raw_material") or "柑橘原料")
-    for item in evidence:
+
+    def store(record: dict[str, Any]) -> None:
+        record["parameter_id"] = _parameter_id(record)
+        if record["parameter_id"] in seen:
+            return
+        seen.add(record["parameter_id"])
+        if record.get("eligible_for_recommendation"):
+            if len(recommendable) < limit:
+                recommendable.append(record)
+        elif record.get("process_step") != "未明确单元操作":
+            if len(resolved_diagnostics) < limit:
+                resolved_diagnostics.append(record)
+        elif len(unresolved_diagnostics) < PROCESS_UNRESOLVED_PARAMETER_LIMIT:
+            unresolved_diagnostics.append(record)
+
+    for item in _parameter_evidence_items(evidence):
         if item.get("parameter_scope_eligible") is False:
             continue
         title_lower = str(item.get("title") or "").lower()
@@ -519,6 +846,7 @@ def extract_processing_parameters(
             if len(sentence) > 1600:
                 sentence = sentence[:1600]
             process_signal = _contains(sentence, PROCESS_DATA_TERMS)
+            table_dense = len(re.findall(NUMBER_PATTERN, sentence)) >= 24
             for default_name, pattern in PARAMETER_PATTERNS:
                 for match in pattern.finditer(sentence):
                     if not process_signal and default_name not in {"pH", "可溶性固形物", "料液比"}:
@@ -540,10 +868,20 @@ def extract_processing_parameters(
                         tail = sentence[match.end():match.end() + 4]
                         if re.match(r"\s*z", tail, re.I):
                             continue
+                    if parameter_name == "时间" and unit.lower() == "d":
+                        if _contains(chunk_text, SIGNIFICANCE_LETTER_TERMS):
+                            continue
+                        local_context = sentence[
+                            max(0, match.start() - 80):min(len(sentence), match.end() + 80)
+                        ]
+                        if not _contains(local_context, DAY_UNIT_CONTEXT_TERMS):
+                            continue
                     step = _infer_step(sentence, match.start())
                     if step == "未明确单元操作":
-                        step = _infer_step(str(item.get("title") or ""))
-                    analytical_context = _contains(sentence, ANALYTICAL_SENTENCE_TERMS)
+                        step = _infer_unique_title_step(str(item.get("title") or ""), product)
+                    analytical_context = table_dense or _contains(
+                        sentence, ANALYTICAL_SENTENCE_TERMS
+                    )
                     confidence = 0.76 if direct_section else 0.62
                     if step == "未明确单元操作":
                         confidence -= 0.16
@@ -563,6 +901,7 @@ def extract_processing_parameters(
                         "scale": _scale(_text(item.get("title"), chunk_text)),
                         "effect_on_quality": _effect_sentence(sentences, sentence_index),
                         "source_id": str(item.get("document_id") or item.get("source_file") or item.get("chunk_id") or ""),
+                        "source_chunk_id": str(item.get("chunk_id") or ""),
                         "source_location": _source_location(item),
                         "confidence": round(max(0.05, min(0.95, confidence)), 2),
                         "title": str(item.get("title") or "未命名文献"),
@@ -572,13 +911,9 @@ def extract_processing_parameters(
                         "unit_missing": False,
                         "eligible_for_recommendation": _step_allowed(product, step) and parameter_name != "得率" and not analytical_context,
                         "analytical_context": analytical_context,
+                        "adjacent_context_used": bool(item.get("context_only")),
                     }
-                    record["parameter_id"] = _parameter_id(record)
-                    if record["parameter_id"] not in seen:
-                        records.append(record)
-                        seen.add(record["parameter_id"])
-                    if len(records) >= limit:
-                        return records
+                    store(record)
             for match in MISSING_UNIT_PATTERN.finditer(sentence):
                 name = match.group("name")
                 # A valid unit may begin after a punctuation/space sequence that the negative lookahead missed.
@@ -586,10 +921,13 @@ def extract_processing_parameters(
                 if re.match(rf"\s*{UNIT_PATTERN}", tail, re.I):
                     continue
                 parameter_name = "酶用量" if "酶" in name or "enzyme" in name.lower() else name
+                step = _infer_step(sentence, match.start())
+                if step == "未明确单元操作":
+                    step = _infer_unique_title_step(str(item.get("title") or ""), product)
                 record = {
                     "product": product,
                     "raw_material": _infer_raw_material(_text(item.get("title"), sentence), fallback_raw),
-                    "process_step": _infer_step(sentence, match.start()),
+                    "process_step": step,
                     "parameter_name": parameter_name,
                     "value": match.group("value"),
                     "unit": "",
@@ -598,6 +936,7 @@ def extract_processing_parameters(
                     "scale": _scale(_text(item.get("title"), chunk_text)),
                     "effect_on_quality": "单位缺失，不能据此形成生产建议。",
                     "source_id": str(item.get("document_id") or item.get("source_file") or item.get("chunk_id") or ""),
+                    "source_chunk_id": str(item.get("chunk_id") or ""),
                     "source_location": _source_location(item),
                     "confidence": 0.2,
                     "title": str(item.get("title") or "未命名文献"),
@@ -606,14 +945,13 @@ def extract_processing_parameters(
                     "evidence_type": "文献直接报告（单位缺失）",
                     "unit_missing": True,
                     "eligible_for_recommendation": False,
+                    "adjacent_context_used": bool(item.get("context_only")),
                 }
-                record["parameter_id"] = _parameter_id(record)
-                if record["parameter_id"] not in seen:
-                    records.append(record)
-                    seen.add(record["parameter_id"])
-                if len(records) >= limit:
-                    return records
-    return records
+                store(record)
+    # Useful, traceable parameters own the public cap. Unresolved diagnostics
+    # are retained only when capacity remains, so early background numbers
+    # cannot hide a later method/result parameter.
+    return [*recommendable, *resolved_diagnostics, *unresolved_diagnostics][:limit]
 
 
 def _numeric_interval(record: dict[str, Any]) -> tuple[float, float] | None:
@@ -662,6 +1000,21 @@ def aggregate_parameter_evidence(records: list[dict[str, Any]]) -> list[dict[str
     for key, items in grouped.items():
         product, raw, step, name, unit, scale, method = key
         source_ids = list(dict.fromkeys(str(item.get("source_id") or "") for item in items if item.get("source_id")))
+        source_refs = list(
+            dict.fromkeys(
+                "；".join(
+                    part
+                    for part in (
+                        str(item.get("source_id") or ""),
+                        f"片段 {item.get('source_chunk_id')}" if item.get("source_chunk_id") else "",
+                        str(item.get("source_location") or ""),
+                    )
+                    if part
+                )
+                for item in items
+                if item.get("source_id") or item.get("source_chunk_id")
+            )
+        )
         eligible = [item for item in items if item.get("eligible_for_recommendation") and not item.get("unit_missing")]
         intervals = [interval for item in eligible if (interval := _numeric_interval(item)) is not None]
         consistent = _ranges_consistent(intervals)
@@ -689,6 +1042,7 @@ def aggregate_parameter_evidence(records: list[dict[str, Any]]) -> list[dict[str
                 "conditions": item.get("conditions"),
                 "scale": item.get("scale"),
                 "source_id": item.get("source_id"),
+                "source_chunk_id": item.get("source_chunk_id"),
                 "source_location": item.get("source_location"),
                 "title": item.get("title"),
                 "year": item.get("year"),
@@ -707,6 +1061,7 @@ def aggregate_parameter_evidence(records: list[dict[str, Any]]) -> list[dict[str
             "confidence_level": trust,
             "confidence": round(sum(float(item.get("confidence") or 0) for item in items) / max(len(items), 1), 2),
             "source_ids": source_ids,
+            "source_refs": source_refs,
             "evidence_count": len(items),
             "conflict": conflict,
             "alternatives": alternatives,
@@ -728,10 +1083,34 @@ def aggregate_parameter_evidence(records: list[dict[str, Any]]) -> list[dict[str
     return aggregates
 
 
+ROUTE_STEP_EQUIVALENTS: dict[str, set[str]] = {
+    "分选": {"原料验收"},
+    "清洗": {"清洗消毒"},
+    "开皮取皮": {"去皮/取皮"},
+    "包装": {"包装/灌装"},
+    "灌装包装": {"包装/灌装"},
+    "清洗分选": {"清洗消毒", "原料验收"},
+    "澄清过滤": {"澄清", "过滤/离心"},
+    "均质脱气": {"均质", "脱气"},
+    "杀菌灌装": {"杀菌", "包装/灌装"},
+}
+
+
+def _step_terms(step: str) -> set[str]:
+    terms = {term for term in re.split(r"[/、]", step) if term}
+    for equivalent in ROUTE_STEP_EQUIVALENTS.get(step, set()):
+        terms.update(term for term in re.split(r"[/、]", equivalent) if term)
+    return terms
+
+
 def _step_matches(route_step: str, evidence_step: str) -> bool:
-    route_terms = set(re.split(r"[/、]", route_step))
-    evidence_terms = set(re.split(r"[/、]", evidence_step))
-    return bool(route_terms & evidence_terms) or route_step in evidence_step or evidence_step in route_step
+    route_terms = _step_terms(route_step)
+    evidence_terms = _step_terms(evidence_step)
+    return (
+        bool(route_terms & evidence_terms)
+        or route_step in evidence_step
+        or evidence_step in route_step
+    )
 
 
 def build_parameterized_process_plan(
@@ -748,10 +1127,19 @@ def build_parameterized_process_plan(
             group
             for group in parameter_groups
             if group.get("recommendable")
+            and not group.get("conflict")
+            and group.get("confidence_level") in {"高可信度", "中可信度"}
             and _material_compatible(str(group.get("raw_material") or ""), target_raw)
             and _step_matches(step, str(group.get("process_step") or ""))
         ]
         sources = list(dict.fromkeys(source for group in matching for source in group.get("source_ids", [])))
+        source_refs = list(
+            dict.fromkeys(
+                source
+                for group in matching
+                for source in (group.get("source_refs") or group.get("source_ids") or [])
+            )
+        )
         rows.append({
             "step": step,
             "operation": STEP_OPERATIONS.get(step, "按该单元操作的企业SOP执行，并记录输入、输出、设备和偏差。"),
@@ -770,6 +1158,7 @@ def build_parameterized_process_plan(
             "parameter_status": "有文献参数，仍需核对适用条件" if matching else "现有知识库证据不足，不填入数值",
             "key_control": "不得跨品种、设备、工艺方法或生产规模直接套用参数；关键偏差须记录并复核。",
             "source_ids": sources,
+            "source_refs": source_refs,
         })
     evidence_ids = list(dict.fromkeys(str(item.get("document_id") or item.get("source_file") or item.get("chunk_id") or "") for item in evidence))
     return {
@@ -816,7 +1205,7 @@ def format_processing_context(
     )
     add("【结构化参数证据】", required=True)
     for index, group in enumerate(parameter_groups[:PROCESS_CONTEXT_PARAMETER_LIMIT], 1):
-        source_text = "、".join(group.get("source_ids") or []) or "无"
+        source_text = "｜".join(group.get("source_refs") or group.get("source_ids") or []) or "无"
         if not add(
             f"[参数{index}] {group.get('process_step')}/{group.get('parameter_name')}：{group.get('recommended_range')}；"
             f"{group.get('confidence_level')}；{group.get('applicability')}；证据ID：{source_text}；"
@@ -832,4 +1221,22 @@ def format_processing_context(
         excerpt = re.sub(r"\s+", " ", str(item.get("chunk_text") or "")).strip()[:560]
         if not add(f"[加工文献{index}] ID={source_id}；{item.get('title') or '未命名'}；{item.get('year') or '年份未知'}；{location}；片段：{excerpt}"):
             break
+        numeric_neighbors = sorted(
+            (
+                dict(neighbor)
+                for neighbor in item.get("adjacent_chunks", []) or []
+                if not is_pending_ocr_entry(neighbor)
+            ),
+            key=lambda neighbor: _parameter_signal(str(neighbor.get("chunk_text") or "")),
+            reverse=True,
+        )
+        if numeric_neighbors and _parameter_signal(str(numeric_neighbors[0].get("chunk_text") or "")) > 0:
+            neighbor = numeric_neighbors[0]
+            neighbor_excerpt = re.sub(
+                r"\s+", " ", str(neighbor.get("chunk_text") or "")
+            ).strip()[:420]
+            add(
+                f"[加工文献{index}相邻方法/结果] 同属ID={source_id}；"
+                f"{_source_location(neighbor)}；片段：{neighbor_excerpt}"
+            )
     return "\n".join(lines)

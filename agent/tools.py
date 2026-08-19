@@ -22,6 +22,7 @@ class ToolResult:
     status: str
     observation: str
     data: Any
+    metadata: dict[str, Any] | None = None
 
 
 def infer_product_filter(origin: str, variety: str) -> str:
@@ -165,20 +166,83 @@ def analyze_processing_request(
 
 
 def _retrieve_faceted_literature(
-    specs: list[dict[str, str | None]], product_filter: str, top_k: int
-) -> list[dict[str, Any]]:
+    specs: list[dict[str, str | None]],
+    product_filter: str,
+    top_k: int,
+    retrieval_mode: str = "quick",
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     per_facet: list[list[dict[str, Any]]] = []
+    stats: dict[str, Any] = {
+        "retrieval_mode": retrieval_mode,
+        "query_count": len(specs),
+        "fts_rows_returned": 0,
+        "database_rows_scanned": 0,
+        "database_candidates": 0,
+        "unique_candidate_count": 0,
+        "ranked_candidates": 0,
+        "ocr_filtered_count": 0,
+        "product_filtered_count": 0,
+        "category_filtered_count": 0,
+        "deduplicated_count": 0,
+        "database_available": None,
+        "retrieval_complete": True,
+        "retrieval_error": "",
+        "timed_out": False,
+    }
     citrus_title_terms = (
         "citrus", "orange", "mandarin", "tangerine", "lemon", "pomelo", "grapefruit",
         "chenpi", "citri reticulatae", "柑橘", "陈皮", "橙", "柚", "柠檬",
     )
     for spec in specs:
-        items = comprehensive_search_knowledge(
+        retrieval = comprehensive_search_knowledge(
             query=str(spec.get("query") or ""),
             product_filter=product_filter,
             category_filter=spec.get("category"),
             top_k=5,
+            retrieval_mode=retrieval_mode,
+            return_metadata=True,
         )
+        if isinstance(retrieval, dict):
+            items = list(retrieval.get("evidence") or [])
+            facet_stats = dict(retrieval.get("deep_retrieval_stats") or {})
+            for key in (
+                "fts_rows_returned",
+                "database_rows_scanned",
+                "database_candidates",
+                "unique_candidate_count",
+                "ranked_candidates",
+                "ocr_filtered_count",
+                "product_filtered_count",
+                "category_filtered_count",
+                "deduplicated_count",
+            ):
+                stats[key] = int(stats.get(key) or 0) + int(facet_stats.get(key) or 0)
+            stats["timed_out"] = bool(stats.get("timed_out")) or bool(facet_stats.get("timed_out"))
+            facet_database_available = facet_stats.get("database_available")
+            if facet_database_available is False:
+                stats["database_available"] = False
+            elif stats.get("database_available") is None and facet_database_available is True:
+                stats["database_available"] = True
+            stats["retrieval_complete"] = bool(stats.get("retrieval_complete", True)) and bool(
+                facet_stats.get("retrieval_complete", True)
+            )
+            errors = [
+                part
+                for value in (stats.get("retrieval_error"), facet_stats.get("retrieval_error"))
+                for part in str(value or "").split("；")
+                if part
+            ]
+            stats["retrieval_error"] = "；".join(dict.fromkeys(errors))
+            for key in (
+                "library_document_count",
+                "library_chunk_count",
+                "library_usable_document_count",
+                "library_ocr_document_count",
+            ):
+                if facet_stats.get(key) is not None:
+                    stats[key] = max(int(stats.get(key) or 0), int(facet_stats.get(key) or 0))
+        else:
+            items = list(retrieval or [])
         if spec.get("category"):
             primary = [
                 item
@@ -192,6 +256,8 @@ def _retrieve_faceted_literature(
             item["retrieval_facet"] = spec.get("category") or "跨类别"
             item["retrieval_method"] = "faceted_" + str(item.get("retrieval_method") or "hybrid")
         per_facet.append(items)
+        if retrieval_mode == "deep" and stats.get("database_available") is False:
+            break
 
     selected: list[dict[str, Any]] = []
     selected_chunks: set[str] = set()
@@ -213,26 +279,55 @@ def _retrieve_faceted_literature(
             if add(item):
                 break
         if len(selected) >= top_k:
-            return selected[:top_k]
+            selected = selected[:top_k]
+            break
     pool = sorted(
         (item for items in per_facet for item in items),
         key=lambda item: float(item.get("match_score") or 0),
         reverse=True,
     )
-    for item in pool:
-        add(item)
-        if len(selected) >= top_k:
-            break
-    return selected
+    if len(selected) < top_k:
+        for item in pool:
+            add(item)
+            if len(selected) >= top_k:
+                break
+    stats["selected_count"] = len(selected)
+    stats["selected_document_count"] = len(
+        {
+            str(item.get("document_id") or item.get("source_file") or item.get("title"))
+            for item in selected
+        }
+    )
+    return selected, stats
 
 
 def retrieve_literature(
-    query: str | list[str] | list[dict[str, str | None]], product_filter: str, top_k: int = 12
+    query: str | list[str] | list[dict[str, str | None]],
+    product_filter: str,
+    top_k: int = 12,
+    retrieval_mode: str = "quick",
 ) -> ToolResult:
     if isinstance(query, list) and query and isinstance(query[0], dict):
-        evidence = _retrieve_faceted_literature(query, product_filter, top_k)
+        evidence, retrieval_stats = _retrieve_faceted_literature(
+            query,
+            product_filter,
+            top_k,
+            retrieval_mode=retrieval_mode,
+        )
     else:
-        evidence = comprehensive_search_knowledge(query=query, product_filter=product_filter, top_k=top_k)
+        retrieval = comprehensive_search_knowledge(
+            query=query,
+            product_filter=product_filter,
+            top_k=top_k,
+            retrieval_mode=retrieval_mode,
+            return_metadata=True,
+        )
+        if isinstance(retrieval, dict):
+            evidence = list(retrieval.get("evidence") or [])
+            retrieval_stats = dict(retrieval.get("deep_retrieval_stats") or {})
+        else:
+            evidence = list(retrieval or [])
+            retrieval_stats = {}
     document_count = len(
         {
             str(item.get("document_id") or item.get("source_file") or item.get("title"))
@@ -247,16 +342,37 @@ def retrieve_literature(
             if category
         }
     )
+    timed_out = bool(retrieval_stats.get("timed_out"))
+    database_unavailable = retrieval_stats.get("database_available") is False
+    retrieval_complete = retrieval_stats.get("retrieval_complete") is not False
+    retrieval_error = str(retrieval_stats.get("retrieval_error") or "").strip()
+    partial = database_unavailable or timed_out or not retrieval_complete or bool(retrieval_error)
+    if database_unavailable:
+        retrieval_summary = "全库索引未能加载，本轮未完成全库深度检索"
+    elif timed_out:
+        retrieval_summary = "检索超过时限，本轮仅返回部分结果"
+    elif not retrieval_complete:
+        retrieval_summary = "检索未完整完成，本轮仅返回部分结果"
+    elif retrieval_error:
+        retrieval_summary = "检索过程中出现异常，本轮结果可能不完整"
+    else:
+        retrieval_summary = (
+            f"通过{'全库深度多轮' if retrieval_mode == 'deep' else '多查询'}、SQLite 全文召回、"
+            "双语概念扩展、混合重排与来源去重完成检索"
+        )
+    if retrieval_error:
+        retrieval_summary = f"{retrieval_summary}（{retrieval_error}）"
     return ToolResult(
         name="检索知识依据",
         tool="Comprehensive Literature Retriever",
-        status="完成",
+        status="部分完成" if partial else "完成",
         observation=(
-            f"通过多查询、SQLite 全文召回、双语概念扩展、混合重排与来源去重，"
+            f"{retrieval_summary}；"
             f"检索到 {len(evidence)} 条证据，来自 {document_count} 篇文献；"
             f"覆盖类别：{'、'.join(categories) or '暂无'}。"
         ),
         data=evidence,
+        metadata={"deep_retrieval_stats": retrieval_stats},
     )
 
 
@@ -264,12 +380,22 @@ def retrieve_processing_parameters(
     intent: dict[str, Any],
     product_filter: str,
     top_k: int = 24,
+    retrieval_mode: str = "quick",
 ) -> ToolResult:
-    evidence, subquestions = retrieve_processing_evidence(
+    retrieval = retrieve_processing_evidence(
         intent,
         product_filter=product_filter,
         top_k=top_k,
+        retrieval_mode=retrieval_mode,
+        return_metadata=True,
     )
+    if isinstance(retrieval, dict):
+        evidence = list(retrieval.get("evidence") or [])
+        subquestions = list(retrieval.get("subquestions") or [])
+        retrieval_stats = dict(retrieval.get("deep_retrieval_stats") or {})
+    else:
+        evidence, subquestions = retrieval
+        retrieval_stats = {}
     parameters = extract_processing_parameters(evidence, intent)
     parameter_groups = aggregate_parameter_evidence(parameters)
     parameterized_plan = build_parameterized_process_plan(intent, parameter_groups, evidence)
@@ -279,12 +405,26 @@ def retrieve_processing_parameters(
         if item.get("confidence_level") in {"高可信度", "中可信度"}
         and not item.get("conflict")
     )
+    total_subquestions = len(subquestions)
+    attempted_subquestions = int(
+        retrieval_stats.get("attempted_subquery_count") or total_subquestions
+    )
+    timed_out = bool(retrieval_stats.get("timed_out"))
+    database_unavailable = retrieval_stats.get("database_available") is False
+    if database_unavailable:
+        retrieval_summary = "全库索引未能加载，本轮未执行全库深度检索"
+    elif timed_out:
+        retrieval_summary = (
+            f"全库检索在时限内完成 {attempted_subquestions}/{total_subquestions} 个加工子问题"
+        )
+    else:
+        retrieval_summary = f"按 {total_subquestions} 个加工子问题完成混合检索"
     return ToolResult(
         name="检索并聚合加工参数证据",
         tool="Processing Evidence Aggregator",
-        status="完成",
+        status="部分完成" if timed_out or database_unavailable else "完成",
         observation=(
-            f"按 {len(subquestions)} 个加工子问题完成混合检索，保留 {len(evidence)} 条证据，"
+            f"{retrieval_summary}，保留 {len(evidence)} 条证据，"
             f"提取 {len(parameters)} 条带来源参数；其中 {usable} 组可作为有条件的小试依据。"
         ),
         data={
@@ -293,7 +433,9 @@ def retrieve_processing_parameters(
             "parameters": parameters,
             "parameter_groups": parameter_groups,
             "parameterized_plan": parameterized_plan,
+            "deep_retrieval_stats": retrieval_stats,
         },
+        metadata={"deep_retrieval_stats": retrieval_stats},
     )
 def score_processing(
     batch: dict[str, Any], image_observation: str, evidence: list[dict[str, Any]]

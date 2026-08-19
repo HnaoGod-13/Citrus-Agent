@@ -60,20 +60,86 @@ def _step_from_tool_result(result: ToolResult) -> AgentStep:
     )
 
 
-def _merge_evidence(*groups: list[dict[str, Any]], limit: int = 24) -> list[dict[str, Any]]:
+def _merge_evidence(
+    *groups: list[dict[str, Any]],
+    limit: int = 24,
+    per_document_limit: int = 2,
+) -> list[dict[str, Any]]:
     merged: list[dict[str, Any]] = []
     seen: set[str] = set()
     document_counts: dict[str, int] = {}
     for item in (item for group in groups for item in group):
         chunk_id = str(item.get("chunk_id") or f"{item.get('document_id')}:{item.get('page') or item.get('page_start')}")
         document_id = str(item.get("document_id") or item.get("source_file") or item.get("title"))
-        if chunk_id in seen or document_counts.get(document_id, 0) >= 2:
+        if chunk_id in seen or document_counts.get(document_id, 0) >= per_document_limit:
             continue
         seen.add(chunk_id)
         document_counts[document_id] = document_counts.get(document_id, 0) + 1
         merged.append(item)
         if len(merged) >= limit:
             break
+    return merged
+
+
+def _merge_retrieval_stats(*values: dict[str, Any] | None) -> dict[str, Any]:
+    merged: dict[str, Any] = {}
+    summed_keys = {
+        "query_count",
+        "subquery_count",
+        "attempted_subquery_count",
+        "fts_rows_returned",
+        "database_rows_scanned",
+        "database_candidates",
+        "unique_candidate_count",
+        "legacy_candidates",
+        "ranked_candidates",
+        "ocr_filtered_count",
+        "product_filtered_count",
+        "category_filtered_count",
+        "analytical_filtered_count",
+        "score_filtered_count",
+        "deduplicated_count",
+        "adjacent_candidate_count",
+        "adjacent_added_count",
+        "elapsed_ms",
+    }
+    for stats in values:
+        if not stats:
+            continue
+        for key, value in stats.items():
+            if key in summed_keys:
+                merged[key] = float(merged.get(key) or 0) + float(value or 0)
+            elif key in {
+                "library_document_count",
+                "library_chunk_count",
+                "library_usable_document_count",
+                "library_ocr_document_count",
+            }:
+                merged[key] = max(int(merged.get(key) or 0), int(value or 0))
+            elif key == "timed_out":
+                merged[key] = bool(merged.get(key)) or bool(value)
+            elif key == "database_available":
+                if value is False:
+                    merged[key] = False
+                elif merged.get(key) is None and value is True:
+                    merged[key] = True
+            elif key == "retrieval_complete":
+                merged[key] = bool(merged.get(key, True)) and bool(value)
+            elif key == "retrieval_error":
+                errors = [
+                    part
+                    for error_value in (merged.get(key), value)
+                    for part in str(error_value or "").split("；")
+                    if part
+                ]
+                merged[key] = "；".join(dict.fromkeys(errors))
+            elif key not in merged:
+                merged[key] = value
+    for key in summed_keys - {"elapsed_ms"}:
+        if key in merged:
+            merged[key] = int(merged[key])
+    if "elapsed_ms" in merged:
+        merged["elapsed_ms"] = round(float(merged["elapsed_ms"]), 2)
     return merged
 
 
@@ -129,7 +195,13 @@ def run_demo_agent(
     image_observation: str,
     progress_callback: ProgressCallback | None = None,
     analysis_question: str = "",
+    retrieval_mode: str = "quick",
 ) -> dict[str, Any]:
+    retrieval_mode = "deep" if retrieval_mode == "deep" else "quick"
+    processing_top_k = 40 if retrieval_mode == "deep" else 24
+    broad_top_k = 24 if retrieval_mode == "deep" else 16
+    evidence_limit = 40 if retrieval_mode == "deep" else 24
+    per_document_limit = 4 if retrieval_mode == "deep" else 2
     completed_tool_keys: list[str] = []
     agent_steps: list[AgentStep] = [
         AgentStep(
@@ -182,9 +254,15 @@ def run_demo_agent(
     explicit_processing_target = processing_intent.get("primary_product") != "柑橘加工品"
     broad_evidence: list[dict[str, Any]] = []
     process_payload: dict[str, Any] = {}
+    broad_retrieval_stats: dict[str, Any] = {}
     if explicit_processing_target:
         _notify(progress_callback, "正在按单元操作拆分问题并检索参数化文献证据")
-        process_result = retrieve_processing_parameters(processing_intent, product_filter, top_k=24)
+        process_result = retrieve_processing_parameters(
+            processing_intent,
+            product_filter,
+            top_k=processing_top_k,
+            retrieval_mode=retrieval_mode,
+        )
         process_payload = process_result.data
         evidence = list(process_payload.get("evidence") or [])
         agent_steps.append(_step_from_tool_result(process_result))
@@ -192,9 +270,11 @@ def run_demo_agent(
             fallback_result = retrieve_literature(
                 query=build_retrieval_specs(batch, focus_query=analysis_question),
                 product_filter=product_filter,
-                top_k=16,
+                top_k=broad_top_k,
+                retrieval_mode=retrieval_mode,
             )
             broad_evidence = fallback_result.data
+            broad_retrieval_stats = dict((fallback_result.metadata or {}).get("deep_retrieval_stats") or {})
             evidence = broad_evidence
             agent_steps.append(_step_from_tool_result(fallback_result))
     else:
@@ -202,9 +282,11 @@ def run_demo_agent(
         evidence_result = retrieve_literature(
             query=build_retrieval_specs(batch, focus_query=analysis_question),
             product_filter=product_filter,
-            top_k=16,
+            top_k=broad_top_k,
+            retrieval_mode=retrieval_mode,
         )
         broad_evidence = evidence_result.data
+        broad_retrieval_stats = dict((evidence_result.metadata or {}).get("deep_retrieval_stats") or {})
         evidence = broad_evidence
         agent_steps.append(_step_from_tool_result(evidence_result))
     completed_tool_keys.append("literature_retriever")
@@ -220,10 +302,20 @@ def run_demo_agent(
         intent_result = analyze_processing_request(analysis_question, batch, top_direction)
         processing_intent = intent_result.data
         _notify(progress_callback, "正在围绕优先路线补充单元操作参数、质量和包装证据")
-        process_result = retrieve_processing_parameters(processing_intent, product_filter, top_k=24)
+        process_result = retrieve_processing_parameters(
+            processing_intent,
+            product_filter,
+            top_k=processing_top_k,
+            retrieval_mode=retrieval_mode,
+        )
         process_payload = process_result.data
         processing_evidence = list(process_payload.get("evidence") or [])
-        evidence = _merge_evidence(processing_evidence, broad_evidence, limit=24)
+        evidence = _merge_evidence(
+            processing_evidence,
+            broad_evidence,
+            limit=evidence_limit,
+            per_document_limit=per_document_limit,
+        )
         agent_steps.append(_step_from_tool_result(process_result))
         # Re-evaluate support labels after focused evidence has been added.
         score_result = score_processing(batch, image_observation, evidence)
@@ -235,6 +327,18 @@ def run_demo_agent(
     parameterized_plan = process_payload.get("parameterized_plan") or {}
     processing_subquestions = list(process_payload.get("subquestions") or [])
     processing_evidence = list(process_payload.get("evidence") or [])
+    deep_retrieval_stats = _merge_retrieval_stats(
+        broad_retrieval_stats,
+        process_payload.get("deep_retrieval_stats") or {},
+    )
+    deep_retrieval_stats["retrieval_mode"] = retrieval_mode
+    deep_retrieval_stats["selected_count"] = len(evidence)
+    deep_retrieval_stats["selected_document_count"] = len(
+        {
+            str(item.get("document_id") or item.get("source_file") or item.get("title"))
+            for item in evidence
+        }
+    )
 
     _notify(progress_callback, "正在检查质控边界和风险项")
     risk_result = check_quality(batch, image_observation)
@@ -294,6 +398,8 @@ def run_demo_agent(
         "processing_evidence": processing_evidence,
         "processing_intent": processing_intent,
         "processing_subquestions": processing_subquestions,
+        "retrieval_mode": retrieval_mode,
+        "deep_retrieval_stats": deep_retrieval_stats,
         "process_parameters": process_parameters,
         "parameter_groups": parameter_groups,
         "parameterized_plan": parameterized_plan,
@@ -327,6 +433,8 @@ def write_audit_event(result: dict[str, Any], report_path: Path) -> None:
         "time": datetime.now().isoformat(timespec="seconds"),
         "batch_id": result["batch"].get("batch_id"),
         "product_filter": result["product_filter"],
+        "retrieval_mode": result.get("retrieval_mode", "quick"),
+        "deep_retrieval_stats": result.get("deep_retrieval_stats") or {},
         "top_direction": result["scores"][0].direction if result["scores"] else None,
         "top_match_level": result["scores"][0].match_level if result["scores"] else None,
         "risk_count": len(result["quality_risks"]),

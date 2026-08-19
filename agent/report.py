@@ -389,7 +389,7 @@ def parameterized_plan_markdown(
                     parameter_text,
                     applicability,
                     row.get("key_control"),
-                    "、".join(row.get("source_ids") or []) or "无直接参数证据",
+                    "｜".join(row.get("source_refs") or row.get("source_ids") or []) or "无直接参数证据",
                 )
             ) + " |"
         )
@@ -397,12 +397,31 @@ def parameterized_plan_markdown(
     if groups:
         for group in groups[:30]:
             conflict_note = "；存在冲突，禁止合并成单一范围" if group.get("conflict") else ""
+            source_text = "｜".join(
+                group.get("source_refs") or group.get("source_ids") or []
+            ) or "无"
             lines.append(
                 f"- **{group.get('process_step')}—{group.get('parameter_name')}**："
                 f"{group.get('recommended_range')}，{group.get('confidence_level')}；"
                 f"适用条件为 {group.get('applicability')}；{group.get('effect_summary')}"
-                f"；来源 {('、'.join(group.get('source_ids') or [])) or '无'}{conflict_note}。"
+                f"；来源定位 {source_text}{conflict_note}。"
             )
+            for alternative in (group.get("alternatives") or [])[:5]:
+                locator_parts = [
+                    str(alternative.get("title") or "未命名文献"),
+                    str(alternative.get("year") or "年份未知"),
+                    (
+                        f"片段 {alternative.get('source_chunk_id')}"
+                        if alternative.get("source_chunk_id")
+                        else ""
+                    ),
+                    str(alternative.get("source_location") or "页码未标注"),
+                ]
+                locator = "；".join(part for part in locator_parts if part)
+                lines.append(
+                    f"  - 证据定位：{locator}；报告值 {alternative.get('reported')}；"
+                    f"原文条件：{alternative.get('conditions') or '未注明'}"
+                )
     else:
         lines.append("- 未提取到单位、适用条件和来源均完整的参数，所有数值保持空缺，需补充文献或开展小试。")
     lines.extend(["", "### 5.7 设备需求及替代设备", ""])
@@ -492,6 +511,20 @@ def generate_report(
             f"（{item.get('year') or '年份未知'}；{category}；{section}；{locator}；{source}）\n"
             f"   - 可用于本轮复核的证据片段：{excerpt}"
         )
+        for neighbor in item.get("adjacent_chunks", []) or []:
+            neighbor_page = neighbor.get("page") or neighbor.get("page_start")
+            neighbor_locator = f"第 {neighbor_page} 页" if neighbor_page else "页码未标注"
+            neighbor_section = neighbor.get("section") or "正文"
+            neighbor_chunk = neighbor.get("chunk_id") or "片段号未标注"
+            neighbor_excerpt = re.sub(
+                r"\s+", " ", str(neighbor.get("chunk_text") or "")
+            ).strip()
+            if len(neighbor_excerpt) > 620:
+                neighbor_excerpt = neighbor_excerpt[:620].rstrip() + "…"
+            evidence_lines.append(
+                f"   - 相邻方法/结果证据（{neighbor_section}；{neighbor_locator}；片段 {neighbor_chunk}）："
+                f"{neighbor_excerpt}"
+            )
     if not evidence_lines:
         evidence_lines.append("未检索到足够相关的文献片段，需要补充真实文献、标准或企业 SOP。")
 

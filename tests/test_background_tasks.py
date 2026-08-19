@@ -165,5 +165,80 @@ class BackgroundNavigationWiringTests(unittest.TestCase):
         self.assertIn("disabled=active_job is not None", source)
 
 
+class DeepRetrievalBackgroundWiringTests(unittest.TestCase):
+    def test_mode_defaults_to_quick_and_invalid_values_are_normalized(self) -> None:
+        self.assertEqual("quick", app_main.normalize_retrieval_mode(None))
+        self.assertEqual("quick", app_main.normalize_retrieval_mode("invalid"))
+        self.assertEqual("deep", app_main.normalize_retrieval_mode(" DEEP "))
+
+    def test_submission_freezes_mode_in_an_immutable_request(self) -> None:
+        source = inspect.getsource(app_main.handle_prompt)
+
+        self.assertIn("submitted_retrieval_mode = normalize_retrieval_mode", source)
+        self.assertIn("request = MappingProxyType({", source)
+        self.assertIn('"retrieval_mode": submitted_retrieval_mode', source)
+        self.assertIn(
+            "st.session_state.active_agent_retrieval_mode = submitted_retrieval_mode",
+            source,
+        )
+        self.assertIn("lambda callback: _execute_agent_job(request, callback)", source)
+
+    def test_worker_forwards_frozen_mode_to_both_answer_paths(self) -> None:
+        source = inspect.getsource(app_main._execute_agent_job)
+
+        self.assertIn(
+            'retrieval_mode = normalize_retrieval_mode(request.get("retrieval_mode"))',
+            source,
+        )
+        self.assertGreaterEqual(source.count("retrieval_mode=retrieval_mode"), 2)
+        self.assertIn("正在扫描全库文献", source)
+        self.assertIn("正在扫描全库文献并组织回答", source)
+
+    def test_general_deep_mode_uses_larger_evidence_budget_and_context_mode(self) -> None:
+        source = inspect.getsource(app_main.run_general_turn)
+
+        self.assertIn('top_k=24 if normalized_mode == "deep" else 10', source)
+        self.assertIn("retrieval_mode=normalized_mode", source)
+
+    def test_general_deep_mode_carries_statistics_into_the_answer_trace(self) -> None:
+        stats = {
+            "retrieval_mode": "deep",
+            "library_document_count": 17300,
+            "selected_count": 1,
+        }
+        evidence = [{"chunk_id": "chunk-1", "chunk_text": "evidence"}]
+        with (
+            patch.object(
+                app_main,
+                "retrieve_general_literature",
+                return_value={"evidence": evidence, "deep_retrieval_stats": stats},
+            ) as retrieve,
+            patch.object(
+                app_main,
+                "build_general_chat_messages",
+                return_value=[{"role": "user", "content": "question"}],
+            ) as build_messages,
+            patch.object(app_main, "chat_with_deepseek", return_value="answer"),
+        ):
+            answer, trace = app_main.run_general_turn(
+                "question",
+                "api-key",
+                [],
+                retrieval_mode="deep",
+            )
+
+        self.assertEqual("answer", answer)
+        self.assertEqual(stats, trace["deep_retrieval_stats"])
+        self.assertEqual(24, retrieve.call_args.kwargs["top_k"])
+        self.assertEqual("deep", retrieve.call_args.kwargs["retrieval_mode"])
+        self.assertEqual("deep", build_messages.call_args.kwargs["retrieval_mode"])
+
+    def test_background_monitor_uses_active_job_mode_not_live_sidebar_mode(self) -> None:
+        source = inspect.getsource(app_main.render_agent_job_monitor)
+
+        self.assertIn("active_agent_retrieval_mode", source)
+        self.assertNotIn('session_state.get("retrieval_mode")', source)
+
+
 if __name__ == "__main__":
     unittest.main()

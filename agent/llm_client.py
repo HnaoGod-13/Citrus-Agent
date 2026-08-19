@@ -48,9 +48,11 @@ HISTORY_RESET_KEYWORDS = ["忽略上文", "不要参考上文", "不结合前文
 LITERATURE_DOMAIN_KEYWORDS = [
     "柑橘", "陈皮", "广陈皮", "茶枝柑", "橙", "柑", "橘", "柚", "柠檬",
     "果汁", "橙汁", "nfc", "果肉", "果皮", "果胶", "精油", "黄酮", "种子", "籽油",
-    "副产物", "果渣", "加工", "提取", "干燥", "发酵", "陈化", "贮藏", "质控",
+    "副产物", "果渣", "加工", "工艺", "流程", "参数", "提取", "清洗", "榨汁", "均质",
+    "脱气", "杀菌", "灌装", "包装", "温度", "时间", "压力", "流量", "浓度", "干燥",
+    "发酵", "陈化", "贮藏", "储藏", "质控",
     "农残", "重金属", "微生物", "黄曲霉", "文献", "论文", "研究", "依据", "来源", "参考文献",
-    "citrus", "chenpi", "pectin", "essential oil",
+    "citrus", "chenpi", "pectin", "essential oil", "pasteurization", "deaeration", "filling",
 ]
 
 
@@ -135,6 +137,7 @@ def _retrieval_query_with_history(history: list[dict[str, str]], user_prompt: st
         any(keyword in normalized for keyword in HISTORY_REFERENCE_KEYWORDS)
         or re.search(r"(?:把|将|给我|列出|整理|展开|详细).*(?:文献|依据|来源|方案|结论)", normalized)
         or re.search(r"(?:文献|依据|来源|方案|结论).*(?:给我|列出|整理|展开|详细)", normalized)
+        or re.search(r"(?:有|查|找|看|给).{0,8}(?:证据|文献|依据|来源)", normalized)
     )
     if not is_short_follow_up:
         return user_prompt
@@ -148,11 +151,32 @@ def retrieve_general_literature(
     user_prompt: str,
     top_k: int = 10,
     history: list[dict[str, str]] | None = None,
-) -> list[dict[str, Any]]:
-    if not _should_retrieve_literature(user_prompt):
-        return []
+    *,
+    retrieval_mode: str = "quick",
+    return_metadata: bool = False,
+) -> list[dict[str, Any]] | dict[str, Any]:
     query = _retrieval_query_with_history(history or [], user_prompt)
-    return comprehensive_search_knowledge(query, product_filter="不限", top_k=top_k)
+    should_retrieve = _should_retrieve_literature(user_prompt)
+    if retrieval_mode == "deep" and query != user_prompt:
+        should_retrieve = should_retrieve or _should_retrieve_literature(query)
+    if not should_retrieve:
+        if return_metadata:
+            return {
+                "evidence": [],
+                "deep_retrieval_stats": {
+                    "retrieval_mode": retrieval_mode,
+                    "selected_count": 0,
+                    "selected_document_count": 0,
+                },
+            }
+        return []
+    return comprehensive_search_knowledge(
+        query,
+        product_filter="不限",
+        top_k=top_k,
+        retrieval_mode=retrieval_mode,
+        return_metadata=return_metadata,
+    )
 
 
 def _format_evidence_with_budget(evidence: list[dict[str, Any]], excerpt_chars: int) -> str:
@@ -166,6 +190,7 @@ def build_general_chat_messages(
     *,
     memory_context: dict[str, Any] | None = None,
     evidence: list[dict[str, Any]] | None = None,
+    retrieval_mode: str = "quick",
 ) -> list[dict[str, str]]:
     system_prompt = """
 你是柑橘产业链智能助手，可以回答普通大模型式问题，也可以围绕柑橘加工、陈皮、质控、文献、报告和业务沟通给出建议。
@@ -189,15 +214,33 @@ def build_general_chat_messages(
     messages = [{"role": "system", "content": system_prompt}]
     messages.extend(build_context_messages(memory_context))
     if evidence is None:
-        evidence = retrieve_general_literature(user_prompt, top_k=10, history=history)
+        retrieval = retrieve_general_literature(
+            user_prompt,
+            top_k=24 if retrieval_mode == "deep" else 10,
+            history=history,
+            retrieval_mode=retrieval_mode,
+            return_metadata=retrieval_mode == "deep",
+        )
+        evidence = list(retrieval.get("evidence") or []) if isinstance(retrieval, dict) else retrieval
     if evidence:
+        mode_note = (
+            "本轮已启用全库深度检索：候选来自完整本地索引的多轮聚焦召回，"
+            "但只把经重排和去重后的证据片段放入模型上下文。\n"
+            if retrieval_mode == "deep"
+            else ""
+        )
         messages.append(
             {
                 "role": "system",
                 "content": (
+                    mode_note
+                    +
                     "以下是本轮从本地文献数据库检索并重排后的证据。只引用这些片段实际支持的内容；"
                     "页码用于回查原文，不代表已完成全文人工复核。\n\n"
-                    + _format_evidence_with_budget(evidence, excerpt_chars=700)
+                    + _format_evidence_with_budget(
+                        evidence,
+                        excerpt_chars=460 if retrieval_mode == "deep" else 700,
+                    )
                 ),
             }
         )
@@ -215,6 +258,8 @@ def build_analysis_context(result: dict[str, Any]) -> str:
     evidence = result.get("evidence", [])
     next_actions = result.get("next_actions", [])
     processing_plan = result.get("processing_plan", {})
+    retrieval_mode = str(result.get("retrieval_mode") or "quick")
+    retrieval_stats = result.get("deep_retrieval_stats") or {}
     processing_context = format_processing_context(
         result.get("processing_intent") or {},
         result.get("parameter_groups") or [],
@@ -242,13 +287,15 @@ def build_analysis_context(result: dict[str, Any]) -> str:
     ]
     evidence_lines = []
     evidence_tokens = 0
-    for index, item in enumerate(evidence[:16], 1):
+    evidence_limit = 24 if retrieval_mode == "deep" else 16
+    excerpt_limit = 420 if retrieval_mode == "deep" else 560
+    for index, item in enumerate(evidence[:evidence_limit], 1):
         page = item.get("page") or item.get("page_start") or "未标注"
         line = (
             f"- [文献{index}] {item.get('title') or '未命名文献'}"
             f"（{item.get('year') or '年份未知'}；{item.get('category') or item.get('product') or '未分类'}；"
             f"{item.get('section') or '正文'}；第{page}页；匹配分 {item.get('match_score')}）："
-            f"{_shorten(item.get('chunk_text') or '', 560)}"
+            f"{_shorten(item.get('chunk_text') or '', excerpt_limit)}"
         )
         line_tokens = estimate_tokens(line)
         remaining = CONTEXT_TOKEN_BUDGETS["literature"] - evidence_tokens
@@ -270,6 +317,14 @@ def build_analysis_context(result: dict[str, Any]) -> str:
     context = f"""
 本轮用户问题：
 {result.get('analysis_question') or '未单独记录，按当前批次做综合分析'}
+
+文献检索模式：
+- 模式：{'全库深度检索' if retrieval_mode == 'deep' else '快速检索'}
+- 全库索引范围：{retrieval_stats.get('library_document_count') or '未记录'} 篇文献，{retrieval_stats.get('library_chunk_count') or '未记录'} 个片段
+- 正文可用性：{retrieval_stats.get('library_usable_document_count') or '未记录'} 篇可用；{retrieval_stats.get('library_ocr_document_count') or '未记录'} 篇待 OCR
+- 本轮候选与采用：候选 {retrieval_stats.get('database_candidates') or 0} 个片段；采用 {retrieval_stats.get('selected_count') or len(evidence)} 个片段，来自 {retrieval_stats.get('selected_document_count') or '未记录'} 篇文献
+- 待 OCR 排除：{retrieval_stats.get('ocr_filtered_count') or 0}；相邻方法/结果补充：{retrieval_stats.get('adjacent_added_count') or 0}
+- 边界：全库深度检索表示完整索引均可参与多轮召回，不表示把全部文献正文同时发送给模型。
 
 当前批次：
 - 批次号：{batch.get('batch_id')}

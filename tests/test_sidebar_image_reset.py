@@ -89,6 +89,22 @@ class SidebarImageResetTests(unittest.TestCase):
         self.assertNotIn("sidebar_draft_image_name", app.session_state)
         self.assertNotIn("remove_uploaded_image_0", [button.key for button in app.button])
 
+    def test_deep_retrieval_mode_survives_navigation_round_trip(self) -> None:
+        app = self.run_app()
+        retrieval_control = app.get("button_group")[0]
+        self.assertEqual("quick", retrieval_control.value)
+
+        retrieval_control.select("deep").run()
+        self.assertEqual("deep", app.session_state.retrieval_mode)
+
+        app.button(key="product_nav_button_knowledge").click().run()
+        self.assertEqual("deep", app.session_state.retrieval_mode)
+        self.assertEqual([], list(app.get("button_group")))
+
+        app.button(key="product_nav_button_chat").click().run()
+        self.assertEqual("deep", app.get("button_group")[0].value)
+        self.assertEqual([], list(app.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

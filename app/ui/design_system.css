@@ -802,6 +802,40 @@ header[data-testid="stHeader"] {
     margin-top: 20px;
 }
 
+.sidebar-section-title.retrieval-heading {
+    margin: 20px 0 10px;
+}
+
+[class*="st-key-retrieval_mode"] [data-testid="stButtonGroup"] {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+    gap: 6px;
+}
+
+[class*="st-key-retrieval_mode"] [data-testid="stButtonGroup"] > * {
+    min-width: 0;
+}
+
+[class*="st-key-retrieval_mode"] [data-testid="stButtonGroup"] button {
+    width: 100% !important;
+    min-width: 0 !important;
+    min-height: 40px !important;
+    padding: 7px 8px !important;
+    border-color: var(--border) !important;
+    border-radius: var(--radius-input) !important;
+    font-size: 12px !important;
+    line-height: 16px !important;
+    white-space: normal !important;
+    overflow-wrap: anywhere;
+}
+
+[class*="st-key-retrieval_mode"] [data-testid="stButtonGroup"] button[aria-pressed="true"] {
+    color: var(--surface) !important;
+    background: var(--text-primary) !important;
+    border-color: var(--text-primary) !important;
+}
+
 [data-testid="stSidebar"] [class*="st-key-new_conversation"] {
     margin-top: 27px;
 }
@@ -2492,6 +2526,145 @@ div[data-testid="stDataFrame"] * {
     font-size: 11px;
 }
 
+.agent-live-subtitle.is-deep {
+    color: var(--text-secondary);
+    font-weight: var(--weight-medium);
+}
+
+.deep-retrieval-stats {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 18px;
+    margin: 18px 0;
+    padding: 12px 0;
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+}
+
+.deep-retrieval-stats-title {
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: var(--weight-medium);
+    line-height: 18px;
+}
+
+.deep-retrieval-stats-heading {
+    display: grid;
+    gap: 8px;
+    min-width: min(300px, 100%);
+}
+
+.deep-retrieval-status {
+    display: grid;
+    gap: 2px;
+    max-width: 420px;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-left-width: 3px;
+    border-radius: var(--radius-sm);
+    font-size: 11px;
+    line-height: 16px;
+}
+
+.deep-retrieval-status strong {
+    font-size: 12px;
+    font-weight: var(--weight-semibold);
+}
+
+.deep-retrieval-status span {
+    overflow-wrap: anywhere;
+}
+
+.deep-retrieval-status.is-error {
+    color: #8a1f1f;
+    background: #fff7f7;
+    border-color: #dfbaba;
+}
+
+.deep-retrieval-status.is-warning {
+    color: #765100;
+    background: #fffaf0;
+    border-color: #e1c98f;
+}
+
+.deep-retrieval-stats-values {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(86px, 1fr));
+    gap: 18px;
+}
+
+.deep-retrieval-stats-values:empty {
+    display: none;
+}
+
+.deep-retrieval-stat {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: baseline;
+    gap: 8px;
+    min-width: 0;
+}
+
+.deep-retrieval-stat.is-scope {
+    grid-column: 1 / -1;
+}
+
+.deep-retrieval-stat span {
+    color: var(--text-tertiary);
+    font-size: 11px;
+    line-height: 16px;
+    white-space: nowrap;
+}
+
+.deep-retrieval-stat strong {
+    color: var(--text-primary);
+    font-size: 14px;
+    font-weight: var(--weight-semibold);
+    line-height: 18px;
+}
+
+.adjacent-evidence {
+    margin: 12px 0 20px;
+    padding-left: 14px;
+    border-left: 2px solid var(--border-strong);
+}
+
+.adjacent-evidence-title {
+    margin-bottom: 2px;
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: var(--weight-semibold);
+    line-height: 18px;
+}
+
+.adjacent-evidence-item {
+    padding: 10px 0;
+    border-top: 1px solid var(--border-subtle);
+}
+
+.adjacent-evidence-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 12px;
+    color: var(--text-tertiary);
+    font-family: var(--font-mono) !important;
+    font-size: 10px;
+    line-height: 15px;
+}
+
+.adjacent-evidence-meta span,
+.adjacent-evidence-excerpt {
+    overflow-wrap: anywhere;
+}
+
+.adjacent-evidence-excerpt {
+    margin-top: 6px;
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.7;
+}
+
 .agent-live-dot {
     width: 3px;
     height: 3px;
@@ -3885,6 +4058,17 @@ div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label)
 
     .processing-plan-head {
         flex-direction: column;
+    }
+
+    .deep-retrieval-stats {
+        align-items: stretch;
+        flex-direction: column;
+        gap: 9px;
+    }
+
+    .deep-retrieval-stats-values {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
     }
 
     .message-row.user .message-bubble {

@@ -324,6 +324,31 @@ class DesignSystemRegressionTests(unittest.TestCase):
         self.assertNotIn('"＋ 新建对话"', main_source)
         self.assertIn('"如：果皮完整、无霉斑腐烂。\\n"', main_source)
 
+    def test_deep_retrieval_control_and_statistics_are_scoped_and_responsive(self) -> None:
+        css = CSS_PATH.read_text(encoding="utf-8-sig")
+        retrieval_selector = (
+            '[class*="st-key-retrieval_mode"] [data-testid="stButtonGroup"] {'
+        )
+        retrieval_start = css.index(retrieval_selector)
+        retrieval_rule = css[retrieval_start : css.index("}", retrieval_start) + 1]
+        mobile_start = css.index("@media (max-width: 699px) {")
+        mobile_css = css[mobile_start : css.index("@media (prefers-reduced-motion", mobile_start)]
+
+        self.assertIn("grid-template-columns: repeat(2, minmax(0, 1fr));", retrieval_rule)
+        self.assertIn(".sidebar-section-title.retrieval-heading {", css)
+        self.assertIn(".deep-retrieval-stats {", css)
+        self.assertIn(".deep-retrieval-stats-values {", css)
+        self.assertIn(".deep-retrieval-status.is-error {", css)
+        self.assertIn(".deep-retrieval-status.is-warning {", css)
+        self.assertIn("overflow-wrap: anywhere;", css)
+        self.assertIn(".adjacent-evidence {", css)
+        self.assertIn(".adjacent-evidence-item {", css)
+        self.assertIn(".adjacent-evidence-meta {", css)
+        self.assertIn(".adjacent-evidence-excerpt {", css)
+        self.assertIn(".deep-retrieval-stats {", mobile_css)
+        self.assertIn("flex-direction: column;", mobile_css)
+        self.assertNotIn('[data-testid="stButtonGroup"] {', css[:retrieval_start])
+
     def test_mobile_sidebar_preserves_readable_control_width(self) -> None:
         css = CSS_PATH.read_text(encoding="utf-8-sig")
         mobile_start = css.index("@media (max-width: 899px) {")

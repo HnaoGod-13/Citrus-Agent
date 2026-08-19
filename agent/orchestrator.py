@@ -1038,6 +1038,7 @@ def run_analysis_turn(
     image_mime_type: str = "image/jpeg",
     progress_callback: ProgressCallback | None = None,
     memory_context: dict[str, Any] | None = None,
+    retrieval_mode: str = "quick",
 ) -> dict[str, Any]:
     _notify(progress_callback, "正在理解批次信息并抽取关键字段")
     batch, extracted_observation, notes = extract_batch_from_text(user_prompt, current_batch)
@@ -1075,6 +1076,7 @@ def run_analysis_turn(
         image_observation,
         progress_callback=progress_callback,
         analysis_question=user_prompt,
+        retrieval_mode=retrieval_mode,
     )
     result["vision_status"] = vision_status
     result["vision_answer"] = str((vision_result or {}).get("answer") or "")
@@ -1135,6 +1137,8 @@ def run_analysis_turn(
         "vision_result": vision_result,
         "model_context_manifest": model_context_manifest,
         "memory_context_manifest": (memory_context or {}).get("manifest", {}),
+        "retrieval_mode": result.get("retrieval_mode") or retrieval_mode,
+        "deep_retrieval_stats": result.get("deep_retrieval_stats") or {},
     }
 
 

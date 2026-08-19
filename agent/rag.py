@@ -8,10 +8,22 @@ import re
 import sqlite3
 import tempfile
 import threading
+import time
 from collections import Counter, defaultdict
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Literal
+
+from .processing_config import (
+    PROCESS_DEEP_MAX_DATABASE_CANDIDATES,
+    PROCESS_DEEP_MAX_FTS_ROWS,
+    PROCESS_DEEP_MAX_PER_QUERY,
+    PROCESS_DEEP_NEIGHBOR_DOCUMENT_LIMIT,
+    PROCESS_DEEP_NEIGHBOR_LIMIT,
+    PROCESS_DEEP_NEIGHBOR_PER_HIT,
+    PROCESS_DEEP_NEIGHBOR_RADIUS,
+    PROCESS_DEEP_SQL_TIMEOUT_SECONDS,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -112,6 +124,50 @@ ENGLISH_STOPWORDS = {
     "study", "effect", "effects", "based", "analysis", "agent", "processing", "quality",
 }
 _DB_BUILD_LOCK = threading.Lock()
+
+
+RetrievalMode = Literal["quick", "deep"]
+
+
+def _normalize_retrieval_mode(retrieval_mode: str) -> RetrievalMode:
+    normalized = str(retrieval_mode or "quick").strip().lower()
+    if normalized not in {"quick", "deep"}:
+        raise ValueError("retrieval_mode must be 'quick' or 'deep'")
+    return normalized  # type: ignore[return-value]
+
+
+def is_pending_ocr_entry(item: dict[str, Any]) -> bool:
+    section = str(item.get("section") or "").strip().lower()
+    text = str(item.get("chunk_text") or "").strip().lower()
+    return "待ocr" in section or (text.startswith("题名：") and "未提取到可用正文" in text)
+
+
+def _new_retrieval_stats(mode: RetrievalMode, query_count: int, top_k: int) -> dict[str, Any]:
+    return {
+        "retrieval_mode": mode,
+        "query_count": query_count,
+        "requested_top_k": top_k,
+        "fts_rows_returned": 0,
+        "database_rows_scanned": 0,
+        "database_candidates": 0,
+        "legacy_candidates": 0,
+        "ranked_candidates": 0,
+        "ocr_filtered_count": 0,
+        "product_filtered_count": 0,
+        "category_filtered_count": 0,
+        "deduplicated_count": 0,
+        "selected_count": 0,
+        "selected_document_count": 0,
+        "library_document_count": 0,
+        "library_chunk_count": 0,
+        "library_usable_document_count": 0,
+        "library_ocr_document_count": 0,
+        "database_available": None,
+        "retrieval_complete": True,
+        "retrieval_error": "",
+        "timed_out": False,
+        "elapsed_ms": 0,
+    }
 
 
 def _file_sha256(path: Path) -> str:
@@ -223,6 +279,89 @@ def database_stats(path: Path = LITERATURE_DB_PATH) -> dict[str, Any]:
         return {"available": True, "documents": documents, "chunks": chunks, "categories": categories}
     except (sqlite3.Error, OSError):
         return {"available": False, "documents": 0, "chunks": 0, "categories": {}}
+
+
+@lru_cache(maxsize=8)
+def _library_counts_cached(
+    path_text: str,
+    modified_ns: int,
+    size: int,
+    use_manifests: bool,
+) -> tuple[int, int, int, int]:
+    del modified_ns, size
+    documents = 0
+    chunks = 0
+    if use_manifests:
+        for manifest_path in (
+            LITERATURE_PACKAGE_DIR / "manifest.json",
+            LITERATURE_DIR / "manifest.json",
+        ):
+            try:
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                documents = int(manifest.get("documents") or 0)
+                chunks = int(manifest.get("chunks") or 0)
+                if documents or chunks:
+                    break
+            except (OSError, TypeError, ValueError):
+                continue
+    try:
+        connection = sqlite3.connect(f"file:{Path(path_text).as_posix()}?mode=ro", uri=True)
+        if not documents:
+            documents = int(connection.execute("SELECT COUNT(*) FROM documents").fetchone()[0])
+        if not chunks:
+            chunks = int(connection.execute("SELECT COUNT(*) FROM chunks").fetchone()[0])
+        quality_rows = connection.execute(
+            "SELECT text_quality, COUNT(*) FROM documents GROUP BY text_quality"
+        ).fetchall()
+        connection.close()
+        quality_counts = {str(row[0] or ""): int(row[1] or 0) for row in quality_rows}
+        ocr_documents = int(quality_counts.get("ocr_required") or 0)
+        usable_documents = max(0, documents - ocr_documents)
+        return documents, chunks, usable_documents, ocr_documents
+    except (sqlite3.Error, OSError):
+        return documents, chunks, 0, 0
+
+
+def library_scope_stats(path: Path = LITERATURE_DB_PATH) -> dict[str, int]:
+    try:
+        stat = path.stat()
+    except OSError:
+        if path == LITERATURE_DB_PATH:
+            for manifest_path in (
+                LITERATURE_PACKAGE_DIR / "manifest.json",
+                LITERATURE_DIR / "manifest.json",
+            ):
+                try:
+                    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                    documents = int(manifest.get("documents") or 0)
+                    chunks = int(manifest.get("chunks") or 0)
+                    if documents or chunks:
+                        return {
+                            "library_document_count": documents,
+                            "library_chunk_count": chunks,
+                            "library_usable_document_count": 0,
+                            "library_ocr_document_count": 0,
+                        }
+                except (OSError, TypeError, ValueError):
+                    continue
+        return {
+            "library_document_count": 0,
+            "library_chunk_count": 0,
+            "library_usable_document_count": 0,
+            "library_ocr_document_count": 0,
+        }
+    documents, chunks, usable_documents, ocr_documents = _library_counts_cached(
+        str(path),
+        stat.st_mtime_ns,
+        stat.st_size,
+        path == LITERATURE_DB_PATH,
+    )
+    return {
+        "library_document_count": documents,
+        "library_chunk_count": chunks,
+        "library_usable_document_count": usable_documents,
+        "library_ocr_document_count": ocr_documents,
+    }
 
 
 def _chunk_paths(path: Path) -> list[Path]:
@@ -408,45 +547,232 @@ def _fts_query_terms(query: str, limit: int = 56) -> list[str]:
     return list(dict.fromkeys(ordered))[:limit]
 
 
+DEEP_FTS_PRODUCT_ANCHORS: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
+    (("柑橘汁", "橙汁", "果汁", "nfc", "orange juice", "citrus juice", "concentrated juice"),
+     ("concept_juice", "橙汁", "果汁", "orange juice", "citrus juice")),
+    (("陈皮", "广陈皮", "chenpi", "citri reticulatae"),
+     ("concept_chenpi", "陈皮", "chenpi", "citri reticulatae")),
+    (("果胶", "pectin"), ("concept_pectin", "果胶", "pectin")),
+    (("精油", "挥发油", "essential oil", "volatile oil"),
+     ("concept_essential_oil", "精油", "essential oil", "volatile oil")),
+    (("种子", "籽油", "seed oil"), ("concept_seed", "种子", "籽油", "seed oil")),
+    (("副产物", "果渣", "byproduct", "by-product", "pomace"),
+     ("concept_byproduct", "副产物", "果渣", "byproduct", "pomace")),
+    (("柑橘", "citrus", "orange", "mandarin", "tangerine"),
+     ("concept_citrus", "柑橘", "citrus", "orange")),
+)
+
+DEEP_FTS_FOCUS_GROUPS: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
+    (("清洗", "洗涤", "washing", "wash"), ("清洗", "washing", "wash", "disinfection")),
+    (("破碎", "crushing"), ("破碎", "crushing")),
+    (("榨汁", "压榨", "juicing", "pressing"), ("榨汁", "压榨", "juicing", "pressing")),
+    (("酶解", "果胶酶", "pectinase", "enzymatic"), ("酶解", "果胶酶", "pectinase", "enzymatic")),
+    (("澄清", "clarification", "fining"), ("澄清", "clarification", "fining", "depectinization")),
+    (("过滤", "超滤", "微滤", "filtration", "ultrafiltration", "microfiltration"),
+     ("过滤", "filtration", "ultrafiltration", "microfiltration")),
+    (("均质", "homogenization", "homogenisation", "homogenized", "hph"),
+     ("均质", "homogenization", "homogenisation", "hph")),
+    (("脱气", "deaeration", "de-aeration"), ("脱气", "deaeration", "de-aeration")),
+    (("杀菌", "巴氏", "pasteurization", "sterilization"),
+     ("杀菌", "巴氏", "pasteurization", "sterilization")),
+    (("灌装", "filling", "bottling"), ("灌装", "filling", "bottling", "aseptic filling")),
+    (("包装", "packaging"), ("包装", "packaging")),
+    (("干燥", "热风", "冻干", "drying", "freeze-drying"),
+     ("干燥", "drying", "hot air drying", "freeze-drying")),
+    (("陈化", "aging", "ageing", "maturation"), ("陈化", "aging", "ageing", "maturation")),
+    (("储藏", "贮藏", "storage", "shelf life"), ("储藏", "贮藏", "storage", "shelf life")),
+    (("浓缩", "evaporation", "concentration"), ("浓缩", "evaporation", "concentrated juice")),
+    (("发酵", "fermentation"), ("发酵", "fermentation")),
+    (("提取", "extraction"), ("提取", "extraction")),
+    (("压力", "pressure", "mpa"), ("压力", "pressure", "mpa")),
+    (("流量", "flow"), ("流量", "flow")),
+    (("转速", "rpm"), ("转速", "rpm")),
+    (("料液比", "固液比", "solid liquid ratio"), ("料液比", "固液比", "solid liquid ratio")),
+    (("酶用量", "dosage"), ("酶用量", "dosage", "pectinase")),
+    (("水分活度", "water activity"), ("水分活度", "water activity")),
+    (("ph",), ("ph",)),
+)
+
+DEEP_FTS_GENERIC_TERMS = {
+    "concept_unit_operation", "concept_process_parameter", "materials", "material", "methods", "method",
+    "results", "result", "discussion", "quality", "processing", "process", "parameter", "parameters",
+    "condition", "conditions", "temperature", "time", "study", "research", "experiment",
+    "材料", "方法", "结果", "讨论", "质量", "加工", "工艺", "参数", "条件", "温度", "时间", "研究",
+    "实验", "流程", "评价", "完整",
+}
+
+# The first groups describe unit operations; later groups are generic
+# parameter names. An operation is a much stronger retrieval anchor.
+DEEP_FTS_OPERATION_GROUP_COUNT = 17
+
+
+def _fts_phrase(term: str) -> str:
+    return f'"{term.replace(chr(34), chr(34) * 2)}"'
+
+
+def _matched_deep_terms(
+    query: str,
+    groups: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...],
+    *,
+    max_groups: int,
+    terms_per_group: int,
+) -> list[str]:
+    lower = query.lower()
+    matched: list[tuple[int, tuple[str, ...]]] = []
+    for aliases, terms in groups:
+        positions: list[int] = []
+        for alias in aliases:
+            normalized_alias = alias.lower()
+            if re.fullmatch(r"[a-z0-9][a-z0-9 ._/-]*", normalized_alias):
+                matches = list(
+                    re.finditer(
+                        rf"(?<![a-z0-9]){re.escape(normalized_alias)}(?![a-z0-9])",
+                        lower,
+                    )
+                )
+                positions.append(matches[-1].start() if matches else -1)
+            else:
+                positions.append(lower.rfind(normalized_alias))
+        position = max(positions, default=-1)
+        if position >= 0:
+            matched.append((position, terms))
+    matched.sort(key=lambda item: item[0], reverse=True)
+    selected: list[str] = []
+    for _, terms in matched[:max_groups]:
+        representatives = [terms[0]]
+        representatives.extend(term for term in terms[1:] if re.search(r"[a-z]", term, flags=re.I))
+        representatives.extend(terms[1:])
+        selected.extend(list(dict.fromkeys(representatives))[:terms_per_group])
+    return list(dict.fromkeys(selected))
+
+
+def _is_deep_generic_term(term: str) -> bool:
+    normalized = term.strip().lower()
+    if normalized in DEEP_FTS_GENERIC_TERMS:
+        return True
+    return any(fragment in normalized for fragment in ("材料与方法", "实验条件", "研究结果", "工艺参数"))
+
+
+def _build_fts_match_query(query: str, retrieval_mode: RetrievalMode = "quick") -> str:
+    mode = _normalize_retrieval_mode(retrieval_mode)
+    if mode == "quick":
+        return " OR ".join(_fts_phrase(term) for term in _fts_query_terms(query))
+    anchors = _matched_deep_terms(
+        query, DEEP_FTS_PRODUCT_ANCHORS, max_groups=1, terms_per_group=1
+    )
+    focus = _matched_deep_terms(
+        query,
+        DEEP_FTS_FOCUS_GROUPS[:DEEP_FTS_OPERATION_GROUP_COUNT],
+        max_groups=2,
+        terms_per_group=2,
+    )
+    if not focus:
+        focus = _matched_deep_terms(
+            query,
+            DEEP_FTS_FOCUS_GROUPS[DEEP_FTS_OPERATION_GROUP_COUNT:],
+            max_groups=2,
+            terms_per_group=2,
+        )
+    if not focus:
+        focus = [
+            term
+            for term in _fts_query_terms(query, limit=24)
+            if term not in anchors and not _is_deep_generic_term(term) and not term.startswith("concept_")
+        ][:8]
+    anchor_expression = " OR ".join(_fts_phrase(term) for term in anchors)
+    focus_expression = " OR ".join(_fts_phrase(term) for term in focus)
+    if anchor_expression and focus_expression:
+        return f"({anchor_expression}) AND ({focus_expression})"
+    return focus_expression or anchor_expression
+
+
 def _database_candidates(
     query: str,
     product_filter: str | None,
     limit: int,
     db_path: Path = LITERATURE_DB_PATH,
     category_filter: str | None = None,
+    *,
+    retrieval_mode: RetrievalMode = "quick",
+    stats: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
+    mode = _normalize_retrieval_mode(retrieval_mode)
+    database_available = db_path.exists()
     if db_path == LITERATURE_DB_PATH:
-        ensure_literature_database(db_path)
-    if not db_path.exists():
+        database_available = ensure_literature_database(db_path) and db_path.exists()
+    if stats is not None:
+        stats["database_available"] = database_available
+    if not database_available:
+        if stats is not None and mode == "deep":
+            stats["retrieval_complete"] = False
+            stats["retrieval_error"] = "全库文献索引未能加载，本轮未执行全库深度检索。"
         return []
-    terms = _fts_query_terms(query)
-    if not terms:
+    match_query = _build_fts_match_query(query, mode)
+    if not match_query:
         return []
-    match_query = " OR ".join(f'"{term.replace(chr(34), chr(34) * 2)}"' for term in terms)
+    if stats is not None:
+        stats["fts_expression_term_count"] = int(stats.get("fts_expression_term_count") or 0) + match_query.count('"') // 2
+    where = ["chunks_fts MATCH ?"]
+    parameters: list[Any] = [match_query]
+    if mode == "deep":
+        # Exclude metadata-only entries before LIMIT so usable full-text rows
+        # backfill the requested candidate window.
+        where.append("LOWER(COALESCE(c.section, '')) NOT LIKE '%待ocr%'")
+        if category_filter:
+            where.append("INSTR(c.category, ?) > 0")
+            parameters.append(category_filter)
+    row_limit = (
+        min(max(limit * 4, 240), PROCESS_DEEP_MAX_FTS_ROWS)
+        if mode == "deep"
+        else max(limit * 3, 80)
+    )
+    parameters.append(row_limit)
     connection = sqlite3.connect(f"file:{db_path.as_posix()}?mode=ro", uri=True)
     connection.row_factory = sqlite3.Row
+    deadline = time.monotonic() + PROCESS_DEEP_SQL_TIMEOUT_SECONDS
+    if mode == "deep":
+        connection.set_progress_handler(lambda: int(time.monotonic() >= deadline), 10_000)
     try:
         rows = connection.execute(
-            """
+            f"""
             SELECT c.*, bm25(chunks_fts, 5.0, 2.8, 2.3, 2.0, 0.9, 0.35) AS fts_rank
             FROM chunks_fts
             JOIN chunks AS c ON c.id = chunks_fts.rowid
-            WHERE chunks_fts MATCH ?
+            WHERE {' AND '.join(where)}
             ORDER BY fts_rank
             LIMIT ?
             """,
-            (match_query, max(limit * 3, 80)),
+            parameters,
         ).fetchall()
-    except sqlite3.Error:
+    except sqlite3.Error as error:
+        if stats is not None:
+            stats["retrieval_complete"] = False
+            if "interrupt" in str(error).lower():
+                stats["timed_out"] = True
+                stats["retrieval_error"] = "单次全文检索超过时限，本轮结果可能不完整。"
+            else:
+                stats["retrieval_error"] = "全文索引查询失败，本轮结果可能不完整。"
         rows = []
     finally:
+        if mode == "deep":
+            connection.set_progress_handler(None, 0)
         connection.close()
+    if stats is not None:
+        stats["fts_rows_returned"] = int(stats.get("fts_rows_returned") or 0) + len(rows)
     candidates: list[dict[str, Any]] = []
     for row in rows:
         item = dict(row)
+        if mode == "deep" and is_pending_ocr_entry(item):
+            if stats is not None:
+                stats["ocr_filtered_count"] = int(stats.get("ocr_filtered_count") or 0) + 1
+            continue
         if not _matches_product(str(item.get("product") or item.get("category") or ""), product_filter):
+            if stats is not None:
+                stats["product_filtered_count"] = int(stats.get("product_filtered_count") or 0) + 1
             continue
         if not _matches_category(str(item.get("category") or ""), category_filter):
+            if stats is not None:
+                stats["category_filtered_count"] = int(stats.get("category_filtered_count") or 0) + 1
             continue
         rank = abs(float(item.pop("fts_rank", 0.0)))
         item["_fts_signal"] = rank / (rank + 4.0) if rank else 0.0
@@ -456,6 +782,8 @@ def _database_candidates(
         candidates.append(item)
         if len(candidates) >= limit:
             break
+    if stats is not None:
+        stats["database_candidates"] = int(stats.get("database_candidates") or 0) + len(candidates)
     return candidates
 
 
@@ -541,25 +869,55 @@ def _single_query_search(
     product_filter: str | None,
     limit: int,
     category_filter: str | None = None,
+    *,
+    retrieval_mode: RetrievalMode = "quick",
+    stats: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    database_items = _database_candidates(
-        query, product_filter, max(limit * 5, 80), category_filter=category_filter
+    mode = _normalize_retrieval_mode(retrieval_mode)
+    database_limit = (
+        min(max(limit * 6, 160), PROCESS_DEEP_MAX_DATABASE_CANDIDATES)
+        if mode == "deep"
+        else max(limit * 5, 80)
     )
-    legacy_items = _legacy_candidates(product_filter, category_filter)
+    database_items = _database_candidates(
+        query,
+        product_filter,
+        database_limit,
+        category_filter=category_filter,
+        retrieval_mode=mode,
+        stats=stats,
+    )
+    full_index_unavailable = (
+        mode == "deep"
+        and stats is not None
+        and stats.get("database_available") is False
+    )
+    legacy_items = [] if full_index_unavailable else _legacy_candidates(product_filter, category_filter)
+    if stats is not None:
+        stats["legacy_candidates"] = int(stats.get("legacy_candidates") or 0) + len(legacy_items)
     candidates: list[dict[str, Any]] = []
     seen: set[str] = set()
     for item in [*database_items, *legacy_items]:
+        if mode == "deep" and is_pending_ocr_entry(item):
+            if stats is not None:
+                stats["ocr_filtered_count"] = int(stats.get("ocr_filtered_count") or 0) + 1
+            continue
         chunk_id = str(item.get("chunk_id") or f"{item.get('document_id')}:{item.get('page')}:{len(candidates)}")
         if chunk_id in seen:
+            if stats is not None:
+                stats["deduplicated_count"] = int(stats.get("deduplicated_count") or 0) + 1
             continue
         seen.add(chunk_id)
         candidates.append(item)
     ranked = _rank_candidates(query, candidates, product_filter)
+    if stats is not None:
+        stats["ranked_candidates"] = int(stats.get("ranked_candidates") or 0) + len(ranked)
     diversified: list[dict[str, Any]] = []
     document_counts: Counter[str] = Counter()
+    per_document_limit = 4 if mode == "deep" else 3
     for item in ranked:
         document_id = str(item.get("document_id") or item.get("source_file") or item.get("title"))
-        if document_counts[document_id] >= 3:
+        if document_counts[document_id] >= per_document_limit:
             continue
         diversified.append(item)
         document_counts[document_id] += 1
@@ -573,25 +931,67 @@ def _normalize_queries(query: str | Iterable[str]) -> list[str]:
     return [value.strip() for value in dict.fromkeys(str(item) for item in values) if value.strip()]
 
 
+def _retrieval_output(
+    evidence: list[dict[str, Any]],
+    stats: dict[str, Any],
+    started_at: float,
+    return_metadata: bool,
+) -> list[dict[str, Any]] | dict[str, Any]:
+    scope_stats = library_scope_stats()
+    for key, value in scope_stats.items():
+        if value or not stats.get(key):
+            stats[key] = value
+    stats["selected_count"] = len(evidence)
+    stats["selected_document_count"] = len(
+        {
+            str(item.get("document_id") or item.get("source_file") or item.get("title"))
+            for item in evidence
+        }
+    )
+    stats["elapsed_ms"] = round((time.monotonic() - started_at) * 1000, 2)
+    if return_metadata:
+        return {"evidence": evidence, "deep_retrieval_stats": stats}
+    return evidence
+
+
 def comprehensive_search_knowledge(
     query: str | Iterable[str],
     product_filter: str | None = None,
     top_k: int = 10,
     category_filter: str | None = None,
-) -> list[dict[str, Any]]:
+    *,
+    retrieval_mode: RetrievalMode = "quick",
+    return_metadata: bool = False,
+) -> list[dict[str, Any]] | dict[str, Any]:
     """Run multi-query hybrid retrieval and return diversified evidence from distinct papers."""
+    started_at = time.monotonic()
+    mode = _normalize_retrieval_mode(retrieval_mode)
     queries = _normalize_queries(query)
+    stats = _new_retrieval_stats(mode, len(queries), top_k)
     if not queries or top_k <= 0:
-        return []
+        return _retrieval_output([], stats, started_at, return_metadata)
     aggregate: dict[str, dict[str, Any]] = {}
     fusion_scores: defaultdict[str, float] = defaultdict(float)
     query_matches: defaultdict[str, list[str]] = defaultdict(list)
     keys_by_query: dict[str, list[str]] = {}
-    per_query = max(top_k * 3, 24)
+    per_query = (
+        min(max(top_k * 5, 40), PROCESS_DEEP_MAX_PER_QUERY)
+        if mode == "deep"
+        else max(top_k * 3, 24)
+    )
+    stats["per_query_limit"] = per_query
     for subquery in queries:
         keys_by_query[subquery] = []
         for rank, item in enumerate(
-            _single_query_search(subquery, product_filter, per_query, category_filter), 1
+            _single_query_search(
+                subquery,
+                product_filter,
+                per_query,
+                category_filter,
+                retrieval_mode=mode,
+                stats=stats,
+            ),
+            1,
         ):
             key = str(item.get("chunk_id") or f"{item.get('document_id')}:{item.get('page')}:{rank}")
             keys_by_query[subquery].append(key)
@@ -599,8 +999,11 @@ def comprehensive_search_knowledge(
             query_matches[key].append(subquery)
             if key not in aggregate or float(item.get("match_score") or 0) > float(aggregate[key].get("match_score") or 0):
                 aggregate[key] = item
+        if mode == "deep" and stats.get("database_available") is False:
+            break
+    stats["unique_candidate_count"] = len(aggregate)
     if not aggregate:
-        return []
+        return _retrieval_output([], stats, started_at, return_metadata)
     max_fusion = max(fusion_scores.values()) or 1.0
     ordered: list[tuple[float, dict[str, Any]]] = []
     for key, item in aggregate.items():
@@ -613,6 +1016,14 @@ def comprehensive_search_knowledge(
         enriched["retrieval_method"] = "multi_query_fts_hybrid" if len(queries) > 1 else item.get("retrieval_method", "hybrid")
         ordered.append((final, enriched))
     ordered.sort(key=lambda item: item[0], reverse=True)
+    if mode == "deep":
+        usable_ordered: list[tuple[float, dict[str, Any]]] = []
+        for row in ordered:
+            if is_pending_ocr_entry(row[1]):
+                stats["ocr_filtered_count"] = int(stats["ocr_filtered_count"]) + 1
+                continue
+            usable_ordered.append(row)
+        ordered = usable_ordered
 
     selected: list[dict[str, Any]] = []
     document_counts: Counter[str] = Counter()
@@ -625,6 +1036,7 @@ def comprehensive_search_knowledge(
         str(item.get("chunk_id") or f"{item.get('document_id')}:{item.get('page')}"): item
         for _, item in ordered
     }
+    per_document_limit = 3 if mode == "deep" else 2
     if len(queries) > 1:
         for subquery in queries:
             for key in keys_by_query.get(subquery, []):
@@ -632,52 +1044,220 @@ def comprehensive_search_knowledge(
                 if not item or key in selected_keys:
                     continue
                 document_id = str(item.get("document_id") or item.get("source_file") or item.get("title"))
-                if document_counts[document_id] >= 2:
+                if document_counts[document_id] >= per_document_limit:
                     continue
                 selected.append(item)
                 selected_keys.add(key)
                 document_counts[document_id] += 1
                 break
             if len(selected) >= top_k:
-                return selected[:top_k]
+                return _retrieval_output(selected[:top_k], stats, started_at, return_metadata)
 
     for _, item in ordered:
         key = str(item.get("chunk_id") or f"{item.get('document_id')}:{item.get('page')}")
         if key in selected_keys:
             continue
         document_id = str(item.get("document_id") or item.get("source_file") or item.get("title"))
-        if document_counts[document_id] >= 2:
+        if document_counts[document_id] >= per_document_limit:
             continue
         selected.append(item)
         selected_keys.add(key)
         document_counts[document_id] += 1
         if len(selected) >= top_k:
             break
-    return selected
+    return _retrieval_output(selected, stats, started_at, return_metadata)
 
 
-def keyword_search_knowledge(query: str, product_filter: str | None = None, top_k: int = 5) -> list[dict[str, Any]]:
-    results = comprehensive_search_knowledge(query, product_filter, top_k)
-    for item in results:
+def keyword_search_knowledge(
+    query: str,
+    product_filter: str | None = None,
+    top_k: int = 5,
+    *,
+    retrieval_mode: RetrievalMode = "quick",
+    return_metadata: bool = False,
+) -> list[dict[str, Any]] | dict[str, Any]:
+    results = comprehensive_search_knowledge(
+        query,
+        product_filter,
+        top_k,
+        retrieval_mode=retrieval_mode,
+        return_metadata=return_metadata,
+    )
+    evidence = results["evidence"] if isinstance(results, dict) else results
+    for item in evidence:
         item["retrieval_method"] = f"keyword+{item.get('retrieval_method', 'hybrid')}"
     return results
 
 
-def semantic_search_knowledge(query: str, product_filter: str | None = None, top_k: int = 5) -> list[dict[str, Any]]:
-    results = comprehensive_search_knowledge(query, product_filter, top_k)
-    for item in results:
+def semantic_search_knowledge(
+    query: str,
+    product_filter: str | None = None,
+    top_k: int = 5,
+    *,
+    retrieval_mode: RetrievalMode = "quick",
+    return_metadata: bool = False,
+) -> list[dict[str, Any]] | dict[str, Any]:
+    results = comprehensive_search_knowledge(
+        query,
+        product_filter,
+        top_k,
+        retrieval_mode=retrieval_mode,
+        return_metadata=return_metadata,
+    )
+    evidence = results["evidence"] if isinstance(results, dict) else results
+    for item in evidence:
         item["retrieval_method"] = f"semantic+{item.get('retrieval_method', 'hybrid')}"
     return results
 
 
 def hybrid_search_knowledge(
-    query: str | Iterable[str], product_filter: str | None = None, top_k: int = 5
-) -> list[dict[str, Any]]:
-    return comprehensive_search_knowledge(query=query, product_filter=product_filter, top_k=top_k)
+    query: str | Iterable[str],
+    product_filter: str | None = None,
+    top_k: int = 5,
+    *,
+    retrieval_mode: RetrievalMode = "quick",
+    return_metadata: bool = False,
+) -> list[dict[str, Any]] | dict[str, Any]:
+    return comprehensive_search_knowledge(
+        query=query,
+        product_filter=product_filter,
+        top_k=top_k,
+        retrieval_mode=retrieval_mode,
+        return_metadata=return_metadata,
+    )
 
 
-def search_knowledge(query: str, product_filter: str | None = None, top_k: int = 5) -> list[dict[str, Any]]:
-    return comprehensive_search_knowledge(query=query, product_filter=product_filter, top_k=top_k)
+def search_knowledge(
+    query: str,
+    product_filter: str | None = None,
+    top_k: int = 5,
+    *,
+    retrieval_mode: RetrievalMode = "quick",
+    return_metadata: bool = False,
+) -> list[dict[str, Any]] | dict[str, Any]:
+    return comprehensive_search_knowledge(
+        query=query,
+        product_filter=product_filter,
+        top_k=top_k,
+        retrieval_mode=retrieval_mode,
+        return_metadata=return_metadata,
+    )
+
+
+def _is_method_or_result_section(section: str) -> bool:
+    normalized = str(section or "").strip().lower()
+    return any(
+        term in normalized
+        for term in ("方法", "工艺", "材料", "结果", "讨论", "method", "material", "result", "discussion")
+    )
+
+
+def fetch_adjacent_method_result_chunks(
+    evidence: list[dict[str, Any]],
+    *,
+    db_path: Path = LITERATURE_DB_PATH,
+    retrieval_mode: RetrievalMode = "deep",
+    radius: int = PROCESS_DEEP_NEIGHBOR_RADIUS,
+    per_hit: int = PROCESS_DEEP_NEIGHBOR_PER_HIT,
+    limit: int = PROCESS_DEEP_NEIGHBOR_LIMIT,
+    return_metadata: bool = False,
+) -> dict[str, list[dict[str, Any]]] | dict[str, Any]:
+    """Fetch bounded method/result context next to already selected chunks."""
+    started_at = time.monotonic()
+    mode = _normalize_retrieval_mode(retrieval_mode)
+    stats: dict[str, Any] = {
+        "retrieval_mode": mode,
+        "seed_count": 0,
+        "adjacent_candidate_count": 0,
+        "ocr_filtered_count": 0,
+        "adjacent_added_count": 0,
+        "elapsed_ms": 0,
+    }
+    seeds: list[tuple[str, str, int]] = []
+    seen_documents: set[str] = set()
+    seen_seeds: set[str] = set()
+    for item in evidence:
+        seed_key = str(item.get("chunk_id") or "").strip()
+        document_id = str(item.get("document_id") or "").strip()
+        try:
+            chunk_index = int(item.get("chunk_index"))
+        except (TypeError, ValueError):
+            continue
+        if not seed_key or not document_id or seed_key in seen_seeds:
+            continue
+        if document_id not in seen_documents and len(seen_documents) >= PROCESS_DEEP_NEIGHBOR_DOCUMENT_LIMIT:
+            continue
+        seen_documents.add(document_id)
+        seen_seeds.add(seed_key)
+        seeds.append((seed_key, document_id, chunk_index))
+    stats["seed_count"] = len(seeds)
+    adjacent_by_seed: dict[str, list[dict[str, Any]]] = {seed[0]: [] for seed in seeds}
+    if not seeds or radius <= 0 or per_hit <= 0 or limit <= 0:
+        stats["elapsed_ms"] = round((time.monotonic() - started_at) * 1000, 2)
+        if return_metadata:
+            return {"adjacent_chunks": adjacent_by_seed, "deep_retrieval_stats": stats}
+        return adjacent_by_seed
+    if db_path == LITERATURE_DB_PATH:
+        ensure_literature_database(db_path)
+    if not db_path.exists():
+        stats["elapsed_ms"] = round((time.monotonic() - started_at) * 1000, 2)
+        if return_metadata:
+            return {"adjacent_chunks": adjacent_by_seed, "deep_retrieval_stats": stats}
+        return adjacent_by_seed
+
+    values = ", ".join("(?, ?, ?)" for _ in seeds)
+    parameters: list[Any] = [value for seed in seeds for value in seed]
+    parameters.extend([radius, radius])
+    connection = sqlite3.connect(f"file:{db_path.as_posix()}?mode=ro", uri=True)
+    connection.row_factory = sqlite3.Row
+    try:
+        rows = connection.execute(
+            f"""
+            WITH seed(seed_key, document_id, chunk_index) AS (VALUES {values})
+            SELECT seed.seed_key, ABS(c.chunk_index - seed.chunk_index) AS neighbor_distance, c.*
+            FROM seed
+            JOIN chunks AS c ON c.document_id = seed.document_id
+            WHERE c.chunk_id <> seed.seed_key
+              AND c.chunk_index BETWEEN seed.chunk_index - ? AND seed.chunk_index + ?
+            ORDER BY seed.seed_key, neighbor_distance, c.chunk_index
+            """,
+            parameters,
+        ).fetchall()
+    except sqlite3.Error:
+        rows = []
+    finally:
+        connection.close()
+    stats["adjacent_candidate_count"] = len(rows)
+    total = 0
+    seen_by_seed: defaultdict[str, set[str]] = defaultdict(set)
+    for row in rows:
+        seed_key = str(row["seed_key"])
+        if len(adjacent_by_seed.get(seed_key, [])) >= per_hit or total >= limit:
+            continue
+        item = dict(row)
+        item.pop("seed_key", None)
+        distance = int(item.pop("neighbor_distance", 0) or 0)
+        if not _is_method_or_result_section(str(item.get("section") or "")):
+            continue
+        if is_pending_ocr_entry(item):
+            stats["ocr_filtered_count"] = int(stats["ocr_filtered_count"]) + 1
+            continue
+        chunk_id = str(item.get("chunk_id") or "")
+        if not chunk_id or chunk_id in seen_by_seed[seed_key]:
+            continue
+        seen_by_seed[seed_key].add(chunk_id)
+        item["page"] = item.get("page_start")
+        item["source"] = item.get("publication") or item.get("doi") or item.get("source_file")
+        item["keywords"] = [value for value in str(item.get("keywords") or "").split("、") if value]
+        item["retrieval_method"] = "sqlite_adjacent_method_result"
+        item["adjacent_distance"] = distance
+        adjacent_by_seed[seed_key].append(item)
+        total += 1
+    stats["adjacent_added_count"] = total
+    stats["elapsed_ms"] = round((time.monotonic() - started_at) * 1000, 2)
+    if return_metadata:
+        return {"adjacent_chunks": adjacent_by_seed, "deep_retrieval_stats": stats}
+    return adjacent_by_seed
 
 
 def format_evidence_context(evidence: list[dict[str, Any]], excerpt_chars: int = 650) -> str:

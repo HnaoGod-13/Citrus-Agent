@@ -242,6 +242,187 @@ class EmptyStateProgressLayoutTests(unittest.TestCase):
         self.assertNotIn("st.session_state", worker)
 
 
+class DeepRetrievalUiStateTests(unittest.TestCase):
+    def test_sidebar_uses_persistent_required_segmented_control(self) -> None:
+        source = Path(app_main.__file__).read_text(encoding="utf-8-sig")
+        sidebar = source[source.index("def render_sidebar") : source.index("def render_tool_steps")]
+
+        self.assertIn('key="retrieval_mode"', sidebar)
+        self.assertIn('persist_state="session"', sidebar)
+        self.assertIn("required=True", sidebar)
+        self.assertIn("disabled=bool(st.session_state.get(\"active_agent_job_id\"))", sidebar)
+        self.assertIn("全库深度检索", app_main.RETRIEVAL_MODE_LABELS.values())
+
+    def test_deep_progress_uses_frozen_mode_label(self) -> None:
+        slot = SimpleNamespace(markdown=Mock())
+
+        app_main.render_agent_progress(
+            slot,
+            "正在扫描全库文献",
+            retrieval_mode="deep",
+        )
+
+        rendered = slot.markdown.call_args.args[0]
+        self.assertIn("正在扫描全库文献", rendered)
+        self.assertIn("全库深度检索", rendered)
+        self.assertIn("agent-live-subtitle is-deep", rendered)
+
+    def test_deep_statistics_render_scan_and_adoption_counts(self) -> None:
+        with patch.object(app_main.st, "markdown") as markdown:
+            app_main.render_deep_retrieval_stats(
+                {
+                    "retrieval_mode": "deep",
+                    "library_document_count": 17300,
+                    "library_chunk_count": 365119,
+                    "library_usable_document_count": 9285,
+                    "library_ocr_document_count": 8015,
+                    "fts_rows_returned": 1080,
+                    "selected_document_count": 18,
+                    "selected_count": 24,
+                    "ocr_filtered_count": 5,
+                    "adjacent_added_count": 7,
+                }
+            )
+
+        rendered = markdown.call_args.args[0]
+        self.assertIn("全库范围", rendered)
+        self.assertIn("17,300", rendered)
+        self.assertIn("365,119", rendered)
+        self.assertIn("FTS 返回次数", rendered)
+        self.assertIn("1,080", rendered)
+        self.assertNotIn("候选片段", rendered)
+        self.assertIn("采用文献", rendered)
+        self.assertIn("18", rendered)
+        self.assertIn("采用证据", rendered)
+        self.assertIn("24", rendered)
+        self.assertIn("正文可用文献", rendered)
+        self.assertIn("库内待 OCR", rendered)
+        self.assertIn("本轮排除题录", rendered)
+        self.assertIn("相邻补充", rendered)
+
+    def test_legacy_row_count_uses_accurate_fts_label(self) -> None:
+        with patch.object(app_main.st, "markdown") as markdown:
+            app_main.render_deep_retrieval_stats(
+                {
+                    "retrieval_mode": "deep",
+                    "database_rows_scanned": 81,
+                }
+            )
+
+        rendered = markdown.call_args.args[0]
+        self.assertIn("FTS 返回次数", rendered)
+        self.assertIn("81", rendered)
+        self.assertNotIn("候选片段", rendered)
+
+    def test_unavailable_index_and_partial_completion_are_explicit(self) -> None:
+        with patch.object(app_main.st, "markdown") as markdown:
+            app_main.render_deep_retrieval_stats(
+                {
+                    "retrieval_mode": "deep",
+                    "database_available": False,
+                    "retrieval_complete": False,
+                    "retrieval_error": "索引加载失败",
+                }
+            )
+        unavailable = markdown.call_args.args[0]
+        self.assertIn("全库索引不可用", unavailable)
+        self.assertIn("索引加载失败", unavailable)
+        self.assertIn("deep-retrieval-status is-error", unavailable)
+
+        with patch.object(app_main.st, "markdown") as markdown:
+            app_main.render_deep_retrieval_stats(
+                {
+                    "retrieval_mode": "deep",
+                    "database_available": True,
+                    "retrieval_complete": False,
+                    "timed_out": True,
+                    "attempted_subquery_count": 7,
+                    "subquery_count": 12,
+                    "retrieval_error": "超过总时限",
+                }
+            )
+        partial = markdown.call_args.args[0]
+        self.assertIn("部分完成 7/12", partial)
+        self.assertIn("超过总时限", partial)
+        self.assertIn("deep-retrieval-status is-warning", partial)
+
+    def test_adjacent_evidence_and_parameter_source_locations_are_traceable(self) -> None:
+        with patch.object(app_main.st, "markdown") as markdown:
+            app_main.render_adjacent_evidence(
+                [
+                    {
+                        "section": "材料与方法",
+                        "page_start": 7,
+                        "chunk_id": "doc-1:chunk-8",
+                        "chunk_text": "温度 < 60 °C，时间 30 min。",
+                    }
+                ]
+            )
+
+        rendered = markdown.call_args.args[0]
+        self.assertIn("相邻方法/结果证据", rendered)
+        self.assertIn("材料与方法", rendered)
+        self.assertIn("page_start: 7", rendered)
+        self.assertIn("doc-1:chunk-8", rendered)
+        self.assertIn("温度 &lt; 60 °C", rendered)
+        self.assertEqual(
+            "paper-1；片段 chunk-8；第7页",
+            app_main.parameter_source_location(
+                {
+                    "source_refs": ["paper-1；片段 chunk-8；第7页"],
+                    "source_ids": ["paper-1"],
+                }
+            ),
+        )
+        self.assertEqual(
+            "paper-2",
+            app_main.parameter_source_location({"source_ids": ["paper-2"]}),
+        )
+        analysis_source = Path(app_main.__file__).read_text(encoding="utf-8-sig")
+        self.assertIn('render_adjacent_evidence(item.get("adjacent_chunks"))', analysis_source)
+        self.assertIn('"来源定位": parameter_source_location(item)', analysis_source)
+
+    def test_quick_statistics_remain_hidden(self) -> None:
+        with patch.object(app_main.st, "markdown") as markdown:
+            app_main.render_deep_retrieval_stats(
+                {
+                    "retrieval_mode": "quick",
+                    "database_rows_scanned": 10,
+                    "selected_count": 2,
+                }
+            )
+
+        markdown.assert_not_called()
+
+    def test_statistics_survive_analysis_and_general_message_persistence(self) -> None:
+        stats = {
+            "retrieval_mode": "deep",
+            "database_rows_scanned": 120,
+            "selected_count": 8,
+        }
+        persisted = app_main.build_persisted_analysis_payload(
+            {
+                "result": {"report": "# report", "deep_retrieval_stats": stats},
+                "report_path": "output/report.md",
+            }
+        )
+        restored = app_main.restore_ui_messages(
+            [
+                {
+                    "message_id": "assistant-deep",
+                    "role": "assistant",
+                    "content": "answer",
+                    "message_type": "chat",
+                    "metadata": {"deep_retrieval_stats": stats},
+                }
+            ]
+        )
+
+        self.assertEqual(stats, persisted["deep_retrieval_stats"])
+        self.assertEqual(stats, persisted["result"]["deep_retrieval_stats"])
+        self.assertEqual(stats, restored[0]["deep_retrieval_stats"])
+
+
 class ProductRouteStateTests(unittest.TestCase):
     def test_query_view_overrides_stale_session_view(self) -> None:
         state = SessionStateStub(

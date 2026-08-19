@@ -70,7 +70,7 @@ class ProcessingKnowledgeTests(unittest.TestCase):
         required = {
             "product", "raw_material", "process_step", "parameter_name", "value", "unit",
             "range", "conditions", "scale", "effect_on_quality", "source_id",
-            "source_location", "confidence",
+            "source_chunk_id", "source_location", "confidence",
         }
         self.assertTrue(records)
         self.assertTrue(required.issubset(records[0]))
@@ -116,6 +116,8 @@ class ProcessingKnowledgeTests(unittest.TestCase):
         self.assertIn("详细操作参数", markdown)
         self.assertIn("证据来源", markdown)
         self.assertIn("chenpi-001", markdown)
+        self.assertIn("chenpi-001-c1", markdown)
+        self.assertIn("第3页", markdown)
 
     def test_conflicting_parameters_are_preserved_not_averaged(self) -> None:
         base = {
@@ -144,6 +146,13 @@ class ProcessingKnowledgeTests(unittest.TestCase):
         self.assertEqual(group["confidence_level"], "低可信度")
         self.assertEqual(len(group["alternatives"]), 2)
         self.assertNotIn("84", group["recommended_range"])
+        plan = build_parameterized_process_plan(
+            {"primary_product": "柑橘汁", "raw_material": "脐橙"},
+            [group],
+            [],
+        )
+        sterilization = next(row for row in plan["rows"] if row["step"] == "杀菌")
+        self.assertEqual(sterilization["parameters"], [])
 
     def test_missing_unit_is_low_confidence_and_never_recommended(self) -> None:
         intent = analyze_processing_intent("果汁酶解澄清", {"variety": "脐橙"})
@@ -215,6 +224,29 @@ class ProcessingKnowledgeTests(unittest.TestCase):
         self.assertIn("现有知识库证据不足，不填入数值", markdown)
         self.assertEqual(plan["parameter_count"], 0)
 
+    def test_compound_route_step_uses_packaging_and_filling_evidence(self) -> None:
+        intent = analyze_processing_intent("甜橙加工成果汁", {"variety": "甜橙"})
+        groups = [
+            {
+                "recommendable": True,
+                "raw_material": intent["raw_material"],
+                "process_step": "包装/灌装",
+                "parameter_name": "温度",
+                "recommended_range": "82 °C（单篇文献直接报告，需小试验证）",
+                "confidence_level": "中可信度",
+                "scale": "pilot",
+                "process_method": "热处理",
+                "conflict": False,
+                "source_ids": ["filling-paper"],
+            }
+        ]
+
+        plan = build_parameterized_process_plan(intent, groups, [])
+        filling_row = next(row for row in plan["rows"] if row["step"] == "灌装包装")
+
+        self.assertTrue(filling_row["parameters"])
+        self.assertNotIn("灌装包装", plan["unresolved_steps"])
+
     def test_faceted_retrieval_prefers_methods_with_parameters_over_background(self) -> None:
         intent = analyze_processing_intent("橙汁怎样加工", {"variety": "甜橙"})
         method = evidence(
@@ -245,6 +277,278 @@ class ProcessingKnowledgeTests(unittest.TestCase):
         self.assertTrue(retrieved)
         self.assertEqual(retrieved[0]["document_id"], "method")
         self.assertIn("processing_faceted_hybrid", retrieved[0]["retrieval_method"])
+
+    def test_deep_subquestions_include_user_operations_parameters_and_equipment(self) -> None:
+        intent = analyze_processing_intent(
+            "脐橙汁做高压均质，关注压力、流量和温度，现有均质机。",
+            {"origin": "赣南", "variety": "脐橙"},
+        )
+        specs = build_processing_subquestions(intent, retrieval_mode="deep")
+        combined = " ".join(str(item["query"]) for item in specs)
+
+        self.assertEqual(specs[0]["id"], "user_focus")
+        self.assertIn("高压均质", combined)
+        self.assertIn("压力", combined)
+        self.assertIn("流量", combined)
+        self.assertIn("温度", combined)
+        self.assertIn("均质机", combined)
+        self.assertIn("均质", {str(item["facet"]) for item in specs})
+
+    def test_deep_retrieval_attaches_adjacent_context_and_returns_stats(self) -> None:
+        intent = analyze_processing_intent("橙汁高压均质压力参数", {"variety": "甜橙"})
+        seed = evidence(
+            "target",
+            "Orange juice stability results",
+            "Orange juice treated at 80 MPa showed improved stability.",
+            section="Results",
+        )
+        seed["chunk_index"] = 2
+        ocr = evidence(
+            "ocr",
+            "Orange juice pressure catalog",
+            "题名：Orange juice pressure catalog。该 PDF 暂未提取到可用正文，不能据此推断研究结果。",
+            section="题录（待OCR）",
+        )
+        wrong_product = evidence(
+            "apple",
+            "Apple juice pressure treatment",
+            "Apple juice was processed at 70 MPa.",
+            section="Materials and Methods",
+        )
+        background = evidence(
+            "background-low",
+            "Orange juice overview",
+            "Orange juice is a popular beverage.",
+            section="引言",
+        )
+        background["match_score"] = 0
+
+        def fake_search(*args, **kwargs):
+            return [ocr, wrong_product, background, seed]
+
+        def fake_adjacent(selected, **kwargs):
+            method = evidence(
+                "target",
+                "Orange juice homogenization method",
+                "Orange juice was homogenized at 80 MPa before filling.",
+                section="Materials and Methods",
+                page=4,
+            )
+            method["chunk_id"] = "target-c0"
+            method["chunk_index"] = 1
+            cross_document = evidence(
+                "other",
+                "Other juice method",
+                "Other juice was pasteurized.",
+                section="Materials and Methods",
+            )
+            return {
+                "adjacent_chunks": {seed["chunk_id"]: [method, cross_document]},
+                "deep_retrieval_stats": {
+                    "adjacent_candidate_count": 2,
+                    "adjacent_added_count": 2,
+                },
+            }
+
+        payload = retrieve_processing_evidence(
+            intent,
+            product_filter="柑橘",
+            top_k=6,
+            search_fn=fake_search,
+            adjacent_fn=fake_adjacent,
+            retrieval_mode="deep",
+            return_metadata=True,
+        )
+        records = extract_processing_parameters(payload["evidence"], intent)
+        pressure = [
+            item
+            for item in records
+            if item["parameter_name"] == "压力"
+            and item["value"] == "80"
+            and item["eligible_for_recommendation"]
+        ]
+        stats = payload["deep_retrieval_stats"]
+
+        self.assertEqual(len(payload["evidence"]), 1)
+        self.assertEqual(payload["evidence"][0]["adjacent_chunks"][0]["document_id"], "target")
+        self.assertTrue(pressure)
+        self.assertEqual(pressure[0]["process_step"], "均质")
+        self.assertTrue(pressure[0]["eligible_for_recommendation"])
+        adjacent_pressure = next(
+            item
+            for item in records
+            if item["parameter_name"] == "压力" and item["source_chunk_id"] == "target-c0"
+        )
+        self.assertTrue(adjacent_pressure["adjacent_context_used"])
+        self.assertIn("第4页", adjacent_pressure["source_location"])
+        groups = aggregate_parameter_evidence(records)
+        pressure_group = next(item for item in groups if item["parameter_name"] == "压力")
+        self.assertTrue(any("target-c0" in ref and "第4页" in ref for ref in pressure_group["source_refs"]))
+        self.assertGreater(stats["ocr_filtered_count"], 0)
+        self.assertGreater(stats["product_filtered_count"], 0)
+        self.assertGreater(stats["score_filtered_count"], 0)
+        self.assertEqual(stats["adjacent_candidate_count"], 2)
+        self.assertEqual(stats["adjacent_added_count"], 1)
+        self.assertEqual(stats["selected_count"], 1)
+
+    def test_unresolved_steps_do_not_exhaust_parameter_limit(self) -> None:
+        intent = analyze_processing_intent("橙汁杀菌参数", {"variety": "甜橙"})
+        chunks = [
+            evidence(
+                "unknown",
+                "Orange juice temperature screening",
+                "Orange juice temperature values were 30°C, 40°C and 50°C.",
+                section="Results",
+            ),
+            evidence(
+                "pasteurization",
+                "Orange juice pasteurization method",
+                "Orange juice pasteurization used 85°C for 15 s.",
+                section="Materials and Methods",
+            ),
+        ]
+
+        records = extract_processing_parameters(chunks, intent, limit=2)
+
+        self.assertEqual(len(records), 2)
+        self.assertTrue(all(item["process_step"] == "杀菌" for item in records))
+        self.assertEqual({item["parameter_name"] for item in records}, {"温度", "时间"})
+
+    def test_sugar_acid_adjustment_parameters_reach_the_matching_route_step(self) -> None:
+        intent = analyze_processing_intent(
+            "NFC橙汁糖酸调整，关注Brix和酸度参数。",
+            {"variety": "脐橙"},
+        )
+        chunk = evidence(
+            "sugar-acid-paper",
+            "Sugar-acid adjustment of NFC orange juice",
+            "During sugar-acid adjustment, soluble solids were set to 12 Brix and acidity to 0.6%.",
+            section="Materials and Methods",
+        )
+
+        records = extract_processing_parameters([chunk], intent)
+        groups = aggregate_parameter_evidence(records)
+        plan = build_parameterized_process_plan(intent, groups, [chunk])
+        adjustment_row = next(row for row in plan["rows"] if row["step"] == "糖酸调整")
+
+        self.assertIn("糖酸调整", intent["operations"])
+        self.assertEqual(
+            {"可溶性固形物", "酸度"},
+            {
+                item["parameter_name"]
+                for item in records
+                if item["eligible_for_recommendation"]
+            },
+        )
+        self.assertTrue(adjustment_row["parameters"])
+        self.assertNotIn("糖酸调整", plan["unresolved_steps"])
+
+    def test_deep_mode_allows_four_chunks_per_document_while_quick_keeps_two(self) -> None:
+        intent = analyze_processing_intent("橙汁杀菌参数", {"variety": "甜橙"})
+        chunks = []
+        for index in range(4):
+            item = evidence(
+                "single-paper",
+                "Orange juice pasteurization method",
+                f"Orange juice pasteurization used {80 + index}°C for 20 s.",
+                section="Materials and Methods",
+            )
+            item["chunk_id"] = f"single-paper-c{index}"
+            item["chunk_index"] = index + 1
+            item["match_score"] = 90 - index
+            chunks.append(item)
+
+        def fake_search(*args, **kwargs):
+            return chunks
+
+        def no_adjacent(*args, **kwargs):
+            return {"adjacent_chunks": {}, "deep_retrieval_stats": {}}
+
+        quick, _ = retrieve_processing_evidence(
+            intent,
+            top_k=6,
+            search_fn=fake_search,
+        )
+        deep = retrieve_processing_evidence(
+            intent,
+            top_k=6,
+            search_fn=fake_search,
+            adjacent_fn=no_adjacent,
+            retrieval_mode="deep",
+            return_metadata=True,
+        )
+
+        self.assertEqual(len(quick), 2)
+        self.assertEqual(len(deep["evidence"]), 4)
+        self.assertEqual(deep["deep_retrieval_stats"]["selected_document_count"], 1)
+
+    def test_adjacent_operation_does_not_claim_an_unlabeled_number(self) -> None:
+        intent = analyze_processing_intent("橙汁清洗参数", {"variety": "甜橙"})
+        seed = evidence(
+            "washing-paper",
+            "Orange washing method",
+            "Orange fruit was washed before processing.",
+            section="Materials and Methods",
+        )
+        neighbor = evidence(
+            "washing-paper",
+            "Processing results",
+            "The processing time was 20 s.",
+            section="Results",
+        )
+        neighbor["chunk_id"] = "washing-paper-c2"
+        seed["adjacent_chunks"] = [neighbor]
+
+        records = extract_processing_parameters([seed], intent)
+        time_record = next(item for item in records if item["parameter_name"] == "时间")
+
+        self.assertEqual(time_record["process_step"], "未明确单元操作")
+        self.assertFalse(time_record["eligible_for_recommendation"])
+
+    def test_multi_operation_title_does_not_assign_an_unlabeled_number(self) -> None:
+        intent = analyze_processing_intent("橙汁加工时间参数", {"variety": "甜橙"})
+        chunk = evidence(
+            "multi-operation-paper",
+            "Orange juice washing and pasteurization",
+            "The processing time was 20 s.",
+            section="Results",
+        )
+
+        records = extract_processing_parameters([chunk], intent)
+        time_record = next(item for item in records if item["parameter_name"] == "时间")
+
+        self.assertEqual(time_record["process_step"], "未明确单元操作")
+        self.assertFalse(time_record["eligible_for_recommendation"])
+
+    def test_table_significance_letters_are_not_read_as_days(self) -> None:
+        intent = analyze_processing_intent("橙汁清洗参数", {"variety": "甜橙"})
+        chunk = evidence(
+            "residue-table",
+            "Residual behavior during orange juice washing",
+            (
+                "Storage time affected orange juice quality: total phenols 0.700 d ± 0.040, "
+                "while unwashed fruit was 0.771 c ± 0.032; different letters indicate "
+                "significant differences. 表中字母表示差异显著性分组。"
+            ),
+            section="结果",
+        )
+
+        records = extract_processing_parameters([chunk], intent)
+
+        self.assertFalse(any(item["parameter_name"] == "时间" for item in records))
+
+    def test_invalid_search_typeerror_is_not_retried_as_legacy_signature(self) -> None:
+        intent = analyze_processing_intent("橙汁怎样加工", {"variety": "甜橙"})
+        calls = 0
+
+        def broken_search(query, product_filter, top_k, **kwargs):
+            nonlocal calls
+            calls += 1
+            raise TypeError("internal search failure")
+
+        with self.assertRaisesRegex(TypeError, "internal search failure"):
+            retrieve_processing_evidence(intent, search_fn=broken_search)
+        self.assertEqual(calls, 1)
 
 
 if __name__ == "__main__":

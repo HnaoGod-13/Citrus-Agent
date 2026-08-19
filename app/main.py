@@ -11,7 +11,8 @@ import sqlite3
 import sys
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
-from typing import Any
+from types import MappingProxyType
+from typing import Any, Mapping
 from uuid import uuid4
 
 import pandas as pd
@@ -51,6 +52,21 @@ retrieve_general_literature = llm_client.retrieve_general_literature
 get_vision_model = vision_client.get_vision_model
 prepare_image_for_vision = vision_client.prepare_image_for_vision
 SUPPORTED_UPLOAD_EXTENSIONS = vision_client.SUPPORTED_UPLOAD_EXTENSIONS
+
+RETRIEVAL_MODES = ("quick", "deep")
+RETRIEVAL_MODE_LABELS = {
+    "quick": "快速检索",
+    "deep": "全库深度检索",
+}
+
+
+def normalize_retrieval_mode(value: Any) -> str:
+    normalized = str(value or "quick").strip().lower()
+    return normalized if normalized in RETRIEVAL_MODES else "quick"
+
+
+def retrieval_mode_label(value: Any) -> str:
+    return RETRIEVAL_MODE_LABELS[normalize_retrieval_mode(value)]
 
 
 @st.cache_resource(show_spinner=False)
@@ -167,6 +183,13 @@ def build_persisted_analysis_payload(payload: dict[str, Any] | None) -> dict[str
     serialized_result = _json_serializable(serialized_result)
     if not isinstance(serialized_result, dict):
         serialized_result = {}
+    deep_retrieval_stats = source.get("deep_retrieval_stats") or serialized_result.get(
+        "deep_retrieval_stats"
+    )
+    if isinstance(deep_retrieval_stats, dict):
+        serialized_result["deep_retrieval_stats"] = _json_serializable(
+            deep_retrieval_stats
+        )
     batch = source.get("batch") or serialized_result.get("batch") or {}
     return {
         "version": ANALYSIS_PAYLOAD_VERSION,
@@ -183,6 +206,7 @@ def build_persisted_analysis_payload(payload: dict[str, Any] | None) -> dict[str
             or ""
         ).strip(),
         "vision_result": _without_raw_model_output(source.get("vision_result") or {}),
+        "deep_retrieval_stats": _json_serializable(deep_retrieval_stats or {}),
     }
 
 
@@ -203,7 +227,7 @@ def is_valid_persisted_analysis_payload(value: Any) -> bool:
         or not report_path.strip()
     ):
         return False
-    for key in ("batch", "vision_result"):
+    for key in ("batch", "vision_result", "deep_retrieval_stats"):
         if key in value and not isinstance(value[key], dict):
             return False
     for key in ("agent_steps", "scores", "quality_risks", "evidence", "parameter_groups"):
@@ -339,6 +363,10 @@ def restore_ui_messages(
                 message["attachment_missing"] = True
         if role == "assistant" and isinstance(metadata.get("vision_result"), dict):
             message["vision_result"] = _without_raw_model_output(metadata["vision_result"])
+        if role == "assistant" and isinstance(metadata.get("deep_retrieval_stats"), dict):
+            message["deep_retrieval_stats"] = _json_serializable(
+                metadata["deep_retrieval_stats"]
+            )
         if role == "assistant" and message_type == "analysis":
             snapshot = metadata.get("analysis_payload")
             if is_valid_persisted_analysis_payload(snapshot):
@@ -1219,6 +1247,7 @@ def start_new_conversation() -> None:
     clear_active_conversation_state(clear_sidebar=True)
     st.session_state.active_agent_job_id = ""
     st.session_state.active_agent_progress_revealed = False
+    st.session_state.active_agent_retrieval_mode = ""
     st.session_state.memory_session_id = session_id
     st.session_state.memory_restored_session = session_id
     _set_query_value("sid", session_id)
@@ -1244,6 +1273,11 @@ def init_state() -> None:
     st.session_state.setdefault("mobile_secondary_open", False)
     st.session_state.setdefault("active_agent_job_id", "")
     st.session_state.setdefault("active_agent_progress_revealed", False)
+    st.session_state.setdefault("active_agent_retrieval_mode", "")
+    st.session_state.setdefault("retrieval_mode", "quick")
+    st.session_state.retrieval_mode = normalize_retrieval_mode(
+        st.session_state.retrieval_mode
+    )
     initialize_memory_identity()
     if st.session_state.clear_sidebar_inputs:
         reset_sidebar_inputs()
@@ -1304,11 +1338,17 @@ def render_product_secondary_panel(view: str) -> None:
     )
 
 
-def render_sidebar(view: str = "chat") -> tuple[str, bool, bytes | None, str]:
+def render_sidebar(view: str = "chat") -> tuple[str, bool, bytes | None, str, str]:
     with st.sidebar:
         if view != "chat":
             render_product_secondary_panel(view)
-            return "", False, None, "image/jpeg"
+            return (
+                "",
+                False,
+                None,
+                "image/jpeg",
+                normalize_retrieval_mode(st.session_state.get("retrieval_mode")),
+            )
 
         st.markdown(
             f"""
@@ -1401,6 +1441,23 @@ def render_sidebar(view: str = "chat") -> tuple[str, bool, bytes | None, str]:
         )
         st.session_state.sidebar_draft_observation = manual_observation
 
+        st.markdown(
+            '<div class="sidebar-section-title retrieval-heading">检索方式<small>Search Mode</small></div>',
+            unsafe_allow_html=True,
+        )
+        retrieval_mode = st.segmented_control(
+            "检索方式",
+            options=RETRIEVAL_MODES,
+            format_func=retrieval_mode_label,
+            key="retrieval_mode",
+            required=True,
+            disabled=bool(st.session_state.get("active_agent_job_id")),
+            label_visibility="collapsed",
+            width="stretch",
+            persist_state="session",
+        )
+        retrieval_mode = normalize_retrieval_mode(retrieval_mode)
+
         st.divider()
 
         st.markdown(
@@ -1414,7 +1471,13 @@ def render_sidebar(view: str = "chat") -> tuple[str, bool, bytes | None, str]:
             unsafe_allow_html=True,
         )
 
-    return manual_observation, image_bytes is not None, image_bytes, image_mime_type
+    return (
+        manual_observation,
+        image_bytes is not None,
+        image_bytes,
+        image_mime_type,
+        retrieval_mode,
+    )
 
 
 def score_table(result: dict[str, Any]) -> pd.DataFrame:
@@ -1445,6 +1508,154 @@ def step_table(result: dict[str, Any]) -> pd.DataFrame:
             }
             for index, step in enumerate(result.get("agent_steps", []), 1)
         ]
+    )
+
+
+def _retrieval_stat_count(stats: Mapping[str, Any], keys: tuple[str, ...]) -> int | None:
+    for key in keys:
+        value = stats.get(key)
+        if value in (None, "") or isinstance(value, bool):
+            continue
+        try:
+            count = int(float(value))
+        except (TypeError, ValueError):
+            continue
+        if count >= 0:
+            return count
+    return None
+
+
+def render_deep_retrieval_stats(value: Any) -> None:
+    if not isinstance(value, dict) or not value:
+        return
+    mode = str(value.get("retrieval_mode") or "").strip().lower()
+    if mode and mode != "deep":
+        return
+    library_documents = _retrieval_stat_count(value, ("library_document_count",))
+    library_chunks = _retrieval_stat_count(value, ("library_chunk_count",))
+    usable_documents = _retrieval_stat_count(value, ("library_usable_document_count",))
+    library_ocr_documents = _retrieval_stat_count(value, ("library_ocr_document_count",))
+    fts_rows_returned = _retrieval_stat_count(
+        value,
+        (
+            "fts_rows_returned",
+            "database_rows_scanned",
+        ),
+    )
+    selected_documents = _retrieval_stat_count(value, ("selected_document_count",))
+    selected_evidence = _retrieval_stat_count(
+        value,
+        (
+            "selected_count",
+            "adopted_count",
+            "used_count",
+        ),
+    )
+    ocr_filtered = _retrieval_stat_count(value, ("ocr_filtered_count",))
+    adjacent_added = _retrieval_stat_count(value, ("adjacent_added_count",))
+    if all(
+        count is None
+        for count in (
+            library_documents,
+            library_chunks,
+            usable_documents,
+            library_ocr_documents,
+            fts_rows_returned,
+            selected_documents,
+            selected_evidence,
+            ocr_filtered,
+            adjacent_added,
+        )
+    ) and not (
+        value.get("database_available") is False
+        or value.get("retrieval_complete") is False
+        or bool(value.get("timed_out"))
+        or str(value.get("retrieval_error") or "").strip()
+    ):
+        return
+    metrics: list[tuple[str, str]] = []
+    scope_parts = []
+    if library_documents is not None:
+        scope_parts.append(f"{library_documents:,} 篇")
+    if library_chunks is not None:
+        scope_parts.append(f"{library_chunks:,} 片段")
+    if scope_parts:
+        metrics.append(("全库范围", " / ".join(scope_parts)))
+    if usable_documents is not None and usable_documents > 0:
+        metrics.append(("正文可用文献", f"{usable_documents:,}"))
+    if library_ocr_documents is not None and library_ocr_documents > 0:
+        metrics.append(("库内待 OCR", f"{library_ocr_documents:,}"))
+    if fts_rows_returned is not None:
+        metrics.append(("FTS 返回次数", f"{fts_rows_returned:,}"))
+    if selected_documents is not None:
+        metrics.append(("采用文献", f"{selected_documents:,}"))
+    if selected_evidence is not None:
+        metrics.append(("采用证据", f"{selected_evidence:,}"))
+    if ocr_filtered is not None and ocr_filtered > 0:
+        metrics.append(("本轮排除题录", f"{ocr_filtered:,}"))
+    if adjacent_added is not None:
+        metrics.append(("相邻补充", f"{adjacent_added:,}"))
+    rendered_metrics = "".join(
+        '<div class="deep-retrieval-stat'
+        + (' is-scope' if label == "全库范围" else '')
+        + '">'
+        f"<span>{html.escape(label)}</span><strong>{html.escape(count)}</strong>"
+        "</div>"
+        for label, count in metrics
+    )
+    database_unavailable = value.get("database_available") is False
+    retrieval_incomplete = (
+        value.get("retrieval_complete") is False or bool(value.get("timed_out"))
+    )
+    retrieval_error = str(value.get("retrieval_error") or "").strip()
+    total_queries = _retrieval_stat_count(
+        value,
+        ("subquery_count", "query_count"),
+    )
+    completed_queries = _retrieval_stat_count(
+        value,
+        (
+            "completed_subquery_count",
+            "attempted_subquery_count",
+            "completed_query_count",
+        ),
+    )
+    if total_queries is not None and completed_queries is None:
+        completed_queries = 0
+    status_html = ""
+    if database_unavailable:
+        status_title = "全库索引不可用"
+        status_class = " is-error"
+    elif retrieval_incomplete:
+        completion = (
+            f" {completed_queries}/{total_queries}"
+            if completed_queries is not None and total_queries is not None
+            else ""
+        )
+        status_title = f"部分完成{completion}"
+        status_class = " is-warning"
+    elif retrieval_error:
+        status_title = "检索提示"
+        status_class = " is-warning"
+    else:
+        status_title = ""
+        status_class = ""
+    if status_title:
+        status_detail = (
+            f"<span>{html.escape(retrieval_error)}</span>" if retrieval_error else ""
+        )
+        status_html = (
+            f'<div class="deep-retrieval-status{status_class}">'
+            f"<strong>{html.escape(status_title)}</strong>{status_detail}</div>"
+        )
+    st.markdown(
+        '<div class="deep-retrieval-stats" aria-label="全库深度检索统计">'
+        '<div class="deep-retrieval-stats-heading">'
+        '<div class="deep-retrieval-stats-title">全库深度检索</div>'
+        f"{status_html}</div>"
+        f'<div class="deep-retrieval-stats-values">{rendered_metrics}</div>'
+        "</div>",
+        unsafe_allow_html=True,
     )
 
 
@@ -1657,6 +1868,54 @@ def _compact_analysis_narrative(value: Any) -> str:
     return re.sub(r"\n{3,}", "\n\n", "\n".join(output)).strip()
 
 
+def render_adjacent_evidence(value: Any) -> None:
+    if not isinstance(value, list):
+        return
+    rows = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        section = str(item.get("section") or "未标注章节")
+        locations = []
+        page = item.get("page")
+        page_start = item.get("page_start")
+        if page not in (None, ""):
+            locations.append(f"page: {page}")
+        if page_start not in (None, ""):
+            locations.append(f"page_start: {page_start}")
+        if not locations:
+            locations.append("页码未标注")
+        chunk_id = str(item.get("chunk_id") or "未记录 chunk_id")
+        excerpt = html.escape(str(item.get("chunk_text") or "无可用原文片段")).replace(
+            "\n", "<br>"
+        )
+        rows.append(
+            '<article class="adjacent-evidence-item">'
+            '<div class="adjacent-evidence-meta">'
+            f"<span>section: {html.escape(section)}</span>"
+            f"<span>{html.escape(' / '.join(locations))}</span>"
+            f"<span>chunk_id: {html.escape(chunk_id)}</span>"
+            "</div>"
+            f'<div class="adjacent-evidence-excerpt">{excerpt}</div>'
+            "</article>"
+        )
+    if not rows:
+        return
+    st.markdown(
+        '<section class="adjacent-evidence" aria-label="相邻方法或结果证据">'
+        '<div class="adjacent-evidence-title">相邻方法/结果证据</div>'
+        f"{''.join(rows)}</section>",
+        unsafe_allow_html=True,
+    )
+
+
+def parameter_source_location(item: Mapping[str, Any]) -> str:
+    sources = item.get("source_refs") or item.get("source_ids") or []
+    if isinstance(sources, str):
+        return sources
+    return "｜".join(str(source) for source in sources if str(source).strip())
+
+
 def render_analysis_payload(payload: dict[str, Any]) -> None:
     result = payload["result"]
     report_path = Path(str(payload["report_path"]))
@@ -1710,6 +1969,11 @@ def render_analysis_payload(payload: dict[str, Any]) -> None:
     if narrative_answer:
         st.markdown(narrative_answer)
 
+    render_deep_retrieval_stats(
+        result.get("deep_retrieval_stats")
+        or payload.get("deep_retrieval_stats")
+    )
+
     if payload.get("vision_result"):
         with st.expander("图片识别结果", expanded=True):
             render_vision_result(payload["vision_result"])
@@ -1751,6 +2015,7 @@ def render_analysis_payload(payload: dict[str, Any]) -> None:
                 page_text = f"；页码：{item.get('page')}" if item.get("page") else ""
                 doi_text = f"；DOI：{item.get('doi')}" if item.get("doi") else ""
                 st.caption(f"来源：{item.get('source')}；主题：{item.get('topic')}{page_text}{doi_text}")
+                render_adjacent_evidence(item.get("adjacent_chunks"))
         else:
             st.info("没有检索到文献片段，请补充或重建文献库数据。")
 
@@ -1770,6 +2035,7 @@ def render_analysis_payload(payload: dict[str, Any]) -> None:
                         "方法": item.get("process_method"),
                         "是否冲突": "是" if item.get("conflict") else "否",
                         "来源ID": "、".join(item.get("source_ids") or []),
+                        "来源定位": parameter_source_location(item),
                     }
                 )
             ui_components.render_light_table(
@@ -1858,6 +2124,7 @@ def render_message(message: dict[str, Any]) -> None:
         )
     with content_column:
         st.markdown(content_text)
+        render_deep_retrieval_stats(message.get("deep_retrieval_stats"))
 
 
 def render_empty_state(api_key: str) -> tuple[str | None, Any]:
@@ -1917,16 +2184,25 @@ def render_empty_state(api_key: str) -> tuple[str | None, Any]:
     return selected_prompt, progress_slot
 
 
-def render_agent_progress(slot: Any, message: str, *, reveal_id: str | None = None) -> None:
+def render_agent_progress(
+    slot: Any,
+    message: str,
+    *,
+    reveal_id: str | None = None,
+    retrieval_mode: str = "quick",
+) -> None:
     safe_message = html.escape(message)
+    normalized_mode = normalize_retrieval_mode(retrieval_mode)
+    subtitle = "全库深度检索" if normalized_mode == "deep" else "Agent 正在运行"
+    mode_class = " is-deep" if normalized_mode == "deep" else ""
     slot.markdown(
         f"""
         <div class="agent-live-progress" role="status" aria-live="polite">
             <div class="agent-live-spinner"></div>
             <div class="agent-live-copy">
                 <div class="agent-live-title">{safe_message}</div>
-                <div class="agent-live-subtitle">
-                    <span>Agent 正在运行</span>
+                <div class="agent-live-subtitle{mode_class}">
+                    <span>{subtitle}</span>
                     <span class="agent-live-dot"></span>
                     <span class="agent-live-dot"></span>
                     <span class="agent-live-dot"></span>
@@ -1963,8 +2239,22 @@ def run_general_turn(
     api_key: str,
     history: list[dict[str, str]],
     memory_context: dict[str, Any] | None = None,
+    retrieval_mode: str = "quick",
 ) -> tuple[str, dict[str, Any]]:
-    evidence = retrieve_general_literature(prompt, top_k=10, history=history)
+    normalized_mode = normalize_retrieval_mode(retrieval_mode)
+    retrieval_result = retrieve_general_literature(
+        prompt,
+        top_k=24 if normalized_mode == "deep" else 10,
+        history=history,
+        retrieval_mode=normalized_mode,
+        return_metadata=True,
+    )
+    if isinstance(retrieval_result, dict):
+        evidence = list(retrieval_result.get("evidence") or [])
+        deep_retrieval_stats = retrieval_result.get("deep_retrieval_stats") or {}
+    else:
+        evidence = list(retrieval_result or [])
+        deep_retrieval_stats = {}
     trace: dict[str, Any] = {
         "literature_ids": [
             str(item.get("chunk_id") or item.get("document_id") or item.get("source_file") or "")
@@ -1975,6 +2265,7 @@ def run_general_turn(
         "model_raw_output": "",
         "model_context_manifest": {},
         "error": "",
+        "deep_retrieval_stats": deep_retrieval_stats,
     }
     if not api_key:
         if evidence:
@@ -1997,6 +2288,7 @@ def run_general_turn(
         prompt,
         memory_context=memory_context,
         evidence=evidence,
+        retrieval_mode=normalized_mode,
     )
     trace["model_context_manifest"] = agent_memory.describe_model_messages(messages)
     try:
@@ -2340,6 +2632,15 @@ def finalize_memory_turn(
     assistant_message["run_id"] = run_id
     assistant_message["audit_trace"] = audit_trace
     message_metadata: dict[str, Any] = {"run_id": run_id, "audit_trace": audit_trace}
+    deep_retrieval_stats = (
+        general_trace.get("deep_retrieval_stats")
+        or result.get("deep_retrieval_stats")
+        or payload.get("deep_retrieval_stats")
+    )
+    if isinstance(deep_retrieval_stats, dict) and deep_retrieval_stats:
+        serialized_stats = _json_serializable(deep_retrieval_stats)
+        assistant_message["deep_retrieval_stats"] = serialized_stats
+        message_metadata["deep_retrieval_stats"] = serialized_stats
     if mode == "analysis":
         message_metadata["analysis_payload"] = build_persisted_analysis_payload(payload)
     elif mode == "vision" and isinstance(vision_payload.get("vision_result"), dict):
@@ -2399,7 +2700,7 @@ def _current_agent_scope() -> agent_background.TaskScope:
 
 
 def _execute_agent_job(
-    request: dict[str, Any],
+    request: Mapping[str, Any],
     update_progress: agent_background.ProgressCallback,
 ) -> dict[str, Any]:
     prompt = str(request["prompt"])
@@ -2417,6 +2718,7 @@ def _execute_agent_job(
     memory_errors = list(request.get("memory_errors") or [])
     vision_memory = dict(request.get("vision_memory") or {})
     previous_result = request.get("previous_result") or {}
+    retrieval_mode = normalize_retrieval_mode(request.get("retrieval_mode"))
 
     assistant_text = ""
     assistant_message: dict[str, Any] = {}
@@ -2435,7 +2737,11 @@ def _execute_agent_job(
             assistant_message = {"role": "assistant", "content": assistant_text}
             mode = "previous_evidence"
         elif request.get("should_run_full_analysis"):
-            update_progress("正在启动批次分析流程")
+            update_progress(
+                "正在扫描全库文献"
+                if retrieval_mode == "deep"
+                else "正在启动批次分析流程"
+            )
             try:
                 payload = orchestrator.run_analysis_turn(
                     user_prompt=resolved_prompt,
@@ -2448,6 +2754,7 @@ def _execute_agent_job(
                     image_mime_type=image_mime_type,
                     progress_callback=update_progress,
                     memory_context=memory_context,
+                    retrieval_mode=retrieval_mode,
                 )
             except Exception as error:
                 general_trace["error"] = str(error)
@@ -2519,13 +2826,18 @@ def _execute_agent_job(
             assistant_message = {"role": "assistant", "content": assistant_text}
             mode = "request_inputs"
         else:
-            update_progress("正在全面检索本地文献并组织专业回答")
+            update_progress(
+                "正在扫描全库文献并组织回答"
+                if retrieval_mode == "deep"
+                else "正在检索本地文献并组织专业回答"
+            )
             try:
                 assistant_text, general_trace = run_general_turn(
                     resolved_prompt,
                     api_key,
                     history,
                     memory_context=memory_context,
+                    retrieval_mode=retrieval_mode,
                 )
                 assistant_text = orchestrator.ensure_vision_follow_up_answer(
                     assistant_text,
@@ -2603,6 +2915,7 @@ def _active_agent_job_snapshot() -> agent_background.TaskSnapshot | None:
     snapshot = runner.snapshot(job_id) if job_id else None
     if snapshot is not None and snapshot.scope != scope:
         st.session_state.active_agent_job_id = ""
+        st.session_state.active_agent_retrieval_mode = ""
         snapshot = None
     if snapshot is None:
         job_id = runner.active_job(scope)
@@ -2665,6 +2978,7 @@ def sync_active_agent_job() -> bool:
     if str(st.session_state.get("active_agent_job_id") or "") == snapshot.job_id:
         st.session_state.active_agent_job_id = ""
         st.session_state.active_agent_progress_revealed = False
+        st.session_state.active_agent_retrieval_mode = ""
     return applied
 
 
@@ -2680,7 +2994,14 @@ def render_agent_job_monitor(active_view: str) -> None:
         reveal_id = snapshot.job_id
         st.session_state.active_agent_progress_revealed = True
     with st.container(key="background_agent_progress_host"):
-        render_agent_progress(st.empty(), snapshot.progress, reveal_id=reveal_id)
+        render_agent_progress(
+            st.empty(),
+            snapshot.progress,
+            reveal_id=reveal_id,
+            retrieval_mode=str(
+                st.session_state.get("active_agent_retrieval_mode") or "quick"
+            ),
+        )
 
 
 def handle_prompt(
@@ -2690,10 +3011,12 @@ def handle_prompt(
     has_image: bool,
     image_bytes: bytes | None,
     image_mime_type: str,
+    retrieval_mode: str = "quick",
     progress_slot: Any | None = None,
 ) -> None:
     if _active_agent_job_snapshot() is not None:
         return
+    submitted_retrieval_mode = normalize_retrieval_mode(retrieval_mode)
     manager = get_memory_manager()
     user_id = str(st.session_state.memory_user_id)
     session_id = str(st.session_state.memory_session_id)
@@ -2707,7 +3030,10 @@ def handle_prompt(
     }
     memory_errors: list[str] = []
     stored_image_path = ""
-    user_metadata: dict[str, Any] = {"has_image": bool(has_image and image_bytes)}
+    user_metadata: dict[str, Any] = {
+        "has_image": bool(has_image and image_bytes),
+        "retrieval_mode": submitted_retrieval_mode,
+    }
     if has_image and image_bytes:
         user_message["image_bytes"] = image_bytes
         user_message["image_mime_type"] = image_mime_type
@@ -2828,7 +3154,7 @@ def handle_prompt(
 
     job_id = f"job_{uuid4().hex}"
     scope: agent_background.TaskScope = (user_id, project_id, session_id)
-    request = {
+    request = MappingProxyType({
         "job_id": job_id,
         "user_id": user_id,
         "project_id": project_id,
@@ -2850,7 +3176,8 @@ def handle_prompt(
         "previous_result": st.session_state.last_result or {},
         "is_previous_evidence_request": is_previous_evidence_request,
         "should_run_full_analysis": should_run_full_analysis,
-    }
+        "retrieval_mode": submitted_retrieval_mode,
+    })
     try:
         get_agent_task_runner().submit(
             job_id,
@@ -2878,11 +3205,13 @@ def handle_prompt(
     else:
         st.session_state.active_agent_job_id = job_id
         st.session_state.active_agent_progress_revealed = progress_slot is not None
+        st.session_state.active_agent_retrieval_mode = submitted_retrieval_mode
         if progress_slot is not None:
             render_agent_progress(
                 progress_slot,
                 "正在启动 Agent 任务",
                 reveal_id=user_message_id,
+                retrieval_mode=submitted_retrieval_mode,
             )
 
     st.session_state.clear_sidebar_inputs = True
@@ -2930,7 +3259,13 @@ def main() -> None:
         )
 
     api_key = get_deepseek_api_key()
-    manual_observation, has_image, image_bytes, image_mime_type = render_sidebar(active_view)
+    (
+        manual_observation,
+        has_image,
+        image_bytes,
+        image_mime_type,
+        retrieval_mode,
+    ) = render_sidebar(active_view)
 
     if active_view == "chat":
         if not st.session_state.agent_messages:
@@ -2980,6 +3315,7 @@ def main() -> None:
             has_image,
             image_bytes,
             image_mime_type,
+            retrieval_mode=retrieval_mode,
             progress_slot=progress_slot,
         )
 
