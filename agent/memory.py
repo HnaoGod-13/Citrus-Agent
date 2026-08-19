@@ -6,6 +6,7 @@ import math
 import re
 import sqlite3
 import threading
+import time
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
@@ -31,6 +32,13 @@ from .rag import LITERATURE_DB_PATH, database_stats
 ROOT = Path(__file__).resolve().parents[1]
 LITERATURE_PATH = ROOT / "data" / "literature" / "chunks.jsonl"
 MESSAGE_STORAGE_VERSION = 2
+MESSAGE_WRITE_RETRY_DELAYS = (0.15,)
+TRANSIENT_SQLITE_WRITE_MARKERS = (
+    "database is locked",
+    "database table is locked",
+    "database schema is locked",
+    "database is busy",
+)
 WORKING_MEMORY_FIELDS = {
     "current_goal",
     "current_stage",
@@ -94,6 +102,23 @@ class _ClosingSQLiteConnection(sqlite3.Connection):
             return bool(super().__exit__(exc_type, exc_value, traceback))
         finally:
             self.close()
+
+
+def _is_transient_sqlite_write_error(error: BaseException) -> bool:
+    current: BaseException | None = error
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        error_code = getattr(current, "sqlite_errorcode", None)
+        if isinstance(error_code, int):
+            if (error_code & 0xFF) in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED}:
+                return True
+        else:
+            message = str(current).lower()
+            if any(marker in message for marker in TRANSIENT_SQLITE_WRITE_MARKERS):
+                return True
+        current = current.__cause__ or current.__context__
+    return False
 
 
 def utc_now() -> str:
@@ -649,7 +674,9 @@ class MemoryManager:
         metadata: dict[str, Any] | None = None,
     ) -> str:
         user_id, project_id = self._scope(user_id, project_id)
-        self.ensure_session(user_id, session_id, project_id)
+        session_id = _normalize_text(session_id, 160)
+        if not session_id:
+            raise MemoryValidationError("session_id 不能为空。")
         if role not in {"system", "user", "assistant", "tool"}:
             raise MemoryValidationError(f"不支持的消息角色：{role}")
         normalized = _normalize_message_content(content)
@@ -657,31 +684,74 @@ class MemoryManager:
             raise MemoryValidationError("不能保存空消息。")
         resolved_id = _normalize_text(message_id or f"msg_{uuid4().hex}", 160)
         now = utc_now()
-        with self._lock, self._connect() as connection:
-            connection.execute(
-                """
-                INSERT OR IGNORE INTO conversation_messages(
-                    message_id,user_id,session_id,project_id,role,content,token_count,
-                    message_type,tool_name,tool_result_id,metadata_json,created_at
-                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
-                """,
-                (
-                    resolved_id,
-                    user_id,
-                    session_id,
-                    project_id,
-                    role,
-                    normalized,
-                    estimate_tokens(normalized),
-                    _normalize_text(message_type, 60) or "chat",
-                    _normalize_text(tool_name, 120),
-                    _normalize_text(tool_result_id, 160),
-                    _safe_json(metadata or {}),
-                    now,
-                ),
-            )
-            connection.execute("UPDATE sessions SET updated_at=? WHERE session_id=?", (now, session_id))
-        return resolved_id
+        normalized_type = _normalize_text(message_type, 60) or "chat"
+        normalized_tool_name = _normalize_text(tool_name, 120)
+        normalized_tool_result_id = _normalize_text(tool_result_id, 160)
+        serialized_metadata = _safe_json(metadata or {})
+
+        def write_once() -> str:
+            self.ensure_session(user_id, session_id, project_id)
+            with self._lock, self._connect() as connection:
+                connection.execute(
+                    """
+                    INSERT OR IGNORE INTO conversation_messages(
+                        message_id,user_id,session_id,project_id,role,content,token_count,
+                        message_type,tool_name,tool_result_id,metadata_json,created_at
+                    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+                    """,
+                    (
+                        resolved_id,
+                        user_id,
+                        session_id,
+                        project_id,
+                        role,
+                        normalized,
+                        estimate_tokens(normalized),
+                        normalized_type,
+                        normalized_tool_name,
+                        normalized_tool_result_id,
+                        serialized_metadata,
+                        now,
+                    ),
+                )
+                stored = connection.execute(
+                    """
+                    SELECT user_id,session_id,project_id,role,content
+                    FROM conversation_messages WHERE message_id=?
+                    """,
+                    (resolved_id,),
+                ).fetchone()
+                if stored is None:
+                    raise MemoryStorageError("消息写入后未能回读。")
+                if (
+                    stored["user_id"] != user_id
+                    or stored["session_id"] != session_id
+                    or stored["project_id"] != project_id
+                ):
+                    raise MemoryIsolationError("message_id 已属于其他会话，拒绝覆盖。")
+                if stored["role"] != role or stored["content"] != normalized:
+                    raise MemoryValidationError("message_id 已用于不同消息，拒绝覆盖。")
+                connection.execute(
+                    "UPDATE sessions SET updated_at=? WHERE session_id=?",
+                    (now, session_id),
+                )
+            return resolved_id
+
+        for attempt in range(len(MESSAGE_WRITE_RETRY_DELAYS) + 1):
+            try:
+                return write_once()
+            except (sqlite3.OperationalError, MemoryStorageError) as error:
+                if (
+                    not _is_transient_sqlite_write_error(error)
+                    or attempt >= len(MESSAGE_WRITE_RETRY_DELAYS)
+                ):
+                    if isinstance(error, MemoryStorageError):
+                        raise
+                    raise MemoryStorageError(f"保存对话消息失败：{error}") from error
+                time.sleep(MESSAGE_WRITE_RETRY_DELAYS[attempt])
+            except sqlite3.Error as error:
+                raise MemoryStorageError(f"保存对话消息失败：{error}") from error
+        raise MemoryStorageError("保存对话消息失败。")
 
     def restore_session_messages(
         self,

@@ -9,6 +9,8 @@ import os
 import re
 import sqlite3
 import sys
+import threading
+import time
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from types import MappingProxyType
@@ -58,6 +60,10 @@ RETRIEVAL_MODE_LABELS = {
     "quick": "快速检索",
     "deep": "全库深度检索",
 }
+AGENT_PERSISTENCE_MAX_RETRIES = 3
+AGENT_PERSISTENCE_RETRY_DELAYS = (1.0, 2.0, 5.0)
+AGENT_PERSISTENCE_RETRY_LEASE_SECONDS = 35.0
+_PENDING_AGENT_PERSISTENCE_LOCK = threading.RLock()
 
 
 def normalize_retrieval_mode(value: Any) -> str:
@@ -1238,6 +1244,7 @@ def clear_active_conversation_state(*, clear_sidebar: bool = False) -> None:
     st.session_state.last_result = None
     st.session_state.last_vision_context = None
     st.session_state.memory_restored_session = None
+    st.session_state.pending_agent_persistence = {}
     if clear_sidebar:
         reset_sidebar_inputs()
 
@@ -1274,6 +1281,7 @@ def init_state() -> None:
     st.session_state.setdefault("active_agent_job_id", "")
     st.session_state.setdefault("active_agent_progress_revealed", False)
     st.session_state.setdefault("active_agent_retrieval_mode", "")
+    st.session_state.setdefault("pending_agent_persistence", {})
     st.session_state.setdefault("retrieval_mode", "quick")
     st.session_state.retrieval_mode = normalize_retrieval_mode(
         st.session_state.retrieval_mode
@@ -2061,6 +2069,12 @@ def render_analysis_payload(payload: dict[str, Any]) -> None:
         st.caption(f"报告已保存到：{report_path}")
 
 
+def render_message_persistence_warning(message: Mapping[str, Any]) -> None:
+    warning = str(message.get("persistence_warning") or "").strip()
+    if warning:
+        st.warning(warning)
+
+
 def render_message(message: dict[str, Any]) -> None:
     role = message["role"]
     content_text = str(message.get("content", ""))
@@ -2080,6 +2094,7 @@ def render_message(message: dict[str, Any]) -> None:
         shell_key = hashlib.sha256(shell_identity.encode("utf-8")).hexdigest()[:12]
         with st.container(key=f"analysis_shell_{shell_key}"):
             render_analysis_payload(payload)
+        render_message_persistence_warning(message)
         return
 
     if message.get("kind") == "analysis_legacy":
@@ -2093,6 +2108,7 @@ def render_message(message: dict[str, Any]) -> None:
         shell_key = hashlib.sha256(shell_identity.encode("utf-8")).hexdigest()[:12]
         with st.container(key=f"analysis_shell_{shell_key}"):
             st.markdown(restore_flattened_markdown(content_text))
+        render_message_persistence_warning(message)
         return
 
     if role == "user":
@@ -2125,6 +2141,7 @@ def render_message(message: dict[str, Any]) -> None:
     with content_column:
         st.markdown(content_text)
         render_deep_retrieval_stats(message.get("deep_retrieval_stats"))
+        render_message_persistence_warning(message)
 
 
 def render_empty_state(api_key: str) -> tuple[str | None, Any]:
@@ -2372,6 +2389,89 @@ def build_working_memory_updates(
     }
 
 
+MESSAGE_PERSISTENCE_WARNING = (
+    "回答已生成并保留在当前页面，但暂时未能写入对话历史。"
+    "刷新或重启后这条回答可能丢失，请稍后重试或联系管理员。"
+)
+
+
+def _build_assistant_persistence_spec(
+    *,
+    user_id: str,
+    session_id: str,
+    project_id: str,
+    assistant_message: dict[str, Any],
+    assistant_text: str,
+    mode: str,
+    metadata: dict[str, Any] | None = None,
+    payload: dict[str, Any] | None = None,
+    vision_payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    message_id = str(
+        assistant_message.setdefault("message_id", f"msg_{uuid4().hex}")
+    )
+    resolved_metadata = dict(metadata or {})
+    if not metadata:
+        run_id = str(assistant_message.get("run_id") or "")
+        audit_trace = assistant_message.get("audit_trace")
+        if run_id:
+            resolved_metadata["run_id"] = run_id
+        if isinstance(audit_trace, dict) and audit_trace:
+            resolved_metadata["audit_trace"] = audit_trace
+        deep_stats = assistant_message.get("deep_retrieval_stats")
+        if isinstance(deep_stats, dict) and deep_stats:
+            resolved_metadata["deep_retrieval_stats"] = _json_serializable(deep_stats)
+        if mode == "analysis":
+            resolved_metadata["analysis_payload"] = build_persisted_analysis_payload(payload)
+        elif mode == "vision" and isinstance((vision_payload or {}).get("vision_result"), dict):
+            resolved_metadata["vision_result"] = _without_raw_model_output(
+                (vision_payload or {})["vision_result"]
+            )
+    return {
+        "user_id": str(user_id),
+        "session_id": str(session_id),
+        "project_id": str(project_id),
+        "role": "assistant",
+        "content": str(assistant_text),
+        "message_id": message_id,
+        "message_type": "analysis" if mode == "analysis" else "chat",
+        "metadata": resolved_metadata,
+    }
+
+
+def _set_assistant_persistence_state(
+    assistant_message: dict[str, Any],
+    spec: dict[str, Any],
+    *,
+    persisted: bool,
+    error: str = "",
+) -> None:
+    state = dict(spec)
+    state["persisted"] = bool(persisted)
+    state["error"] = str(error or "")
+    assistant_message["_persistence"] = state
+    if persisted:
+        assistant_message.pop("persistence_warning", None)
+    else:
+        assistant_message["persistence_warning"] = MESSAGE_PERSISTENCE_WARNING
+
+
+def _persist_assistant_spec(
+    manager: agent_memory.MemoryManager,
+    spec: Mapping[str, Any],
+) -> str:
+    return manager.record_message(
+        str(spec.get("user_id") or ""),
+        str(spec.get("session_id") or ""),
+        str(spec.get("project_id") or ""),
+        "assistant",
+        str(spec.get("content") or ""),
+        message_id=str(spec.get("message_id") or ""),
+        message_type=str(spec.get("message_type") or "chat"),
+        metadata=dict(spec.get("metadata") or {}),
+    )
+
+
 def finalize_memory_turn(
     *,
     manager: agent_memory.MemoryManager,
@@ -2397,7 +2497,7 @@ def finalize_memory_turn(
         or payload.get("stored_image_path")
         or ""
     )
-    run_id = f"run_{uuid4().hex}"
+    run_id = str(assistant_message.setdefault("run_id", f"run_{uuid4().hex}"))
     tool_calls: list[dict[str, Any]] = []
     batch_id = str((result.get("batch") or {}).get("batch_id") or "")
 
@@ -2628,7 +2728,7 @@ def finalize_memory_turn(
         "estimated_context_tokens": model_context_manifest.get("estimated_tokens", 0),
         "error": error_text,
     }
-    assistant_message["message_id"] = f"msg_{uuid4().hex}"
+    assistant_message.setdefault("message_id", f"msg_{uuid4().hex}")
     assistant_message["run_id"] = run_id
     assistant_message["audit_trace"] = audit_trace
     message_metadata: dict[str, Any] = {"run_id": run_id, "audit_trace": audit_trace}
@@ -2648,23 +2748,53 @@ def finalize_memory_turn(
             vision_payload["vision_result"]
         )
 
+    persistence_spec = _build_assistant_persistence_spec(
+        user_id=user_id,
+        session_id=session_id,
+        project_id=project_id,
+        assistant_message=assistant_message,
+        assistant_text=assistant_text,
+        mode=mode,
+        metadata=message_metadata,
+        payload=payload,
+        vision_payload=vision_payload,
+    )
+    message_persisted = False
+    message_persistence_error = ""
     try:
-        manager.record_message(
-            user_id,
-            session_id,
-            project_id,
-            "assistant",
-            assistant_text,
-            message_id=assistant_message["message_id"],
-            message_type="analysis" if mode == "analysis" else "chat",
-            metadata=message_metadata,
-        )
-        manager.summarize_history(
-            session_id,
-            user_id=user_id,
-            project_id=project_id,
-            force=False,
-        )
+        _persist_assistant_spec(manager, persistence_spec)
+        message_persisted = True
+    except (agent_memory.MemoryManagerError, sqlite3.Error, OSError) as error:
+        message_persistence_error = str(error)
+        audit_trace["error"] = message_persistence_error
+
+    _set_assistant_persistence_state(
+        assistant_message,
+        persistence_spec,
+        persisted=message_persisted,
+        error=message_persistence_error,
+    )
+    audit_trace["message_persisted"] = message_persisted
+    audit_trace["message_persistence_error"] = message_persistence_error
+
+    audit_trace["history_summarized"] = False
+    if message_persisted:
+        try:
+            manager.summarize_history(
+                session_id,
+                user_id=user_id,
+                project_id=project_id,
+                force=False,
+            )
+            audit_trace["history_summarized"] = True
+        except (agent_memory.MemoryManagerError, sqlite3.Error, OSError) as error:
+            existing_error = str(audit_trace.get("error") or "").strip()
+            audit_trace["error"] = "；".join(
+                item for item in (existing_error, str(error)) if item
+            )
+
+    audit_trace["agent_run_logged"] = False
+    try:
         manager.log_agent_run(
             {
                 "run_id": run_id,
@@ -2682,11 +2812,15 @@ def finalize_memory_turn(
                 "model_raw_output": model_raw_output,
                 "final_output": assistant_text,
                 "state_updates": state_updates,
-                "error": error_text,
+                "error": str(audit_trace.get("error") or error_text),
             }
         )
+        audit_trace["agent_run_logged"] = True
     except (agent_memory.MemoryManagerError, sqlite3.Error, OSError) as error:
-        audit_trace["error"] = str(error)
+        existing_error = str(audit_trace.get("error") or "").strip()
+        audit_trace["error"] = "；".join(
+            item for item in (existing_error, str(error)) if item
+        )
     return audit_trace
 
 
@@ -2861,8 +2995,18 @@ def _execute_agent_job(
         )
 
     assistant_message.setdefault("message_id", f"msg_{uuid4().hex}")
-    manager = agent_memory.MemoryManager()
+    fallback_persistence_spec = _build_assistant_persistence_spec(
+        user_id=str(request["user_id"]),
+        session_id=str(request["session_id"]),
+        project_id=str(request["project_id"]),
+        assistant_message=assistant_message,
+        assistant_text=assistant_text,
+        mode=mode,
+        payload=payload,
+        vision_payload=vision_payload,
+    )
     try:
+        manager = agent_memory.MemoryManager()
         finalize_memory_turn(
             manager=manager,
             user_id=str(request["user_id"]),
@@ -2880,20 +3024,15 @@ def _execute_agent_job(
             general_trace=general_trace,
         )
     except Exception as error:
-        raise RuntimeError(f"回答生成完成，但结果保存失败：{error}") from error
-
-    persisted_messages = manager.restore_session_messages(
-        str(request["user_id"]),
-        str(request["session_id"]),
-        str(request["project_id"]),
-        limit=20,
-    )
-    assistant_message_id = str(assistant_message.get("message_id") or "")
-    if not any(
-        str(item.get("message_id") or "") == assistant_message_id
-        for item in persisted_messages
-    ):
-        raise RuntimeError("回答生成完成，但未能写入对话历史，请重试。")
+        persistence_spec = dict(
+            assistant_message.get("_persistence") or fallback_persistence_spec
+        )
+        _set_assistant_persistence_state(
+            assistant_message,
+            persistence_spec,
+            persisted=False,
+            error=str(error),
+        )
 
     return {
         "scope": (
@@ -2904,6 +3043,7 @@ def _execute_agent_job(
         "assistant_message": assistant_message,
         "assistant_text": assistant_text,
         "mode": mode,
+        "message_persistence": dict(assistant_message.get("_persistence") or {}),
         "state_updates": state_updates,
     }
 
@@ -2930,56 +3070,343 @@ def _append_agent_job_outcome(outcome: dict[str, Any]) -> bool:
         return False
     assistant_message = dict(outcome.get("assistant_message") or {})
     message_id = str(assistant_message.get("message_id") or "")
-    existing_ids = {
-        str(item.get("message_id") or "")
-        for item in st.session_state.agent_messages
-        if isinstance(item, dict)
-    }
-    if not message_id or message_id not in existing_ids:
+    changed = False
+    existing_index = next(
+        (
+            index
+            for index, item in enumerate(st.session_state.agent_messages)
+            if isinstance(item, dict)
+            and message_id
+            and str(item.get("message_id") or "") == message_id
+        ),
+        None,
+    )
+    if existing_index is None:
         st.session_state.agent_messages.append(assistant_message)
+        changed = True
+    elif st.session_state.agent_messages[existing_index] != assistant_message:
+        st.session_state.agent_messages[existing_index] = assistant_message
+        changed = True
     for key, value in dict(outcome.get("state_updates") or {}).items():
         if key in {"current_batch", "last_result", "last_vision_context"}:
-            st.session_state[key] = value
+            if st.session_state.get(key) != value:
+                st.session_state[key] = value
+                changed = True
     st.session_state.clear_sidebar_inputs = True
     st.session_state.restore_main_scroll_position = True
-    return True
+    return changed
+
+
+def _persistence_spec_scope(spec: Mapping[str, Any]) -> agent_background.TaskScope:
+    return (
+        str(spec.get("user_id") or ""),
+        str(spec.get("project_id") or ""),
+        str(spec.get("session_id") or ""),
+    )
+
+
+def _retry_agent_outcome_persistence(
+    outcome: dict[str, Any],
+    *,
+    expected_scope: agent_background.TaskScope | None = None,
+) -> dict[str, Any]:
+    updated = dict(outcome)
+    assistant_message = dict(updated.get("assistant_message") or {})
+    scope = tuple(updated.get("scope") or ())
+    if len(scope) != 3 or (expected_scope is not None and scope != expected_scope):
+        return updated
+    current_state = dict(
+        assistant_message.get("_persistence") or updated.get("message_persistence") or {}
+    )
+    if current_state.get("persisted") is True:
+        return updated
+    spec = dict(
+        current_state
+        or _build_assistant_persistence_spec(
+            user_id=str(scope[0]),
+            project_id=str(scope[1]),
+            session_id=str(scope[2]),
+            assistant_message=assistant_message,
+            assistant_text=str(updated.get("assistant_text") or assistant_message.get("content") or ""),
+            mode=str(updated.get("mode") or "chat"),
+            payload=dict(assistant_message.get("payload") or {}),
+            vision_payload={"vision_result": assistant_message.get("vision_result") or {}},
+        )
+    )
+    if (
+        _persistence_spec_scope(spec) != scope
+        or str(spec.get("message_id") or "")
+        != str(assistant_message.get("message_id") or "")
+    ):
+        _set_assistant_persistence_state(
+            assistant_message,
+            spec,
+            persisted=False,
+            error="回答持久化作用域或消息编号不一致，已拒绝写入。",
+        )
+        assistant_message["_persistence"]["blocked"] = True
+        updated["assistant_message"] = assistant_message
+        updated["message_persistence"] = dict(assistant_message["_persistence"])
+        return updated
+    try:
+        _persist_assistant_spec(get_memory_manager(), spec)
+    except Exception as error:
+        _set_assistant_persistence_state(
+            assistant_message,
+            spec,
+            persisted=False,
+            error=str(error),
+        )
+    else:
+        _set_assistant_persistence_state(
+            assistant_message,
+            spec,
+            persisted=True,
+        )
+    updated["assistant_message"] = assistant_message
+    updated["message_persistence"] = dict(assistant_message.get("_persistence") or {})
+    return updated
+
+
+def _update_ui_message_persistence(
+    message_id: str,
+    spec: dict[str, Any],
+    *,
+    persisted: bool,
+    error: str = "",
+) -> bool:
+    for index, item in enumerate(st.session_state.agent_messages):
+        if not isinstance(item, dict) or str(item.get("message_id") or "") != message_id:
+            continue
+        updated = dict(item)
+        _set_assistant_persistence_state(
+            updated,
+            spec,
+            persisted=persisted,
+            error=error,
+        )
+        if updated == item:
+            return False
+        st.session_state.agent_messages[index] = updated
+        return True
+    return False
+
+
+def _queue_pending_agent_persistence(
+    job_id: str,
+    outcome: dict[str, Any],
+) -> None:
+    assistant_message = dict(outcome.get("assistant_message") or {})
+    spec = dict(
+        assistant_message.get("_persistence")
+        or outcome.get("message_persistence")
+        or {}
+    )
+    scope = tuple(outcome.get("scope") or ())
+    if (
+        len(scope) != 3
+        or spec.get("persisted") is True
+        or spec.get("blocked") is True
+        or _persistence_spec_scope(spec) != scope
+    ):
+        return
+    st.session_state.pending_agent_persistence = {
+        "job_id": str(job_id),
+        "scope": scope,
+        "message_id": str(assistant_message.get("message_id") or ""),
+        "spec": spec,
+        "attempts": 0,
+        "next_retry_at": time.monotonic() + AGENT_PERSISTENCE_RETRY_DELAYS[0],
+    }
+
+
+def _retry_pending_agent_persistence() -> bool:
+    with _PENDING_AGENT_PERSISTENCE_LOCK:
+        pending = dict(st.session_state.get("pending_agent_persistence") or {})
+        if not pending:
+            return False
+        scope = tuple(pending.get("scope") or ())
+        spec = dict(pending.get("spec") or {})
+        message_id = str(pending.get("message_id") or "")
+        if (
+            len(scope) != 3
+            or scope != _current_agent_scope()
+            or _persistence_spec_scope(spec) != scope
+            or str(spec.get("message_id") or "") != message_id
+        ):
+            st.session_state.pending_agent_persistence = {}
+            return True
+        now = time.monotonic()
+        if now < float(pending.get("next_retry_at") or 0.0):
+            return False
+        if (
+            pending.get("retry_token")
+            and now < float(pending.get("retry_lease_until") or 0.0)
+        ):
+            return False
+        retry_token = f"retry_{uuid4().hex}"
+        pending["retry_token"] = retry_token
+        pending["retry_lease_until"] = now + AGENT_PERSISTENCE_RETRY_LEASE_SECONDS
+        st.session_state.pending_agent_persistence = pending
+
+    attempts = int(pending.get("attempts") or 0) + 1
+    try:
+        _persist_assistant_spec(get_memory_manager(), spec)
+    except Exception as error:
+        with _PENDING_AGENT_PERSISTENCE_LOCK:
+            current = dict(st.session_state.get("pending_agent_persistence") or {})
+            if current.get("retry_token") != retry_token:
+                return False
+            changed = _update_ui_message_persistence(
+                message_id,
+                spec,
+                persisted=False,
+                error=str(error),
+            )
+            if attempts >= AGENT_PERSISTENCE_MAX_RETRIES:
+                st.session_state.pending_agent_persistence = {}
+                return True
+            current["attempts"] = attempts
+            current["next_retry_at"] = time.monotonic() + AGENT_PERSISTENCE_RETRY_DELAYS[
+                min(attempts, len(AGENT_PERSISTENCE_RETRY_DELAYS) - 1)
+            ]
+            current["retry_token"] = ""
+            current["retry_lease_until"] = 0.0
+            current["spec"] = dict(
+                next(
+                    (
+                        item.get("_persistence")
+                        for item in st.session_state.agent_messages
+                        if isinstance(item, dict)
+                        and str(item.get("message_id") or "") == message_id
+                    ),
+                    spec,
+                )
+                or spec
+            )
+            st.session_state.pending_agent_persistence = current
+            return changed
+
+    with _PENDING_AGENT_PERSISTENCE_LOCK:
+        current = dict(st.session_state.get("pending_agent_persistence") or {})
+        if current.get("retry_token") != retry_token:
+            return False
+        _update_ui_message_persistence(
+            message_id,
+            spec,
+            persisted=True,
+        )
+        st.session_state.pending_agent_persistence = {}
+        return True
+
+
+def _prepare_agent_outcome_persistence(outcome: dict[str, Any]) -> dict[str, Any]:
+    updated = dict(outcome)
+    assistant_message = dict(updated.get("assistant_message") or {})
+    existing = dict(
+        assistant_message.get("_persistence")
+        or updated.get("message_persistence")
+        or {}
+    )
+    if existing:
+        return updated
+    scope = tuple(updated.get("scope") or ())
+    if len(scope) != 3:
+        return updated
+    spec = _build_assistant_persistence_spec(
+        user_id=str(scope[0]),
+        project_id=str(scope[1]),
+        session_id=str(scope[2]),
+        assistant_message=assistant_message,
+        assistant_text=str(updated.get("assistant_text") or assistant_message.get("content") or ""),
+        mode=str(updated.get("mode") or "chat"),
+        payload=dict(assistant_message.get("payload") or {}),
+        vision_payload={"vision_result": assistant_message.get("vision_result") or {}},
+    )
+    _set_assistant_persistence_state(
+        assistant_message,
+        spec,
+        persisted=False,
+        error="等待写入对话历史。",
+    )
+    updated["assistant_message"] = assistant_message
+    updated["message_persistence"] = dict(assistant_message["_persistence"])
+    return updated
 
 
 def sync_active_agent_job() -> bool:
+    pending_updated = _retry_pending_agent_persistence()
     snapshot = _active_agent_job_snapshot()
     if snapshot is None or not snapshot.done:
-        return False
+        return pending_updated
     runner = get_agent_task_runner()
     try:
-        outcome = runner.result(snapshot.job_id)
-    except Exception as error:
+        claim = runner.claim_result(snapshot.job_id)
+    except Exception:
+        return pending_updated
+    if claim is None:
+        return pending_updated
+    if claim.error:
+        error_text = claim.error
         outcome = {
             "scope": snapshot.scope,
             "assistant_message": {
                 "role": "assistant",
-                "content": f"后台 Agent 任务未能完成：{error}",
-                "message_id": f"msg_{uuid4().hex}",
+                "content": f"后台 Agent 任务未能完成：{error_text}",
+                "message_id": f"msg_error_{snapshot.job_id}",
             },
+            "assistant_text": f"后台 Agent 任务未能完成：{error_text}",
+            "mode": "background_error",
             "state_updates": {},
         }
-        assistant_message = outcome["assistant_message"]
-        try:
-            get_memory_manager().record_message(
-                snapshot.scope[0],
-                snapshot.scope[2],
-                snapshot.scope[1],
-                "assistant",
-                assistant_message["content"],
-                message_id=assistant_message["message_id"],
-            )
-        except agent_memory.MemoryManagerError:
-            pass
-    applied = _append_agent_job_outcome(outcome)
+    else:
+        outcome = claim.result
+    if not isinstance(outcome, dict):
+        outcome = {
+            "scope": snapshot.scope,
+            "assistant_message": {
+                "role": "assistant",
+                "content": "后台 Agent 任务返回了无法读取的结果。",
+                "message_id": f"msg_error_{snapshot.job_id}",
+            },
+            "assistant_text": "后台 Agent 任务返回了无法读取的结果。",
+            "mode": "background_error",
+            "state_updates": {},
+        }
+    current_scope = _current_agent_scope()
+    outcome_scope = tuple(outcome.get("scope") or ())
+    if outcome_scope != snapshot.scope or outcome_scope != current_scope:
+        runner.acknowledge_result(snapshot.job_id, claim.token)
+        if str(st.session_state.get("active_agent_job_id") or "") == snapshot.job_id:
+            st.session_state.active_agent_job_id = ""
+            st.session_state.active_agent_progress_revealed = False
+            st.session_state.active_agent_retrieval_mode = ""
+        return pending_updated
+    prepared_outcome = _prepare_agent_outcome_persistence(outcome)
+    applied = _append_agent_job_outcome(prepared_outcome)
+    prepared_state = dict(prepared_outcome.get("message_persistence") or {})
+    if prepared_state.get("persisted") is False and not prepared_state.get("blocked"):
+        _queue_pending_agent_persistence(snapshot.job_id, prepared_outcome)
+    if not runner.acknowledge_result(snapshot.job_id, claim.token):
+        return pending_updated or applied
     if str(st.session_state.get("active_agent_job_id") or "") == snapshot.job_id:
         st.session_state.active_agent_job_id = ""
         st.session_state.active_agent_progress_revealed = False
         st.session_state.active_agent_retrieval_mode = ""
-    return applied
+
+    persisted_outcome = _retry_agent_outcome_persistence(
+        prepared_outcome,
+        expected_scope=snapshot.scope,
+    )
+    persistence_updated = _append_agent_job_outcome(persisted_outcome)
+    persistence_state = dict(persisted_outcome.get("message_persistence") or {})
+    if persistence_state.get("persisted") is False and not persistence_state.get("blocked"):
+        _queue_pending_agent_persistence(snapshot.job_id, persisted_outcome)
+    elif str(
+        (st.session_state.get("pending_agent_persistence") or {}).get("job_id") or ""
+    ) == snapshot.job_id:
+        st.session_state.pending_agent_persistence = {}
+    return pending_updated or applied or persistence_updated
 
 
 @st.fragment(run_every=0.8)
@@ -3014,7 +3441,10 @@ def handle_prompt(
     retrieval_mode: str = "quick",
     progress_slot: Any | None = None,
 ) -> None:
-    if _active_agent_job_snapshot() is not None:
+    if (
+        _active_agent_job_snapshot() is not None
+        or st.session_state.get("pending_agent_persistence")
+    ):
         return
     submitted_retrieval_mode = normalize_retrieval_mode(retrieval_mode)
     manager = get_memory_manager()
@@ -3278,7 +3708,7 @@ def main() -> None:
                 render_message(message)
 
     active_job = _active_agent_job_snapshot()
-    if active_job is not None:
+    if active_job is not None or st.session_state.get("pending_agent_persistence"):
         render_agent_job_monitor(active_view)
 
     if active_view != "chat":
@@ -3299,7 +3729,10 @@ def main() -> None:
 
     typed_prompt = st.chat_input(
         "输入问题或粘贴批次信息…\nAsk or paste batch data…",
-        disabled=active_job is not None,
+        disabled=(
+            active_job is not None
+            or bool(st.session_state.get("pending_agent_persistence"))
+        ),
     )
     render_scroll_position_manager(
         restore=restore_scroll_position,

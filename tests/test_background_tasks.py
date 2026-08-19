@@ -4,7 +4,8 @@ import inspect
 import threading
 import time
 import unittest
-from unittest.mock import patch
+from concurrent.futures import ThreadPoolExecutor
+from unittest.mock import MagicMock, patch
 
 from agent.background_tasks import TaskRunner
 from app import main as app_main
@@ -86,6 +87,54 @@ class TaskRunnerTests(unittest.TestCase):
         self.assertIsNone(self.runner.snapshot("job_rejected"))
         self.assertEqual("", self.runner.active_job(("user", "project", "session")))
 
+    def test_terminal_result_is_claimed_by_exactly_one_harvester(self) -> None:
+        self.runner.submit(
+            "job_claim_once",
+            ("user", "project", "session"),
+            lambda _progress: {"answer": "done"},
+        )
+        wait_until_done(self.runner, "job_claim_once")
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            claimed = list(
+                executor.map(
+                    lambda _index: self.runner.claim_result("job_claim_once"),
+                    range(2),
+                )
+            )
+
+        leases = [item for item in claimed if item is not None]
+        self.assertEqual(1, len(leases))
+        self.assertEqual({"answer": "done"}, leases[0].result)
+        self.assertEqual(1, sum(item is None for item in claimed))
+        self.assertTrue(
+            self.runner.acknowledge_result("job_claim_once", leases[0].token)
+        )
+
+    def test_unacknowledged_result_can_be_reclaimed_after_lease_expiry(self) -> None:
+        self.runner.submit(
+            "job_reclaim",
+            ("user", "project", "session"),
+            lambda _progress: "done",
+        )
+        wait_until_done(self.runner, "job_reclaim")
+
+        with patch("agent.background_tasks.time.monotonic", return_value=100.0):
+            first = self.runner.claim_result("job_reclaim", lease_seconds=15.0)
+        with patch("agent.background_tasks.time.monotonic", return_value=110.0):
+            self.assertIsNone(
+                self.runner.claim_result("job_reclaim", lease_seconds=15.0)
+            )
+        with patch("agent.background_tasks.time.monotonic", return_value=116.0):
+            recovered = self.runner.claim_result("job_reclaim", lease_seconds=15.0)
+
+        self.assertIsNotNone(first)
+        self.assertIsNotNone(recovered)
+        self.assertNotEqual(first.token, recovered.token)
+        self.assertTrue(
+            self.runner.acknowledge_result("job_reclaim", recovered.token)
+        )
+
 
 class AgentJobHarvestTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -105,6 +154,7 @@ class AgentJobHarvestTests(unittest.TestCase):
         self.runner.shutdown()
 
     def test_completed_result_is_harvested_exactly_once(self) -> None:
+        manager = MagicMock()
         outcome = {
             "scope": ("user", "project", "session"),
             "assistant_message": {
@@ -123,6 +173,7 @@ class AgentJobHarvestTests(unittest.TestCase):
         with (
             patch.object(app_main.st, "session_state", self.state),
             patch.object(app_main, "get_agent_task_runner", return_value=self.runner),
+            patch.object(app_main, "get_memory_manager", return_value=manager),
         ):
             self.assertTrue(app_main.sync_active_agent_job())
             self.assertFalse(app_main.sync_active_agent_job())
@@ -134,6 +185,171 @@ class AgentJobHarvestTests(unittest.TestCase):
         self.assertEqual({"batch_id": "B1"}, self.state.current_batch)
         self.assertEqual("", self.state.active_agent_job_id)
         self.assertIsNotNone(self.runner.snapshot("job_harvest"))
+        manager.record_message.assert_called_once()
+        self.assertEqual(
+            "assistant_message",
+            manager.record_message.call_args.kwargs["message_id"],
+        )
+
+    def test_failed_harvest_persistence_keeps_generated_answer_and_warning(self) -> None:
+        manager = MagicMock()
+        manager.record_message.side_effect = app_main.agent_memory.MemoryStorageError(
+            "database is locked"
+        )
+        outcome = {
+            "scope": ("user", "project", "session"),
+            "assistant_message": {
+                "role": "assistant",
+                "content": "已生成的完整加工流程",
+                "message_id": "assistant_pending",
+                "_persistence": {
+                    "user_id": "user",
+                    "project_id": "project",
+                    "session_id": "session",
+                    "role": "assistant",
+                    "content": "已生成的完整加工流程",
+                    "message_id": "assistant_pending",
+                    "message_type": "chat",
+                    "metadata": {},
+                    "persisted": False,
+                    "error": "worker write failed",
+                },
+            },
+            "assistant_text": "已生成的完整加工流程",
+            "mode": "chat",
+            "state_updates": {},
+        }
+        self.runner.submit("job_harvest", ("user", "project", "session"), lambda _progress: outcome)
+        wait_until_done(self.runner, "job_harvest")
+
+        with (
+            patch.object(app_main.st, "session_state", self.state),
+            patch.object(app_main, "get_agent_task_runner", return_value=self.runner),
+            patch.object(app_main, "get_memory_manager", return_value=manager),
+        ):
+            self.assertTrue(app_main.sync_active_agent_job())
+
+        saved = [
+            item for item in self.state.agent_messages
+            if item.get("message_id") == "assistant_pending"
+        ]
+        self.assertEqual(1, len(saved))
+        self.assertEqual("已生成的完整加工流程", saved[0]["content"])
+        self.assertIn("未能写入对话历史", saved[0]["persistence_warning"])
+        self.assertFalse(saved[0]["_persistence"]["persisted"])
+        self.assertEqual("", self.state.active_agent_job_id)
+        self.assertEqual("assistant_pending", self.state.pending_agent_persistence["message_id"])
+
+    def test_pending_persistence_recovers_on_later_rerun_without_duplicate_answer(self) -> None:
+        manager = MagicMock()
+        manager.record_message.side_effect = [
+            app_main.agent_memory.MemoryStorageError("database is locked"),
+            "assistant_retry_later",
+        ]
+        outcome = {
+            "scope": ("user", "project", "session"),
+            "assistant_message": {
+                "role": "assistant",
+                "content": "已生成的文献证据回答",
+                "message_id": "assistant_retry_later",
+                "_persistence": {
+                    "user_id": "user",
+                    "project_id": "project",
+                    "session_id": "session",
+                    "role": "assistant",
+                    "content": "已生成的文献证据回答",
+                    "message_id": "assistant_retry_later",
+                    "message_type": "chat",
+                    "metadata": {},
+                    "persisted": False,
+                    "error": "worker write failed",
+                },
+            },
+            "assistant_text": "已生成的文献证据回答",
+            "mode": "chat",
+            "state_updates": {},
+        }
+        self.runner.submit("job_harvest", ("user", "project", "session"), lambda _progress: outcome)
+        wait_until_done(self.runner, "job_harvest")
+
+        with (
+            patch.object(app_main.st, "session_state", self.state),
+            patch.object(app_main, "get_agent_task_runner", return_value=self.runner),
+            patch.object(app_main, "get_memory_manager", return_value=manager),
+            patch.object(app_main.time, "monotonic", return_value=100.0),
+        ):
+            self.assertTrue(app_main.sync_active_agent_job())
+
+        self.assertTrue(self.state.pending_agent_persistence)
+        with (
+            patch.object(app_main.st, "session_state", self.state),
+            patch.object(app_main, "get_agent_task_runner", return_value=self.runner),
+            patch.object(app_main, "get_memory_manager", return_value=manager),
+            patch.object(app_main.time, "monotonic", return_value=102.0),
+        ):
+            self.assertTrue(app_main.sync_active_agent_job())
+
+        saved = [
+            item for item in self.state.agent_messages
+            if item.get("message_id") == "assistant_retry_later"
+        ]
+        self.assertEqual(1, len(saved))
+        self.assertNotIn("persistence_warning", saved[0])
+        self.assertTrue(saved[0]["_persistence"]["persisted"])
+        self.assertEqual({}, self.state.pending_agent_persistence)
+        self.assertEqual(2, manager.record_message.call_count)
+
+    def test_sync_rejects_mismatched_outcome_scope_before_persistence(self) -> None:
+        manager = MagicMock()
+        outcome = {
+            "scope": ("other-user", "project", "session"),
+            "assistant_message": {
+                "role": "assistant",
+                "content": "wrong scope",
+                "message_id": "assistant_wrong_scope",
+            },
+            "state_updates": {},
+        }
+        self.runner.submit("job_harvest", ("user", "project", "session"), lambda _progress: outcome)
+        wait_until_done(self.runner, "job_harvest")
+
+        with (
+            patch.object(app_main.st, "session_state", self.state),
+            patch.object(app_main, "get_agent_task_runner", return_value=self.runner),
+            patch.object(app_main, "get_memory_manager", return_value=manager),
+        ):
+            self.assertFalse(app_main.sync_active_agent_job())
+
+        manager.record_message.assert_not_called()
+        self.assertNotIn(
+            "assistant_wrong_scope",
+            {item.get("message_id") for item in self.state.agent_messages},
+        )
+
+    def test_worker_returns_generated_answer_when_memory_manager_cannot_open(self) -> None:
+        request = {
+            "prompt": "请给出脐橙汁完整加工流程",
+            "resolved_prompt": "请给出脐橙汁完整加工流程",
+            "user_id": "user",
+            "project_id": "project",
+            "session_id": "session",
+            "history": [],
+        }
+        with (
+            patch.object(app_main.orchestrator, "should_request_batch_data", return_value=False),
+            patch.object(app_main, "run_general_turn", return_value=("完整加工流程正文", {})),
+            patch.object(
+                app_main.agent_memory,
+                "MemoryManager",
+                side_effect=app_main.agent_memory.MemoryStorageError("database is locked"),
+            ),
+        ):
+            outcome = app_main._execute_agent_job(request, lambda _message: None)
+
+        assistant = outcome["assistant_message"]
+        self.assertEqual("完整加工流程正文", assistant["content"])
+        self.assertIn("未能写入对话历史", assistant["persistence_warning"])
+        self.assertFalse(outcome["message_persistence"]["persisted"])
 
     def test_result_from_another_session_is_not_added_to_current_chat(self) -> None:
         outcome = {
@@ -162,7 +378,8 @@ class BackgroundNavigationWiringTests(unittest.TestCase):
         source = inspect.getsource(app_main.main)
         self.assertEqual(1, source.count("render_agent_job_monitor(active_view)"))
         self.assertIn("ui_product_pages.render_product_page(active_view)", source)
-        self.assertIn("disabled=active_job is not None", source)
+        self.assertIn('st.session_state.get("pending_agent_persistence")', source)
+        self.assertIn("active_job is not None", source)
 
 
 class DeepRetrievalBackgroundWiringTests(unittest.TestCase):

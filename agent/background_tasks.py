@@ -6,6 +6,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any, Callable
+from uuid import uuid4
 
 
 TaskScope = tuple[str, str, str]
@@ -29,6 +30,14 @@ class TaskSnapshot:
         return self.status in _TERMINAL_STATES
 
 
+@dataclass(frozen=True)
+class TaskResultClaim:
+    job_id: str
+    token: str
+    result: Any
+    error: str
+
+
 @dataclass
 class _TaskRecord:
     job_id: str
@@ -39,6 +48,9 @@ class _TaskRecord:
     created_at: float
     updated_at: float
     result: Any = None
+    harvested: bool = False
+    harvest_token: str = ""
+    harvest_lease_until: float = 0.0
 
 
 class TaskRunner:
@@ -163,6 +175,44 @@ class TaskRunner:
             if record.status != "succeeded":
                 raise RuntimeError("Agent task is still running")
             return record.result
+
+    def claim_result(
+        self,
+        job_id: str,
+        *,
+        lease_seconds: float = 15.0,
+    ) -> TaskResultClaim | None:
+        """Lease a terminal result so interrupted harvests can be retried."""
+        with self._lock:
+            record = self._tasks.get(str(job_id or ""))
+            if record is None:
+                raise KeyError(job_id)
+            if record.status not in _TERMINAL_STATES:
+                raise RuntimeError("Agent task is still running")
+            if record.harvested:
+                return None
+            now = time.monotonic()
+            if record.harvest_token and record.harvest_lease_until > now:
+                return None
+            token = f"claim_{uuid4().hex}"
+            record.harvest_token = token
+            record.harvest_lease_until = now + max(float(lease_seconds), 0.1)
+            return TaskResultClaim(
+                job_id=record.job_id,
+                token=token,
+                result=record.result,
+                error=record.error if record.status == "failed" else "",
+            )
+
+    def acknowledge_result(self, job_id: str, token: str) -> bool:
+        with self._lock:
+            record = self._tasks.get(str(job_id or ""))
+            if record is None or record.harvested or record.harvest_token != str(token or ""):
+                return False
+            record.harvested = True
+            record.harvest_token = ""
+            record.harvest_lease_until = 0.0
+            return True
 
     def discard(self, job_id: str) -> None:
         with self._lock:

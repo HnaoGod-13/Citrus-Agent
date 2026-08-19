@@ -298,13 +298,15 @@ class DesignSystemRegressionTests(unittest.TestCase):
 
     def test_chat_composer_keeps_bilingual_placeholder(self) -> None:
         main_source = MAIN_PATH.read_text(encoding="utf-8-sig")
-        self.assertIn(
-            'typed_prompt = st.chat_input(\n'
-            '        "输入问题或粘贴批次信息…\\nAsk or paste batch data…",\n'
-            '        disabled=active_job is not None,\n'
-            '    )',
-            main_source,
-        )
+        composer_start = main_source.index("typed_prompt = st.chat_input(")
+        composer = main_source[
+            composer_start : main_source.index(
+                "render_scroll_position_manager(", composer_start
+            )
+        ]
+        self.assertIn("输入问题或粘贴批次信息…\\nAsk or paste batch data…", composer)
+        self.assertIn("active_job is not None", composer)
+        self.assertIn('pending_agent_persistence', composer)
 
     def test_sidebar_controls_share_a_deliberate_type_scale(self) -> None:
         css = CSS_PATH.read_text(encoding="utf-8-sig")

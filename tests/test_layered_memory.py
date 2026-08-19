@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from agent.llm_client import build_general_chat_messages
 from agent.memory import (
@@ -418,6 +418,50 @@ class LayeredMemoryTests(unittest.TestCase):
         with self.assertRaises(MemoryStorageError):
             MemoryManager(blocked)
 
+    def test_record_message_retries_busy_write_and_remains_idempotent(self) -> None:
+        original_connect = self.manager._connect
+        connect_calls = 0
+
+        def flaky_connect():
+            nonlocal connect_calls
+            connect_calls += 1
+            if connect_calls == 1:
+                raise sqlite3.OperationalError("database is locked")
+            return original_connect()
+
+        with (
+            patch.object(self.manager, "_connect", side_effect=flaky_connect),
+            patch("agent.memory.time.sleep") as sleep_mock,
+        ):
+            saved_id = self.manager.record_message(
+                self.user_id,
+                self.session_id,
+                self.project_id,
+                "assistant",
+                "已生成的完整加工流程",
+                message_id="msg_retry_once",
+            )
+
+        self.assertEqual("msg_retry_once", saved_id)
+        sleep_mock.assert_called_once()
+        self.manager.record_message(
+            self.user_id,
+            self.session_id,
+            self.project_id,
+            "assistant",
+            "已生成的完整加工流程",
+            message_id="msg_retry_once",
+        )
+        restored = self.manager.restore_session_messages(
+            self.user_id,
+            self.session_id,
+            self.project_id,
+        )
+        self.assertEqual(
+            1,
+            sum(item["message_id"] == "msg_retry_once" for item in restored),
+        )
+
 
 class MemoryTurnFinalizationTests(unittest.TestCase):
     def test_analysis_without_uploaded_image_does_not_reference_missing_variable(self) -> None:
@@ -482,6 +526,40 @@ class MemoryTurnFinalizationTests(unittest.TestCase):
 
         self.assertIn("UNIQUE constraint failed", trace["error"])
         manager.record_message.assert_called()
+
+    def test_assistant_write_failure_keeps_stable_message_and_warning(self) -> None:
+        from app.main import finalize_memory_turn
+
+        manager = MagicMock()
+        manager.update_working_memory.return_value = {}
+        manager.capture_long_term_from_turn.return_value = []
+        manager.record_message.side_effect = MemoryStorageError("database is locked")
+        assistant_message = {
+            "role": "assistant",
+            "content": "完整加工流程",
+            "message_id": "msg_stable_answer",
+            "run_id": "run_stable_answer",
+        }
+
+        trace = finalize_memory_turn(
+            manager=manager,
+            user_id="user-a",
+            session_id="session-a",
+            project_id="project-a",
+            prompt="生成脐橙汁完整加工流程",
+            assistant_message=assistant_message,
+            assistant_text="完整加工流程",
+            mode="chat",
+            memory_context={},
+            missing_inputs=[],
+        )
+
+        self.assertEqual("msg_stable_answer", assistant_message["message_id"])
+        self.assertEqual("run_stable_answer", assistant_message["run_id"])
+        self.assertFalse(trace["message_persisted"])
+        self.assertIn("database is locked", trace["message_persistence_error"])
+        self.assertIn("未能写入对话历史", assistant_message["persistence_warning"])
+        self.assertFalse(assistant_message["_persistence"]["persisted"])
 
 
 if __name__ == "__main__":
