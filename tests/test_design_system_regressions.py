@@ -318,7 +318,7 @@ class DesignSystemRegressionTests(unittest.TestCase):
             css,
         )
         self.assertIn('padding-top: 13px !important;', css)
-        self.assertIn('height: 72px;', css)
+        self.assertIn('height: 78px;', css)
         self.assertIn('content: "JPG / PNG / TIFF · max 200MB";', css)
         self.assertIn('button[data-testid^="stBaseButton-"]', css)
         self.assertIn('[data-testid="stWidgetLabel"] p {', css)
@@ -335,6 +335,11 @@ class DesignSystemRegressionTests(unittest.TestCase):
         )
         self.assertIn('height: 0 !important;', css)
         self.assertIn('overflow: hidden !important;', css)
+        self.assertIn('padding-bottom: 4px !important;', css)
+        self.assertIn('min-height: 43px;', css)
+        self.assertIn('min-height: 37px;', css)
+        self.assertIn('min-height: 153px;', css)
+        self.assertIn('gap: 8px;', css)
 
     def test_deep_retrieval_control_and_statistics_are_scoped_and_responsive(self) -> None:
         css = CSS_PATH.read_text(encoding="utf-8-sig")
