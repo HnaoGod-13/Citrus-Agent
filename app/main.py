@@ -1459,6 +1459,7 @@ def render_sidebar(view: str = "chat") -> tuple[str, bool, bytes | None, str, st
         if image_bytes:
             caption = "图片预览" if prepared_image else "已保留的待发送图片"
             st.image(image_bytes, caption=caption, width="stretch")
+            st.info("图片会在本轮分析中自动调用视觉模型识别；下方外观描述可作为人工补充。")
             st.button(
                 "× 删除图片",
                 width="stretch",

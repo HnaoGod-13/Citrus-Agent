@@ -311,14 +311,34 @@ class DesignSystemRegressionTests(unittest.TestCase):
     def test_sidebar_controls_share_a_deliberate_type_scale(self) -> None:
         css = CSS_PATH.read_text(encoding="utf-8-sig")
         main_source = MAIN_PATH.read_text(encoding="utf-8-sig")
+        desktop_sidebar = css[
+            css.index('[data-testid="stSidebar"] {') : css.index("@media (min-width: 900px)")
+        ]
+        secondary_panel = css[
+            css.index("/* Secondary panel") : css.index("/* Controls")
+        ]
+        uploader_start = css.index('[data-testid="stFileUploader"] section {')
+        uploader_rule = css[uploader_start : css.index("}", uploader_start) + 1]
+        textarea_start = css.index(
+            '[data-testid="stSidebar"] [data-testid="stTextAreaRootElement"] {'
+        )
+        textarea_rules = css[textarea_start : css.index('[data-testid="stImage"] img,', textarea_start)]
+        responsive_start = css.index("@media (max-width: 1439px) {")
+        responsive_rule = css[
+            responsive_start : css.index(
+                "@media (max-width: 1439px) and (max-height: 860px)",
+                responsive_start,
+            )
+        ]
 
         self.assertIn('font-size: 14px !important;', css)
         self.assertIn(
             '[data-testid="stSidebar"] [data-testid="stTextAreaRootElement"] textarea:placeholder-shown',
             css,
         )
-        self.assertIn('padding-top: 13px !important;', css)
-        self.assertIn('height: 78px;', css)
+        self.assertIn('padding-top: 29px !important;', textarea_rules)
+        self.assertIn('height: 104px;', textarea_rules)
+        self.assertIn('height: 102px !important;', textarea_rules)
         self.assertIn('content: "JPG / PNG / TIFF · max 200MB";', css)
         self.assertIn('button[data-testid^="stBaseButton-"]', css)
         self.assertIn('[data-testid="stWidgetLabel"] p {', css)
@@ -329,17 +349,27 @@ class DesignSystemRegressionTests(unittest.TestCase):
         self.assertIn('双模型协同启用', main_source)
         self.assertIn('.model-pair {', css)
         self.assertNotIn('class="status-row"', main_source)
-        self.assertIn(
-            '[data-testid="stSidebar"] [data-testid="stSidebarHeader"] {',
-            css,
-        )
-        self.assertIn('height: 0 !important;', css)
-        self.assertIn('overflow: hidden !important;', css)
-        self.assertIn('padding-bottom: 4px !important;', css)
-        self.assertIn('min-height: 43px;', css)
-        self.assertIn('min-height: 37px;', css)
-        self.assertIn('min-height: 153px;', css)
-        self.assertIn('gap: 8px;', css)
+        self.assertIn('图片会在本轮分析中自动调用视觉模型识别', main_source)
+        self.assertIn('padding: 16px 22px 28px !important;', desktop_sidebar)
+        self.assertIn('gap: 12px;', desktop_sidebar)
+        self.assertNotIn('stSidebarUserContent', desktop_sidebar)
+        self.assertNotIn('stSidebarHeader', desktop_sidebar)
+        self.assertIn('padding: 0 0 4px;', secondary_panel)
+        self.assertIn('margin: 15px 0 0;', secondary_panel)
+        self.assertIn('margin: 24px 0 12px;', secondary_panel)
+        self.assertIn('margin: 16px 0 12px;', secondary_panel)
+        self.assertIn('margin-top: 20px;', secondary_panel)
+        self.assertIn('margin: 20px 0 10px;', secondary_panel)
+        self.assertIn('min-height: 96px;', uploader_rule)
+        self.assertIn('padding: 14px 16px !important;', uploader_rule)
+        self.assertIn('padding-inline: 26px !important;', responsive_rule)
+        self.assertNotIn('min-height: 43px;', css)
+        self.assertNotIn('min-height: 37px;', css)
+        self.assertNotIn('min-height: 153px;', css)
+        self.assertIn('min-height: 32px;', secondary_panel)
+        self.assertIn('min-height: 52px;', secondary_panel)
+        self.assertIn('font-size: 14px;', secondary_panel)
+        self.assertIn('font-size: 12px !important;', secondary_panel)
 
     def test_deep_retrieval_control_and_statistics_are_scoped_and_responsive(self) -> None:
         css = CSS_PATH.read_text(encoding="utf-8-sig")

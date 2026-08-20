@@ -651,27 +651,15 @@ header[data-testid="stHeader"] {
 [data-testid="stSidebar"] > div,
 [data-testid="stSidebarContent"] {
     box-sizing: border-box;
-    padding: 0 20px 4px !important;
+    padding: 16px 22px 28px !important;
 }
 
 [data-testid="stSidebar"] [data-testid="stVerticalBlock"] {
-    gap: 8px;
-}
-
-[data-testid="stSidebar"] [data-testid="stSidebarUserContent"] {
-    padding-bottom: 4px !important;
+    gap: 12px;
 }
 
 [data-testid="stSidebar"] [data-testid="stSidebarCollapseButton"] {
     display: none !important;
-}
-
-[data-testid="stSidebar"] [data-testid="stSidebarHeader"] {
-    height: 0 !important;
-    min-height: 0 !important;
-    padding: 0 !important;
-    overflow: hidden !important;
-    pointer-events: none !important;
 }
 
 @media (min-width: 900px) {
@@ -745,20 +733,7 @@ header[data-testid="stHeader"] {
 /* Secondary panel ------------------------------------------------------- */
 .secondary-intro,
 .sidebar-brand {
-    padding: 0;
-}
-
-[data-testid="stSidebar"] [data-testid="stElementContainer"]:has(.sidebar-brand) {
-    min-height: 43px;
-}
-
-[data-testid="stSidebar"] [data-testid="stElementContainer"]:has(.sidebar-section-title),
-[data-testid="stSidebar"] [data-testid="stElementContainer"]:has(.secondary-field-heading) {
-    min-height: 37px;
-}
-
-[data-testid="stSidebar"] [data-testid="stElementContainer"]:has(.model-pair) {
-    min-height: 153px;
+    padding: 0 0 4px;
 }
 
 .secondary-eyebrow,
@@ -773,7 +748,7 @@ header[data-testid="stHeader"] {
 
 .secondary-intro h2,
 .brand-title {
-    margin: 3px 0 0;
+    margin: 15px 0 0;
     color: var(--text-primary);
     font-size: 20px;
     font-weight: var(--weight-semibold);
@@ -789,7 +764,7 @@ header[data-testid="stHeader"] {
 }
 
 .sidebar-section-title {
-    margin: 0;
+    margin: 13px 0 0;
     color: var(--text-primary);
     font-size: 14px;
     font-weight: var(--weight-semibold);
@@ -800,12 +775,12 @@ header[data-testid="stHeader"] {
 .sidebar-section-title small,
 .secondary-field-heading small {
     display: block;
-    margin-top: 1px;
+    margin-top: 3px;
     color: var(--text-tertiary);
     font-size: 12px;
     font-weight: var(--weight-regular);
     letter-spacing: 0;
-    line-height: 16px;
+    line-height: 17px;
 }
 
 .secondary-field-heading {
@@ -816,19 +791,19 @@ header[data-testid="stHeader"] {
 }
 
 .secondary-field-heading.upload-field {
-    margin: 0;
+    margin: 24px 0 12px;
 }
 
 .secondary-field-heading.appearance-field {
-    margin: 0;
+    margin: 16px 0 12px;
 }
 
 .sidebar-section-title.model-heading {
-    margin-top: 0;
+    margin-top: 20px;
 }
 
 .sidebar-section-title.retrieval-heading {
-    margin: 0;
+    margin: 20px 0 10px;
 }
 
 [class*="st-key-retrieval_mode_shell"] {
@@ -885,14 +860,14 @@ header[data-testid="stHeader"] {
 }
 
 [data-testid="stSidebar"] [class*="st-key-new_conversation"] {
-    margin-top: 2px;
+    margin-top: 27px;
 }
 
 [data-testid="stSidebar"] [class*="st-key-new_conversation"] div[data-testid="stButton"] > button {
-    min-height: 52px !important;
+    min-height: 60px !important;
     justify-content: center;
     gap: 12px;
-    padding: 5px 14px !important;
+    padding: 10px 16px !important;
 }
 
 [data-testid="stSidebar"] [class*="st-key-new_conversation"] div[data-testid="stButton"] > button > div,
@@ -959,7 +934,7 @@ header[data-testid="stHeader"] {
 }
 
 [data-testid="stSidebar"] hr {
-    margin: 0 !important;
+    margin: 12px 0 2px !important;
     border: 0 !important;
     border-top: 1px solid var(--border) !important;
 }
@@ -995,11 +970,11 @@ header[data-testid="stHeader"] {
 
 .model-pair-state {
     display: flex;
-    min-height: 28px;
+    min-height: 32px;
     box-sizing: border-box;
     align-items: center;
     gap: 7px;
-    padding: 5px 10px;
+    padding: 7px 12px;
     color: var(--text-secondary);
     background: var(--surface-secondary);
     border-bottom: 1px solid var(--border-subtle);
@@ -1024,12 +999,12 @@ header[data-testid="stHeader"] {
 
 .model-pair-row {
     display: grid;
-    min-height: 36px;
+    min-height: 52px;
     box-sizing: border-box;
-    grid-template-columns: 38px minmax(0, 1fr);
+    grid-template-columns: 42px minmax(0, 1fr);
     align-items: center;
     gap: 10px;
-    padding: 5px 10px;
+    padding: 8px 12px;
 }
 
 .model-pair-row + .model-pair-row {
@@ -1039,8 +1014,8 @@ header[data-testid="stHeader"] {
 .model-pair-role {
     color: var(--text-tertiary);
     border-right: 1px solid var(--border-subtle);
-    font-size: 11px;
-    line-height: 16px;
+    font-size: 12px;
+    line-height: 18px;
 }
 
 .model-pair-copy {
@@ -1052,9 +1027,9 @@ header[data-testid="stHeader"] {
 .model-pair-copy strong {
     overflow: hidden;
     color: var(--text-primary);
-    font-size: 12px;
+    font-size: 14px;
     font-weight: var(--weight-medium) !important;
-    line-height: 16px;
+    line-height: 20px;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
@@ -1062,8 +1037,8 @@ header[data-testid="stHeader"] {
 .model-pair-copy small {
     overflow: hidden;
     color: var(--text-tertiary) !important;
-    font-size: 10px !important;
-    line-height: 13px;
+    font-size: 12px !important;
+    line-height: 18px;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
@@ -1254,11 +1229,11 @@ div[data-baseweb="select"] > div:focus-within,
 }
 
 [data-testid="stFileUploader"] section {
-    min-height: 68px;
+    min-height: 96px;
     box-sizing: border-box;
     justify-content: center;
-    gap: 6px !important;
-    padding: 8px 12px !important;
+    gap: 8px !important;
+    padding: 14px 16px !important;
     background: var(--surface-secondary) !important;
     border: 1px solid var(--border) !important;
     border-radius: var(--radius-input) !important;
@@ -1270,8 +1245,8 @@ div[data-baseweb="select"] > div:focus-within,
 }
 
 [data-testid="stFileUploader"] button {
-    min-height: 34px !important;
-    padding: 0 12px !important;
+    min-height: 42px !important;
+    padding: 0 14px !important;
     color: var(--text-primary) !important;
     background: var(--surface) !important;
     border: 1px solid var(--border) !important;
@@ -1315,12 +1290,12 @@ div[data-baseweb="select"] > div:focus-within,
 }
 
 [data-testid="stSidebar"] [data-testid="stTextAreaRootElement"] {
-    height: 78px;
+    height: 104px;
 }
 
 [data-testid="stSidebar"] [data-testid="stTextAreaRootElement"] textarea {
-    height: 76px !important;
-    min-height: 76px !important;
+    height: 102px !important;
+    min-height: 102px !important;
     color: var(--text-primary) !important;
 }
 
@@ -1329,26 +1304,8 @@ div[data-baseweb="select"] > div:focus-within,
 }
 
 [data-testid="stSidebar"] [data-testid="stTextAreaRootElement"] textarea:placeholder-shown {
-    padding-top: 13px !important;
-    padding-bottom: 13px !important;
-}
-
-[data-testid="stSidebar"] [data-testid="stImage"] img {
-    width: 100% !important;
-    height: 72px !important;
-    object-fit: cover;
-}
-
-[data-testid="stSidebar"] [data-testid="stImage"] [data-testid="stCaptionContainer"] {
-    margin-top: 2px !important;
-    font-size: 10px !important;
-    line-height: 13px !important;
-}
-
-[data-testid="stSidebar"] [class*="st-key-remove_uploaded_image_"] div[data-testid="stButton"] > button {
-    min-height: 32px !important;
-    justify-content: center;
-    padding: 4px 10px !important;
+    padding-top: 29px !important;
+    padding-bottom: 29px !important;
 }
 
 [data-testid="stImage"] img,
@@ -3337,7 +3294,7 @@ div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label)
 
     [data-testid="stSidebar"] > div,
     [data-testid="stSidebarContent"] {
-        padding-inline: 20px !important;
+        padding-inline: 26px !important;
     }
 }
 
