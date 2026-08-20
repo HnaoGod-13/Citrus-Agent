@@ -1937,7 +1937,23 @@ def _compact_analysis_narrative(value: Any) -> str:
             continue
         output.append(re.sub(r"\s*\[文献\s*\d+\]", "", line))
     compacted = re.sub(r"\n{3,}", "\n\n", "\n".join(output)).strip()
-    return orchestrator.compact_primary_answer(compacted, max_chars=600)
+    return _compact_visible_answer(compacted, max_chars=600)
+
+
+def _compact_visible_answer(value: Any, *, max_chars: int = 600) -> str:
+    """Compact answers across Streamlit hot deploys with stale module imports."""
+    compactor = getattr(orchestrator, "compact_primary_answer", None)
+    if callable(compactor):
+        return str(compactor(str(value or ""), max_chars=max_chars))
+
+    text = re.sub(r"\s*\[文献\s*\d+\]", "", str(value or "")).strip()
+    if len(text) <= max_chars:
+        return text
+    candidate = text[:max_chars]
+    boundary = max(candidate.rfind(mark) for mark in ("。", "！", "？", "；", "\n"))
+    if boundary >= max_chars * 3 // 5:
+        candidate = candidate[: boundary + 1]
+    return candidate.rstrip(" \n，、；：") + "…"
 
 
 def render_adjacent_evidence(value: Any) -> None:
@@ -2419,7 +2435,7 @@ def run_general_turn(
     try:
         answer = chat_with_deepseek(api_key, messages)
         trace["model_raw_output"] = answer
-        return orchestrator.compact_primary_answer(answer, max_chars=600), trace
+        return _compact_visible_answer(answer, max_chars=600), trace
     except DeepSeekAPIError as error:
         trace["error"] = str(error)
         return f"调用 DeepSeek 失败：{error}", trace

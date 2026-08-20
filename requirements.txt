@@ -11,3 +11,4 @@ zstandard>=0.23.0
 # Full-library deep retrieval redeploy marker (2026-08-19).
 # Resilient background answer persistence redeploy marker (2026-08-19).
 # DeepSeek final-answer fallback redeploy marker (2026-08-19).
+# Concise answer and sidebar full-redeploy marker (2026-08-20).

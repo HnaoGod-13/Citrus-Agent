@@ -627,6 +627,15 @@ class ProductRouteStateTests(unittest.TestCase):
 
 
 class AnalysisPayloadLayoutTests(unittest.TestCase):
+    def test_visible_answer_compacts_when_hot_deploy_has_stale_orchestrator(self) -> None:
+        raw = "建议先小试[文献1]。" + "需要继续补充数据。" * 100
+
+        with patch.object(app_main.orchestrator, "compact_primary_answer", None):
+            compact = app_main._compact_visible_answer(raw, max_chars=120)
+
+        self.assertLessEqual(len(compact), 121)
+        self.assertNotIn("[文献1]", compact)
+
     def test_compact_narrative_moves_evidence_and_report_path_out_of_the_summary(self) -> None:
         narrative = """### 当前批次事实
 产地：新会；品种：茶枝柑。
