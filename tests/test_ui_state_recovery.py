@@ -70,7 +70,7 @@ class ScrollPositionManagerTests(unittest.TestCase):
         self.assertIn("const commandId = 7;", bootstrap)
         self.assertIn("commandId,", bootstrap)
 
-        self.assertIn("version: 6", installer)
+        self.assertIn("version: 7", installer)
         self.assertIn("window[installerKey] = install;", installer)
         self.assertIn(
             "savedPosition = Number(window.sessionStorage.getItem(storageKey));",
@@ -87,7 +87,7 @@ class ScrollPositionManagerTests(unittest.TestCase):
         )
         for event_name, handler_name in (
             ("wheel", "handleUserInput"),
-            ("touchstart", "handleUserInput"),
+            ("touchmove", "handleUserInput"),
             ("pointerdown", "handlePointerDown"),
             ("keydown", "handleKeyDown"),
         ):
@@ -115,6 +115,65 @@ class ScrollPositionManagerTests(unittest.TestCase):
             installer.index("resetTop();"),
             installer.index("manager.scheduleMotion(resetTop"),
         )
+
+    def test_clicks_do_not_turn_programmatic_jumps_into_saved_user_scroll(self) -> None:
+        installer = app_main.SCROLL_POSITION_MANAGER_INSTALLER
+        pointer_handler = installer[
+            installer.index("manager.handlePointerDown =") : installer.index(
+                "manager.handleKeyDown ="
+            )
+        ]
+
+        self.assertIn("manager.cancelMotion();", pointer_handler)
+        self.assertIn("manager.userScrollUntil = 0;", pointer_handler)
+        self.assertIn("manager.remember();", pointer_handler)
+        self.assertNotIn("manager.handleUserInput(event);", pointer_handler)
+        self.assertIn(
+            "const preserveTarget = target.closest(",
+            pointer_handler,
+        )
+        self.assertIn('[data-testid="stExpander"] summary', pointer_handler)
+        self.assertIn('[data-testid="stChatInput"]', pointer_handler)
+        self.assertIn("if (!preserveTarget) return;", pointer_handler)
+        self.assertIn(
+            "manager.preservePosition(manager.scroller.scrollTop);",
+            pointer_handler,
+        )
+
+    def test_expander_position_guard_is_short_and_user_cancelable(self) -> None:
+        installer = app_main.SCROLL_POSITION_MANAGER_INSTALLER
+        preserve = installer[
+            installer.index("manager.preservePosition = (") : installer.index(
+                "manager.handleUserInput ="
+            )
+        ]
+
+        self.assertIn("delays = [0, 40, 120, 280]", preserve)
+        self.assertIn("releaseDelay = 360", preserve)
+        self.assertIn("manager.scheduleMotion(", preserve)
+        self.assertIn("manager.remember", preserve)
+        self.assertIn(
+            'doc.addEventListener("touchmove", manager.handleUserInput',
+            installer,
+        )
+        self.assertNotIn(
+            'doc.addEventListener("touchstart", manager.handleUserInput',
+            installer,
+        )
+
+    def test_both_scroll_bootstraps_share_the_current_manager_version(self) -> None:
+        with (
+            patch.object(app_main.st, "iframe") as iframe,
+        ):
+            app_main.render_scroll_position_manager(restore=False)
+            scroll_bootstrap = iframe.call_args.args[0]
+            iframe.reset_mock()
+            app_main.render_progress_reveal("progress-version-check")
+            progress_bootstrap = iframe.call_args.args[0]
+
+        self.assertIn("version !== 7", scroll_bootstrap)
+        self.assertIn("version !== 7", progress_bootstrap)
+        self.assertNotIn("version !== 4", progress_bootstrap)
 
     def test_empty_state_reruns_do_not_force_scroll_reset(self) -> None:
         source = Path(app_main.__file__).read_text(encoding="utf-8-sig")
@@ -422,6 +481,29 @@ class DeepRetrievalUiStateTests(unittest.TestCase):
         self.assertEqual(stats, persisted["result"]["deep_retrieval_stats"])
         self.assertEqual(stats, restored[0]["deep_retrieval_stats"])
 
+    def test_general_evidence_survives_message_persistence(self) -> None:
+        evidence = [
+            {
+                "title": "Citrus processing evidence",
+                "year": 2026,
+                "page": 8,
+                "chunk_text": "Evidence excerpt",
+            }
+        ]
+        restored = app_main.restore_ui_messages(
+            [
+                {
+                    "message_id": "assistant-evidence",
+                    "role": "assistant",
+                    "content": "简明回答",
+                    "message_type": "chat",
+                    "metadata": {"evidence": evidence},
+                }
+            ]
+        )
+
+        self.assertEqual(evidence, restored[0]["evidence"])
+
 
 class ProductRouteStateTests(unittest.TestCase):
     def test_query_view_overrides_stale_session_view(self) -> None:
@@ -572,22 +654,31 @@ class AnalysisPayloadLayoutTests(unittest.TestCase):
         self.assertNotIn("本次引用文献", compact)
         self.assertNotIn("Citation", compact)
 
-    def test_full_process_is_visible_before_the_narrative(self) -> None:
+    def test_answer_defaults_to_compact_flow_and_hides_full_plan(self) -> None:
         source = Path(app_main.__file__).read_text(encoding="utf-8-sig")
         render_source = source[
             source.index("def render_analysis_payload") : source.index("def render_message")
         ]
 
         narrative = "if narrative_answer:\n        st.markdown(narrative_answer)"
-        expander = 'with st.expander("完整加工流程与参数", expanded=False):'
         self.assertIn(narrative, render_source)
-        self.assertNotIn(expander, render_source)
+        self.assertIn("render_processing_flow_summary(processing_plan)", render_source)
+        self.assertIn(
+            'with st.expander("完整加工方案", expanded=False):',
+            render_source,
+        )
         self.assertIn("render_processing_plan(processing_plan)", render_source)
         self.assertIn("st.markdown(parameterized_text)", render_source)
-        self.assertLess(render_source.index("render_processing_plan(processing_plan)"), render_source.index(narrative))
-        self.assertLess(render_source.index("st.markdown(parameterized_text)"), render_source.index(narrative))
+        self.assertLess(
+            render_source.index("render_processing_flow_summary(processing_plan)"),
+            render_source.index(narrative),
+        )
+        self.assertLess(
+            render_source.index(narrative),
+            render_source.index('with st.expander("完整加工方案"'),
+        )
 
-    def test_render_places_visible_process_before_narrative(self) -> None:
+    def test_render_places_summary_before_narrative_and_details_after_it(self) -> None:
         events: list[tuple[str, str]] = []
 
         @contextmanager
@@ -631,6 +722,11 @@ class AnalysisPayloadLayoutTests(unittest.TestCase):
                 return_value="NARRATIVE",
             ),
             patch.object(app_main.orchestrator, "summarize_result", return_value="summary"),
+            patch.object(
+                app_main,
+                "render_processing_flow_summary",
+                side_effect=lambda _plan: events.append(("flow", "summary")),
+            ),
             patch.object(app_main, "render_processing_plan", side_effect=lambda _plan: events.append(("plan", "rendered"))),
             patch.object(app_main, "render_tool_steps"),
             patch.object(app_main.st, "expander", side_effect=expander),
@@ -641,12 +737,16 @@ class AnalysisPayloadLayoutTests(unittest.TestCase):
         ):
             app_main.render_analysis_payload(payload)
 
+        flow_index = events.index(("flow", "summary"))
+        narrative_index = events.index(("markdown", "NARRATIVE"))
+        details_index = events.index(("enter", "完整加工方案"))
         plan_index = events.index(("plan", "rendered"))
         parameter_index = events.index(("markdown", "PARAMETER DETAILS"))
-        narrative_index = events.index(("markdown", "NARRATIVE"))
+        self.assertLess(flow_index, narrative_index)
+        self.assertLess(narrative_index, details_index)
+        self.assertLess(details_index, plan_index)
         self.assertLess(plan_index, parameter_index)
-        self.assertLess(parameter_index, narrative_index)
-        self.assertNotIn(("enter", "完整加工流程与参数"), events)
+        self.assertIn(("enter", "完整加工方案"), events)
 
 
 class VisionStateRecoveryTests(unittest.TestCase):

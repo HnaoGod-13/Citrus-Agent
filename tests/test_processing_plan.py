@@ -131,7 +131,7 @@ class ProcessingPlanTests(unittest.TestCase):
         self.assertIn(PROCESSING_FLOW_START, answer)
         self.assertIn("原料验收", answer)
         self.assertIn("成品检测与人工放行", answer)
-        self.assertLess(answer.index("完整加工流程（方案）"), answer.index("综合评估、文献依据与风险"))
+        self.assertLess(answer.index("完整加工流程（方案）"), answer.index("简明结论"))
         self.assertIn(model_answer, strip_primary_processing_flow(answer))
 
     @patch("agent.tools.comprehensive_search_knowledge")

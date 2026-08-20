@@ -184,6 +184,7 @@ class AgentJobHarvestTests(unittest.TestCase):
         self.assertEqual(1, len(assistant_messages))
         self.assertEqual({"batch_id": "B1"}, self.state.current_batch)
         self.assertEqual("", self.state.active_agent_job_id)
+        self.assertTrue(self.state.restore_main_scroll_position)
         self.assertIsNotNone(self.runner.snapshot("job_harvest"))
         manager.record_message.assert_called_once()
         self.assertEqual(
@@ -446,9 +447,32 @@ class DeepRetrievalBackgroundWiringTests(unittest.TestCase):
 
         self.assertEqual("answer", answer)
         self.assertEqual(stats, trace["deep_retrieval_stats"])
+        self.assertEqual("evidence", trace["evidence"][0]["chunk_text"])
         self.assertEqual(24, retrieve.call_args.kwargs["top_k"])
         self.assertEqual("deep", retrieve.call_args.kwargs["retrieval_mode"])
         self.assertEqual("deep", build_messages.call_args.kwargs["retrieval_mode"])
+
+    def test_general_local_fallback_keeps_reference_details_out_of_main_answer(self) -> None:
+        evidence = [
+            {
+                "title": "Citrus source",
+                "year": 2026,
+                "page": 12,
+                "doi": "10.1000/citrus",
+                "chunk_text": "原文证据片段",
+            }
+        ]
+        with patch.object(
+            app_main,
+            "retrieve_general_literature",
+            return_value={"evidence": evidence, "deep_retrieval_stats": {}},
+        ):
+            answer, trace = app_main.run_general_turn("柑橘加工", "", [])
+
+        self.assertIn("参考依据", answer)
+        self.assertNotIn("Citrus source", answer)
+        self.assertNotIn("第12页", answer)
+        self.assertEqual("Citrus source", trace["evidence"][0]["title"])
 
     def test_background_monitor_uses_active_job_mode_not_live_sidebar_mode(self) -> None:
         source = inspect.getsource(app_main.render_agent_job_monitor)

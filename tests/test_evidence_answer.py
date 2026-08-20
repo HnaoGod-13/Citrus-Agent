@@ -4,7 +4,15 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from agent.orchestrator import PROCESSING_FLOW_START, append_used_reference_index, run_analysis_turn
+from agent.llm_client import build_chat_messages, build_general_chat_messages
+from agent.orchestrator import (
+    PROCESSING_FLOW_START,
+    append_used_reference_index,
+    build_evidence_grounded_fallback,
+    build_previous_evidence_answer,
+    compact_primary_answer,
+    run_analysis_turn,
+)
 from agent.report import build_processing_plan
 from agent.rules import DIRECTION_PEEL_PECTIN, ScoreResult
 from agent.tools import build_retrieval_specs
@@ -51,11 +59,79 @@ class EvidenceAnswerTests(unittest.TestCase):
             }
         ]
 
-    def test_reference_index_is_added_to_cited_answer(self) -> None:
+    def test_model_prompts_reserve_reference_metadata_for_the_collapsed_panel(self) -> None:
+        general_prompt = build_general_chat_messages(
+            [],
+            "陈皮陈化要注意什么？",
+            evidence=self.evidence,
+        )[0]["content"]
+        analysis_prompt = build_chat_messages(
+            {"batch": self.batch, "evidence": self.evidence},
+            [],
+            "这批原料怎么处理？",
+        )[0]["content"]
+
+        self.assertIn("最多 3 条", general_prompt)
+        self.assertIn("折叠文献区", general_prompt)
+        self.assertIn("280～500", analysis_prompt)
+        self.assertIn("不得出现“[文献N]”", analysis_prompt)
+        self.assertNotIn("答案末尾增加“本次引用文献”", general_prompt)
+
+    def test_reference_details_are_removed_from_the_primary_answer(self) -> None:
         answer = append_used_reference_index("该判断由提取研究支持[文献1]。", self.evidence)
-        self.assertIn("### 本次引用文献", answer)
-        self.assertIn("10.1000/pectin", answer)
+        self.assertEqual(answer, "该判断由提取研究支持。")
+        self.assertNotIn("本次引用文献", answer)
+        self.assertNotIn("第6页", answer)
+
+    def test_compactor_drops_a_model_bibliography_and_caps_runaway_prose(self) -> None:
+        raw = (
+            "建议先做果胶提取小试[文献1]。\n\n"
+            + "重点核对原料含水率与提取稳定性。" * 80
+            + "\n\n### 本次引用文献\n\n"
+            + "- [文献1] Extraction of pectin（2025；第6页；DOI 10.1000/pectin）"
+        )
+
+        answer = compact_primary_answer(raw)
+
+        self.assertLessEqual(len(answer), 600)
+        self.assertNotIn("[文献1]", answer)
+        self.assertNotIn("本次引用文献", answer)
+        self.assertNotIn("10.1000/pectin", answer)
+
+    def test_compactor_keeps_an_ordinary_sentence_about_evidence(self) -> None:
+        raw = "文献证据显示提取条件会影响得率[文献1、文献2]。下一步先做小试。"
+
+        answer = compact_primary_answer(raw)
+
+        self.assertEqual(answer, "文献证据显示提取条件会影响得率。下一步先做小试。")
+
+    def test_explicit_previous_reference_request_can_still_return_source_details(self) -> None:
+        answer = build_previous_evidence_answer(
+            {"answer": "建议先做果胶提取小试。", "evidence": self.evidence}
+        )
+
+        self.assertIn("Extraction of pectin", answer)
         self.assertIn("第6页", answer)
+        self.assertIn("10.1000/pectin", answer)
+
+    def test_local_fallback_keeps_evidence_out_of_the_primary_answer(self) -> None:
+        score = ScoreResult(direction=DIRECTION_PEEL_PECTIN, score=82, reasons=["果皮可分流利用"])
+        plan = build_processing_plan(self.batch, DIRECTION_PEEL_PECTIN, [], evidence=self.evidence)
+        result = {
+            "scores": [score],
+            "quality_risks": [],
+            "evidence": self.evidence,
+            "next_actions": ["开展提取小试"],
+            "processing_plan": plan,
+        }
+
+        answer = build_evidence_grounded_fallback(result, Path("TEST-EVIDENCE.md"))
+
+        self.assertIn("推荐方向", answer)
+        self.assertIn("开展提取小试", answer)
+        self.assertNotIn("Extraction of pectin", answer)
+        self.assertNotIn("第6页", answer)
+        self.assertNotIn("完整报告", answer)
 
     @patch("agent.orchestrator.write_audit_event")
     @patch("agent.orchestrator.save_report", return_value=Path("TEST-EVIDENCE.md"))
@@ -82,7 +158,9 @@ class EvidenceAnswerTests(unittest.TestCase):
         }
         chat_mock.return_value = (
             "### 综合结论\n果胶作为候选路线，提取条件会影响得率与酯化度[文献1]。\n\n"
-            "### 完整加工流程\n原料准入 → 分选前处理 → 提取小试 → 稳定化包装 → 成品检测与人工放行"
+            "### 下一步\n开展提取小试。\n\n"
+            "### 本次引用文献\n"
+            "- [文献1] Extraction of pectin from citrus peel（2025；第6页；DOI 10.1000/pectin）"
         )
 
         payload = run_analysis_turn(
@@ -94,11 +172,13 @@ class EvidenceAnswerTests(unittest.TestCase):
 
         self.assertEqual(payload["answer"].splitlines()[0], PROCESSING_FLOW_START)
         self.assertLess(payload["answer"].index("完整加工流程（方案）"), payload["answer"].index("### 综合结论"))
-        self.assertIn("[文献1]", payload["answer"])
-        self.assertIn("### 本次引用文献", payload["answer"])
+        self.assertNotIn("[文献1]", payload["answer"])
+        self.assertNotIn("### 本次引用文献", payload["answer"])
+        self.assertNotIn("第6页", payload["answer"])
+        self.assertEqual(payload["result"]["evidence"], self.evidence)
         prompt = chat_mock.call_args.args[1][-1]["content"]
-        self.assertIn("完整主回答", prompt)
-        self.assertIn("把检索到的文献应用到当前问题", prompt)
+        self.assertIn("简明主回答", prompt)
+        self.assertIn("不在正文显示引用编号", prompt)
 
 
 if __name__ == "__main__":

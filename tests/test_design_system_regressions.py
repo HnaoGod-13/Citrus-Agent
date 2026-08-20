@@ -317,7 +317,8 @@ class DesignSystemRegressionTests(unittest.TestCase):
             '[data-testid="stSidebar"] [data-testid="stTextAreaRootElement"] textarea:placeholder-shown',
             css,
         )
-        self.assertIn('padding-top: 29px !important;', css)
+        self.assertIn('padding-top: 13px !important;', css)
+        self.assertIn('height: 72px;', css)
         self.assertIn('content: "JPG / PNG / TIFF · max 200MB";', css)
         self.assertIn('button[data-testid^="stBaseButton-"]', css)
         self.assertIn('[data-testid="stWidgetLabel"] p {', css)
@@ -325,11 +326,21 @@ class DesignSystemRegressionTests(unittest.TestCase):
         self.assertIn('"新建对话\\nNew Chat"', main_source)
         self.assertNotIn('"＋ 新建对话"', main_source)
         self.assertIn('"如：果皮完整、无霉斑腐烂。\\n"', main_source)
+        self.assertIn('双模型协同启用', main_source)
+        self.assertIn('.model-pair {', css)
+        self.assertNotIn('class="status-row"', main_source)
+        self.assertIn(
+            '[data-testid="stSidebar"] [data-testid="stSidebarHeader"] {',
+            css,
+        )
+        self.assertIn('height: 0 !important;', css)
+        self.assertIn('overflow: hidden !important;', css)
 
     def test_deep_retrieval_control_and_statistics_are_scoped_and_responsive(self) -> None:
         css = CSS_PATH.read_text(encoding="utf-8-sig")
+        main_source = MAIN_PATH.read_text(encoding="utf-8-sig")
         retrieval_selector = (
-            '[class*="st-key-retrieval_mode"] [data-testid="stButtonGroup"] {'
+            '[class*="st-key-retrieval_mode"] [role="radiogroup"] {'
         )
         retrieval_start = css.index(retrieval_selector)
         retrieval_rule = css[retrieval_start : css.index("}", retrieval_start) + 1]
@@ -337,6 +348,10 @@ class DesignSystemRegressionTests(unittest.TestCase):
         mobile_css = css[mobile_start : css.index("@media (prefers-reduced-motion", mobile_start)]
 
         self.assertIn("grid-template-columns: repeat(2, minmax(0, 1fr));", retrieval_rule)
+        self.assertIn('[class*="st-key-retrieval_mode_shell"] {', css)
+        self.assertIn('with st.container(key="retrieval_mode_shell"):', main_source)
+        self.assertIn('button[aria-checked="true"]', css)
+        self.assertIn('button[data-selected="true"]', css)
         self.assertIn(".sidebar-section-title.retrieval-heading {", css)
         self.assertIn(".deep-retrieval-stats {", css)
         self.assertIn(".deep-retrieval-stats-values {", css)
@@ -349,7 +364,16 @@ class DesignSystemRegressionTests(unittest.TestCase):
         self.assertIn(".adjacent-evidence-excerpt {", css)
         self.assertIn(".deep-retrieval-stats {", mobile_css)
         self.assertIn("flex-direction: column;", mobile_css)
-        self.assertNotIn('[data-testid="stButtonGroup"] {', css[:retrieval_start])
+        self.assertNotIn('\n[data-testid="stButtonGroup"] {', css)
+
+    def test_assistant_label_matches_answer_type_scale(self) -> None:
+        css = CSS_PATH.read_text(encoding="utf-8-sig")
+        selector = ".message-avatar.assistant,\n.assistant-markdown-label {"
+        rule_start = css.index(selector)
+        rule = css[rule_start : css.index("}", rule_start) + 1]
+
+        self.assertIn("font-size: 15px;", rule)
+        self.assertIn("font-weight: var(--weight-semibold);", rule)
 
     def test_mobile_sidebar_preserves_readable_control_width(self) -> None:
         css = CSS_PATH.read_text(encoding="utf-8-sig")

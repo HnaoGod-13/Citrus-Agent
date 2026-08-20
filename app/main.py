@@ -373,6 +373,8 @@ def restore_ui_messages(
             message["deep_retrieval_stats"] = _json_serializable(
                 metadata["deep_retrieval_stats"]
             )
+        if role == "assistant" and isinstance(metadata.get("evidence"), list):
+            message["evidence"] = _json_serializable(metadata["evidence"])
         if role == "assistant" and message_type == "analysis":
             snapshot = metadata.get("analysis_payload")
             if is_valid_persisted_analysis_payload(snapshot):
@@ -620,6 +622,7 @@ SCROLL_POSITION_MANAGER_INSTALLER = r"""
         if (manager.handleUserInput) {
             doc.removeEventListener("wheel", manager.handleUserInput, true);
             doc.removeEventListener("touchstart", manager.handleUserInput, true);
+            doc.removeEventListener("touchmove", manager.handleUserInput, true);
         }
         if (manager.handleRailWheel) {
             doc.removeEventListener("wheel", manager.handleRailWheel, true);
@@ -638,12 +641,13 @@ SCROLL_POSITION_MANAGER_INSTALLER = r"""
         manager.markUserScroll = () => {};
         manager.remember = () => {};
         manager.cancelMotion = () => {};
+        manager.preservePosition = () => {};
         manager.revealOnce = () => {};
     };
 
     const createManager = () => {
         const manager = {
-            version: 6,
+            version: 7,
             restoring: false,
             userScrollUntil: 0,
             scroller: null,
@@ -681,6 +685,29 @@ SCROLL_POSITION_MANAGER_INSTALLER = r"""
             } catch (_) {
                 // Storage may be unavailable in a hardened browser; scrolling still works normally.
             }
+        };
+        manager.preservePosition = (
+            scrollTop,
+            delays = [0, 40, 120, 280],
+            releaseDelay = 360
+        ) => {
+            const savedPosition = Number(scrollTop);
+            if (!Number.isFinite(savedPosition)) return;
+            const restorePosition = () => {
+                const scroller = manager.scroller;
+                if (!scroller) return;
+                scroller.scrollTo({
+                    top: savedPosition,
+                    left: scroller.scrollLeft,
+                    behavior: "auto",
+                });
+            };
+            manager.scheduleMotion(
+                restorePosition,
+                delays,
+                releaseDelay,
+                manager.remember
+            );
         };
         manager.handleUserInput = (event) => {
             if (event && event.isTrusted === false) return;
@@ -740,11 +767,17 @@ SCROLL_POSITION_MANAGER_INSTALLER = r"""
             window.requestAnimationFrame(manager.remember);
         };
         manager.handlePointerDown = (event) => {
-            manager.handleUserInput(event);
+            if (event && event.isTrusted === false) return;
+            manager.cancelMotion();
+            manager.userScrollUntil = 0;
+            manager.remember();
             const target = event.target;
-            if (target && typeof target.closest === "function" && target.closest("button")) {
-                manager.remember();
-            }
+            if (!target || typeof target.closest !== "function" || !manager.scroller) return;
+            const preserveTarget = target.closest(
+                '[data-testid="stExpander"] summary, [data-testid="stChatInput"]'
+            );
+            if (!preserveTarget) return;
+            manager.preservePosition(manager.scroller.scrollTop);
         };
         manager.handleKeyDown = (event) => {
             const target = event.target;
@@ -753,7 +786,11 @@ SCROLL_POSITION_MANAGER_INSTALLER = r"""
                 && target
                 && typeof target.matches === "function"
                 && target.matches('[data-testid="stChatInputTextArea"]');
-            if (isChatSubmit) manager.remember();
+            if (isChatSubmit) {
+                manager.cancelMotion();
+                manager.userScrollUntil = 0;
+                manager.remember();
+            }
 
             if (["PageUp", "PageDown", "Home", "End", "ArrowUp", "ArrowDown", " "].includes(event.key)) {
                 manager.handleUserInput(event);
@@ -814,7 +851,7 @@ SCROLL_POSITION_MANAGER_INSTALLER = r"""
         if (!scroller) return;
 
         let manager = window[managerKey];
-        if (!manager || manager.version !== 6) {
+        if (!manager || manager.version !== 7) {
             teardown(manager);
             manager = createManager();
             window[managerKey] = manager;
@@ -823,11 +860,12 @@ SCROLL_POSITION_MANAGER_INSTALLER = r"""
         doc.removeEventListener("wheel", manager.handleUserInput, true);
         doc.removeEventListener("wheel", manager.handleRailWheel, true);
         doc.removeEventListener("touchstart", manager.handleUserInput, true);
+        doc.removeEventListener("touchmove", manager.handleUserInput, true);
         doc.removeEventListener("pointerdown", manager.handlePointerDown, true);
         doc.removeEventListener("keydown", manager.handleKeyDown, true);
         doc.addEventListener("wheel", manager.handleUserInput, { capture: true, passive: true });
         doc.addEventListener("wheel", manager.handleRailWheel, { capture: true, passive: false });
-        doc.addEventListener("touchstart", manager.handleUserInput, { capture: true, passive: true });
+        doc.addEventListener("touchmove", manager.handleUserInput, { capture: true, passive: true });
         doc.addEventListener("pointerdown", manager.handlePointerDown, true);
         doc.addEventListener("keydown", manager.handleKeyDown, true);
 
@@ -887,7 +925,7 @@ SCROLL_POSITION_MANAGER_INSTALLER = r"""
         }
     };
 
-    install.version = 6;
+    install.version = 7;
     window[installerKey] = install;
 })();
 """
@@ -930,7 +968,7 @@ def render_scroll_position_manager(
             const doc = host.document;
             const commandId = {command_marker};
             const installerKey = "__citrusAgentInstallScrollManager";
-            if (!host[installerKey] || host[installerKey].version !== 6) {{
+            if (!host[installerKey] || host[installerKey].version !== 7) {{
                 const loader = doc.createElement("script");
                 loader.textContent = {installer_source};
                 (doc.head || doc.documentElement).appendChild(loader);
@@ -987,7 +1025,7 @@ def render_progress_reveal(reveal_id: str) -> None:
             const doc = host.document;
             const installerKey = "__citrusAgentInstallScrollManager";
             const managerKey = "__citrusAgentScrollManager";
-            if (!host[installerKey] || host[installerKey].version !== 4) {{
+            if (!host[installerKey] || host[installerKey].version !== 7) {{
                 const loader = doc.createElement("script");
                 loader.textContent = {installer_source};
                 (doc.head || doc.documentElement).appendChild(loader);
@@ -1421,7 +1459,6 @@ def render_sidebar(view: str = "chat") -> tuple[str, bool, bytes | None, str, st
         if image_bytes:
             caption = "图片预览" if prepared_image else "已保留的待发送图片"
             st.image(image_bytes, caption=caption, width="stretch")
-            st.info("图片会在本轮分析中自动调用视觉模型识别；下方外观描述可作为人工补充。")
             st.button(
                 "× 删除图片",
                 width="stretch",
@@ -1453,27 +1490,39 @@ def render_sidebar(view: str = "chat") -> tuple[str, bool, bytes | None, str, st
             '<div class="sidebar-section-title retrieval-heading">检索方式<small>Search Mode</small></div>',
             unsafe_allow_html=True,
         )
-        retrieval_mode = st.segmented_control(
-            "检索方式",
-            options=RETRIEVAL_MODES,
-            format_func=retrieval_mode_label,
-            key="retrieval_mode",
-            required=True,
-            disabled=bool(st.session_state.get("active_agent_job_id")),
-            label_visibility="collapsed",
-            width="stretch",
-            persist_state="session",
-        )
+        with st.container(key="retrieval_mode_shell"):
+            retrieval_mode = st.segmented_control(
+                "检索方式",
+                options=RETRIEVAL_MODES,
+                format_func=retrieval_mode_label,
+                key="retrieval_mode",
+                required=True,
+                disabled=bool(st.session_state.get("active_agent_job_id")),
+                label_visibility="collapsed",
+                width="stretch",
+                persist_state="session",
+            )
         retrieval_mode = normalize_retrieval_mode(retrieval_mode)
 
         st.divider()
 
         st.markdown(
             f"""
-            <div class="sidebar-section-title model-heading">语言模型<small>Language Model</small></div>
-            <div class="status-list">
-                <div class="status-row"><span>DeepSeek</span><span class="status-pill">{DEEPSEEK_MODEL}</span></div>
-                <div class="status-row"><span>Qwen Vision</span><span class="status-pill">{get_vision_model()}</span></div>
+            <div class="sidebar-section-title model-heading">模型协同<small>Model Collaboration</small></div>
+            <div class="model-pair" aria-label="语言模型与视觉模型协同启用">
+                <div class="model-pair-state">
+                    <span class="model-live-dot" aria-hidden="true"></span>
+                    <span>双模型协同启用</span>
+                    <small>Language + Vision</small>
+                </div>
+                <div class="model-pair-row">
+                    <span class="model-pair-role">语言</span>
+                    <span class="model-pair-copy"><strong>DeepSeek</strong><small>{DEEPSEEK_MODEL}</small></span>
+                </div>
+                <div class="model-pair-row">
+                    <span class="model-pair-role">视觉</span>
+                    <span class="model-pair-copy"><strong>Qwen Vision</strong><small>{get_vision_model()}</small></span>
+                </div>
             </div>
             """,
             unsafe_allow_html=True,
@@ -1785,6 +1834,20 @@ def render_processing_plan(plan: dict[str, Any]) -> None:
     )
 
 
+def render_processing_flow_summary(plan: dict[str, Any]) -> None:
+    """Show only the decision-critical route in the default answer view."""
+    flow = [str(step).strip() for step in plan.get("flow", []) if str(step).strip()]
+    if not flow:
+        return
+    st.markdown(
+        '<div class="processing-flow-summary" aria-label="核心加工流程">'
+        '<span>核心流程</span>'
+        f'<p>{html.escape(" → ".join(flow))}</p>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+
 def resolve_processing_plan(result: dict[str, Any]) -> dict[str, Any]:
     """Return the stored plan or rebuild it for analysis results created before this feature."""
     stored_plan = result.get("processing_plan")
@@ -1872,8 +1935,9 @@ def _compact_analysis_narrative(value: Any) -> str:
             continue
         if re.match(r"^\s*(?:完整报告|报告路径|报告已保存到)\s*[：:].*$", line):
             continue
-        output.append(line)
-    return re.sub(r"\n{3,}", "\n\n", "\n".join(output)).strip()
+        output.append(re.sub(r"\s*\[文献\s*\d+\]", "", line))
+    compacted = re.sub(r"\n{3,}", "\n\n", "\n".join(output)).strip()
+    return orchestrator.compact_primary_answer(compacted, max_chars=600)
 
 
 def render_adjacent_evidence(value: Any) -> None:
@@ -1924,6 +1988,37 @@ def parameter_source_location(item: Mapping[str, Any]) -> str:
     return "｜".join(str(source) for source in sources if str(source).strip())
 
 
+def render_reference_evidence(
+    evidence: list[Mapping[str, Any]],
+    *,
+    include_adjacent: bool = False,
+) -> None:
+    if not evidence:
+        st.info("没有检索到可用的本地资料。")
+        return
+    for index, item in enumerate(evidence, 1):
+        title = item.get("title") or "未命名文献"
+        year = item.get("year") or "年份未知"
+        match_score = item.get("match_score")
+        match_text = f" · 匹配分 {match_score}" if match_score not in (None, "") else ""
+        st.markdown(f"**[文献{index}] {title}（{year}）**{match_text}")
+        st.write(item.get("chunk_text") or "暂无可展示的原文片段。")
+        page = item.get("page") or item.get("page_start")
+        page_text = f"；页码：{page}" if page not in (None, "") else ""
+        doi_text = f"；DOI：{item.get('doi')}" if item.get("doi") else ""
+        source = (
+            item.get("source")
+            or item.get("publication")
+            or item.get("source_file")
+            or "本地文献库"
+        )
+        topic = item.get("topic") or item.get("category") or item.get("product")
+        topic_text = f"；主题：{topic}" if topic else ""
+        st.caption(f"来源：{source}{topic_text}{page_text}{doi_text}")
+        if include_adjacent:
+            render_adjacent_evidence(item.get("adjacent_chunks"))
+
+
 def render_analysis_payload(payload: dict[str, Any]) -> None:
     result = payload["result"]
     report_path = Path(str(payload["report_path"]))
@@ -1964,12 +2059,10 @@ def render_analysis_payload(payload: dict[str, Any]) -> None:
         )
         parameterized_text = re.sub(r"(?m)^### 5\.\d+\s+", "### ", parameterized_text)
 
-    # The recommendation must be followed by the executable route. Render the
-    # structured result directly so the flow cannot disappear behind model prose.
+    # Keep the first view scannable. Detailed stages, parameters, and source
+    # locations remain available immediately below in collapsed sections.
     if processing_plan:
-        render_processing_plan(processing_plan)
-        if parameterized_text:
-            st.markdown(parameterized_text)
+        render_processing_flow_summary(processing_plan)
 
     narrative_answer = _compact_analysis_narrative(
         orchestrator.strip_primary_processing_flow(answer)
@@ -1977,13 +2070,14 @@ def render_analysis_payload(payload: dict[str, Any]) -> None:
     if narrative_answer:
         st.markdown(narrative_answer)
 
-    render_deep_retrieval_stats(
-        result.get("deep_retrieval_stats")
-        or payload.get("deep_retrieval_stats")
-    )
+    if processing_plan:
+        with st.expander("完整加工方案", expanded=False):
+            render_processing_plan(processing_plan)
+            if parameterized_text:
+                st.markdown(parameterized_text)
 
     if payload.get("vision_result"):
-        with st.expander("图片识别结果", expanded=True):
+        with st.expander("图片识别结果", expanded=False):
             render_vision_result(payload["vision_result"])
 
     with st.expander("工具调用过程", expanded=False):
@@ -2013,19 +2107,12 @@ def render_analysis_payload(payload: dict[str, Any]) -> None:
                 unsafe_allow_html=True,
             )
 
-    with st.expander("文献证据", expanded=False):
-        if evidence:
-            for index, item in enumerate(evidence, 1):
-                title = item.get("title") or "未命名文献"
-                year = item.get("year") or "年份未知"
-                st.markdown(f"**[文献{index}] {title}（{year}）** · 匹配分 {item.get('match_score')}")
-                st.write(item.get("chunk_text"))
-                page_text = f"；页码：{item.get('page')}" if item.get("page") else ""
-                doi_text = f"；DOI：{item.get('doi')}" if item.get("doi") else ""
-                st.caption(f"来源：{item.get('source')}；主题：{item.get('topic')}{page_text}{doi_text}")
-                render_adjacent_evidence(item.get("adjacent_chunks"))
-        else:
-            st.info("没有检索到文献片段，请补充或重建文献库数据。")
+    with st.expander("参考依据", expanded=False):
+        render_deep_retrieval_stats(
+            result.get("deep_retrieval_stats")
+            or payload.get("deep_retrieval_stats")
+        )
+        render_reference_evidence(evidence, include_adjacent=True)
 
     with st.expander("工艺参数证据", expanded=False):
         parameter_groups = result.get("parameter_groups") or []
@@ -2140,7 +2227,13 @@ def render_message(message: dict[str, Any]) -> None:
         )
     with content_column:
         st.markdown(content_text)
-        render_deep_retrieval_stats(message.get("deep_retrieval_stats"))
+        message_evidence = message.get("evidence")
+        retrieval_stats = message.get("deep_retrieval_stats")
+        if isinstance(message_evidence, list) or isinstance(retrieval_stats, dict):
+            with st.expander("参考依据", expanded=False):
+                render_deep_retrieval_stats(retrieval_stats)
+                if isinstance(message_evidence, list):
+                    render_reference_evidence(message_evidence)
         render_message_persistence_warning(message)
 
 
@@ -2283,22 +2376,37 @@ def run_general_turn(
         "model_context_manifest": {},
         "error": "",
         "deep_retrieval_stats": deep_retrieval_stats,
+        "evidence": [
+            {
+                key: item.get(key)
+                for key in (
+                    "title",
+                    "year",
+                    "chunk_text",
+                    "page",
+                    "page_start",
+                    "doi",
+                    "source",
+                    "source_file",
+                    "publication",
+                    "topic",
+                    "category",
+                    "product",
+                    "match_score",
+                )
+                if item.get(key) not in (None, "")
+            }
+            for item in evidence
+            if isinstance(item, dict)
+        ],
     }
     if not api_key:
         if evidence:
-            lines = []
-            for index, item in enumerate(evidence, 1):
-                page = item.get("page") or item.get("page_start") or "未标注"
-                excerpt = re.sub(r"\s+", " ", str(item.get("chunk_text") or "")).strip()
-                lines.append(
-                    f"{index}. {item.get('title') or '未命名文献'}（{item.get('year') or '年份未知'}，第{page}页）："
-                    f"{excerpt[:260]}{'…' if len(excerpt) > 260 else ''}"
-                )
-            answer = (
-                "已完成本地文献检索，但当前没有配置 DeepSeek API Key，因此先返回可回查的原文证据片段，"
-                "暂不做超出片段的综合推断：\n\n" + "\n\n".join(lines)
+            return (
+                "已找到相关本地资料，但当前未配置语言模型，暂不能安全地综合结论。"
+                "原始资料已放在下方“参考依据”中。",
+                trace,
             )
-            return answer, trace
         return "若要普通大模型问答，请先配置 DeepSeek API Key；本轮也未检索到可直接返回的本地文献证据。", trace
     messages = build_general_chat_messages(
         history,
@@ -2311,7 +2419,7 @@ def run_general_turn(
     try:
         answer = chat_with_deepseek(api_key, messages)
         trace["model_raw_output"] = answer
-        return answer, trace
+        return orchestrator.compact_primary_answer(answer, max_chars=600), trace
     except DeepSeekAPIError as error:
         trace["error"] = str(error)
         return f"调用 DeepSeek 失败：{error}", trace
@@ -2421,6 +2529,9 @@ def _build_assistant_persistence_spec(
         deep_stats = assistant_message.get("deep_retrieval_stats")
         if isinstance(deep_stats, dict) and deep_stats:
             resolved_metadata["deep_retrieval_stats"] = _json_serializable(deep_stats)
+        evidence = assistant_message.get("evidence")
+        if isinstance(evidence, list) and evidence:
+            resolved_metadata["evidence"] = _json_serializable(evidence)
         if mode == "analysis":
             resolved_metadata["analysis_payload"] = build_persisted_analysis_payload(payload)
         elif mode == "vision" and isinstance((vision_payload or {}).get("vision_result"), dict):
@@ -2741,6 +2852,11 @@ def finalize_memory_turn(
         serialized_stats = _json_serializable(deep_retrieval_stats)
         assistant_message["deep_retrieval_stats"] = serialized_stats
         message_metadata["deep_retrieval_stats"] = serialized_stats
+    general_evidence = general_trace.get("evidence")
+    if mode != "analysis" and isinstance(general_evidence, list) and general_evidence:
+        serialized_evidence = _json_serializable(general_evidence)
+        assistant_message["evidence"] = serialized_evidence
+        message_metadata["evidence"] = serialized_evidence
     if mode == "analysis":
         message_metadata["analysis_payload"] = build_persisted_analysis_payload(payload)
     elif mode == "vision" and isinstance(vision_payload.get("vision_result"), dict):
@@ -2993,6 +3109,13 @@ def _execute_agent_job(
         general_trace["error"] = "；".join(
             item for item in [existing_error, *memory_errors] if item
         )
+
+    trace_stats = general_trace.get("deep_retrieval_stats")
+    if isinstance(trace_stats, dict) and trace_stats:
+        assistant_message["deep_retrieval_stats"] = _json_serializable(trace_stats)
+    trace_evidence = general_trace.get("evidence")
+    if isinstance(trace_evidence, list) and trace_evidence:
+        assistant_message["evidence"] = _json_serializable(trace_evidence)
 
     assistant_message.setdefault("message_id", f"msg_{uuid4().hex}")
     fallback_persistence_spec = _build_assistant_persistence_spec(

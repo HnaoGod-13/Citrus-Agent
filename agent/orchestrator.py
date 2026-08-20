@@ -776,7 +776,9 @@ def ensure_primary_processing_flow(result: dict[str, Any], answer: str) -> str:
         return normalized_answer
     if not normalized_answer:
         return processing_flow
-    return processing_flow + "\n\n### 综合评估、文献依据与风险\n\n" + normalized_answer
+    if re.match(r"^\s*#{1,6}\s+", normalized_answer):
+        return processing_flow + "\n\n" + normalized_answer
+    return processing_flow + "\n\n### 简明结论\n\n" + normalized_answer
 
 
 def strip_primary_processing_flow(answer: str) -> str:
@@ -792,32 +794,100 @@ def strip_primary_processing_flow(answer: str) -> str:
     return remaining.strip()
 
 
+_REFERENCE_SECTION_LABELS = (
+    "本次引用文献",
+    "参考文献",
+    "文献证据",
+    "原文证据",
+    "证据来源",
+    "来源与页码",
+)
+_INLINE_CITATION_PATTERN = re.compile(
+    r"\s*[\[【（(]\s*文献\s*\d+(?:\s*[,，、-]\s*(?:文献\s*)?\d+)*\s*[\]】）)]",
+    flags=re.IGNORECASE,
+)
+
+
+def _compact_answer_text(value: str, max_chars: int) -> str:
+    """Remove bibliography UI data and cap unexpectedly long model prose."""
+    output: list[str] = []
+    skipping_reference_section = False
+    for line in str(value or "").splitlines():
+        heading_match = re.match(r"^\s*#{1,6}\s+(.+?)\s*$", line)
+        label_source = heading_match.group(1) if heading_match else line
+        normalized_label = re.sub(r"[*_`~：:\s]", "", label_source)
+        is_reference_heading = any(
+            normalized_label == label
+            or (
+                normalized_label.startswith(label)
+                and (heading_match is not None or len(normalized_label) <= 18)
+            )
+            for label in _REFERENCE_SECTION_LABELS
+        )
+        if is_reference_heading:
+            skipping_reference_section = True
+            continue
+        if skipping_reference_section:
+            if not heading_match:
+                continue
+            skipping_reference_section = False
+
+        # A model can emit a bibliography without a heading. Drop metadata-like
+        # citation rows while retaining ordinary evidence-grounded conclusions.
+        if re.match(r"^\s*(?:[-*+]\s*)?\[?文献\s*\d+", line, flags=re.IGNORECASE) and re.search(
+            r"(?:第\s*\d+\s*页|页码|DOI\b|来源[：:])",
+            line,
+            flags=re.IGNORECASE,
+        ):
+            continue
+        cleaned_line = _INLINE_CITATION_PATTERN.sub("", line)
+        cleaned_line = re.sub(r"[ \t]+([，。！？；：])", r"\1", cleaned_line)
+        output.append(cleaned_line.rstrip())
+
+    compact = re.sub(r"\n{3,}", "\n\n", "\n".join(output)).strip()
+    if len(compact) <= max_chars:
+        return compact
+
+    if max_chars <= 1:
+        return "…"[:max_chars]
+    content_limit = max_chars - 1
+    candidate = compact[:content_limit]
+    minimum_boundary = content_limit * 3 // 5
+    boundaries = [
+        candidate.rfind(mark)
+        for mark in ("。", "！", "？", "；", "\n")
+    ]
+    boundary = max((index for index in boundaries if index >= minimum_boundary), default=-1)
+    if boundary >= 0:
+        candidate = candidate[: boundary + 1]
+    return candidate.rstrip(" \n，、；：") + "…"
+
+
+def compact_primary_answer(answer: str, max_chars: int = 600) -> str:
+    """Keep the visible narrative concise while preserving structured flow data."""
+    text = str(answer or "")
+    start = text.find(PROCESSING_FLOW_START)
+    if start < 0:
+        return _compact_answer_text(text, max_chars)
+    end = text.find(PROCESSING_FLOW_END, start)
+    if end < 0:
+        return _compact_answer_text(text, max_chars)
+    end += len(PROCESSING_FLOW_END)
+    structured_flow = text[start:end].strip()
+    leading_narrative = _compact_answer_text(text[:start], max_chars)
+    remaining_chars = max_chars - len(leading_narrative)
+    trailing_narrative = (
+        _compact_answer_text(text[end:], remaining_chars)
+        if remaining_chars > 0
+        else ""
+    )
+    return "\n\n".join(
+        part for part in (leading_narrative, structured_flow, trailing_narrative) if part
+    )
+
+
 def summarize_result(result: dict[str, Any], report_path: Path) -> str:
-    scores = result.get("scores", [])
-    top = scores[0] if scores else None
-    risks = result.get("quality_risks", [])
-    evidence = result.get("evidence", [])
-    actions = result.get("next_actions", [])
-    processing_plan_text = build_primary_processing_flow(result)
-    return f"""
-### Agent 已完成批次分析
-
-- **推荐方向**：{_item_value(top, 'direction', '暂无')}
-- **适配等级**：{_item_value(top, 'match_level', '待评估')}
-- **文献支持**：{_item_value(top, 'evidence_support', '未评估')}
-- **数据置信度**：{_item_value(top, 'data_confidence', '低')}
-
-{processing_plan_text}
-
-**质控风险**：{len(risks)} 项  
-**文献证据**：{len(evidence)} 条  
-**报告文件**：`{report_path}`
-
-**下一步动作**：
-{chr(10).join(f'- {action}' for action in actions) or '- 暂无'}
-
-我已经调用本地文献库、证据感知路线排序、质控风险和报告生成工具。下面的工具过程和报告草稿可展开查看。
-""".strip()
+    return build_evidence_grounded_fallback(result, report_path)
 
 
 def _short_evidence_text(text: str, limit: int = 420) -> str:
@@ -830,113 +900,44 @@ def build_evidence_grounded_fallback(
     report_path: Path,
     notes: list[str] | None = None,
 ) -> str:
-    """Build a complete local answer even when the summarization model is unavailable."""
-    batch = result.get("batch", {})
+    """Build a concise local answer while evidence remains in ``result`` for the UI."""
+    _ = report_path
     scores = result.get("scores", [])
     top = scores[0] if scores else None
-    evidence = result.get("evidence", [])
     risks = result.get("quality_risks", [])
     primary_processing_flow = build_primary_processing_flow(result)
     actions = result.get("next_actions", [])
-    top_reasons = _item_value(top, "reasons", [])
-    alternatives = scores[1:4]
-
-    batch_fields = [
-        ("产地", batch.get("origin")),
-        ("品种", batch.get("variety")),
-        ("糖度", batch.get("brix")),
-        ("酸度", batch.get("acidity")),
-        ("水分", batch.get("moisture")),
-        ("目标客户", batch.get("customer_type")),
-    ]
-    batch_text = "；".join(f"{label}：{value}" for label, value in batch_fields if value not in (None, ""))
-
-    evidence_lines: list[str] = []
-    for index, item in enumerate(evidence[:10], 1):
-        page = item.get("page") or item.get("page_start")
-        locator = f"第{page}页" if page else "页码未标注"
-        category = item.get("category") or item.get("product") or "未分类"
-        section = item.get("section") or "正文"
-        evidence_lines.append(
-            f"- [文献{index}] **{item.get('title') or '未命名文献'}**"
-            f"（{item.get('year') or '年份未知'}；{category}；{section}；{locator}）："
-            f"{_short_evidence_text(item.get('chunk_text') or '')}"
-        )
-
-    alternative_lines = [
-        f"- {_item_value(item, 'direction', '备选方向')}：{_item_value(item, 'match_level', '待评估')}；"
-        f"文献支持：{_item_value(item, 'evidence_support', '未评估')}；"
-        f"数据置信度：{_item_value(item, 'data_confidence', '低')}；"
-        f"{'；'.join(_item_value(item, 'reasons', [])) or '需进一步复核'}"
-        for item in alternatives
-    ]
+    top_reasons = [str(item).strip() for item in _item_value(top, "reasons", []) if str(item).strip()]
+    reason_text = _short_evidence_text("；".join(top_reasons[:2]), limit=180)
+    action_lines = [f"- {str(action).strip()}" for action in actions[:3] if str(action).strip()]
     risk_lines = [
         f"- [{_item_value(item, 'level', '提示')}] {_item_value(item, 'item', '风险项')}："
         f"{_item_value(item, 'suggestion', '需人工复核')}"
-        for item in risks
+        for item in risks[:2]
     ]
 
     sections = [
-        "### 综合结论",
+        "### 结论",
         "",
-        f"当前优先方向为 **{_item_value(top, 'direction', '暂无')}**，适配等级为 "
-        f"**{_item_value(top, 'match_level', '待评估')}**，文献支持为"
-        f"**{_item_value(top, 'evidence_support', '未评估')}**，数据置信度为"
-        f"**{_item_value(top, 'data_confidence', '低')}**。"
-        f"主要依据：{'；'.join(top_reasons) or '当前结构化信息有限，需补充数据后复核'}。",
+        f"**推荐方向**：{_item_value(top, 'direction', '暂无')}"
+        f"（{_item_value(top, 'match_level', '待评估')}）。",
+        reason_text or "当前信息不足，先补齐关键数据再确认路线。",
         "",
         primary_processing_flow,
         "",
-        "### 当前批次事实",
+        "**下一步动作**：",
+        *(action_lines or ["- 补齐关键数据后开展小试。"]),
         "",
-        batch_text or "当前没有足够的结构化批次字段。",
-        "",
-        "### 文献证据及其适用边界",
-        "",
-        *(evidence_lines or ["未检索到可用文献证据，不能形成文献驱动的专业判断。"]),
-        "",
-        "以上内容是可回查的原文证据，不等于这些实验条件可直接迁移到当前批次；"
-        "具体温度、时间、浓度和得率仍需核对原文对象、设备及企业 SOP，并通过小试确认。",
-        "",
-        "### 推荐与备选方向",
-        "",
-        *(alternative_lines or ["- 暂无可比较的备选方向。"]),
-        "",
-        "### 质控风险与下一步",
-        "",
-        *(risk_lines or ["- 暂未触发额外风险项，仍需按批次人工复核。"]),
-        *(f"- {action}" for action in actions),
-        "",
-        f"完整报告：`{report_path}`",
+        "**质控风险**：",
+        *(risk_lines or ["- 暂未触发额外风险项；成品仍须人工放行。"]),
     ]
-    if notes:
-        sections.extend(["", "### 补充说明", "", *(f"- {note}" for note in notes)])
-    return "\n".join(str(item) for item in sections)
+    return compact_primary_answer("\n".join(str(item) for item in sections))
 
 
 def append_used_reference_index(answer: str, evidence: list[dict[str, Any]]) -> str:
-    if not answer.strip() or "本次引用文献" in answer:
-        return answer
-    used_numbers = sorted(
-        {
-            int(number)
-            for number in re.findall(r"文献\s*(\d+)", answer)
-            if 1 <= int(number) <= len(evidence)
-        }
-    )
-    if not used_numbers:
-        return answer
-    lines = ["", "### 本次引用文献", ""]
-    for number in used_numbers:
-        item = evidence[number - 1]
-        page = item.get("page") or item.get("page_start")
-        locator = f"第{page}页" if page else "页码未标注"
-        source = item.get("doi") or item.get("publication") or item.get("source_file") or "本地文献"
-        lines.append(
-            f"- [文献{number}] {item.get('title') or '未命名文献'}"
-            f"（{item.get('year') or '年份未知'}；{locator}；{source}）"
-        )
-    return answer.rstrip() + "\n" + "\n".join(lines)
+    """Compatibility shim: references are rendered from ``evidence`` in the UI."""
+    _ = evidence
+    return compact_primary_answer(answer)
 
 
 def build_previous_evidence_answer(result: dict[str, Any]) -> str:
@@ -998,6 +999,27 @@ def ensure_vision_status_consistency(answer: str, vision_result: dict[str, Any] 
     if status_line in cleaned:
         return cleaned
     return f"{status_line}\n\n{cleaned}".strip()
+
+
+def append_critical_input_notes(answer: str, notes: list[str] | None) -> str:
+    """Expose only actionable input/model failures; routine telemetry stays in payload data."""
+    concise_notes: list[str] = []
+    for raw_note in notes or []:
+        note = str(raw_note or "").strip()
+        if not note or note.startswith(("已调用视觉模型", "本轮未获得图片识别结果")):
+            continue
+        if note.startswith("DeepSeek 文献综合失败"):
+            note = "语言模型总结暂不可用，当前显示本地分析结果。"
+        if note in answer or note in concise_notes:
+            continue
+        concise_notes.append(note)
+        if len(concise_notes) == 2:
+            break
+    if not concise_notes:
+        return answer
+    return answer.rstrip() + "\n\n需处理：" + "；".join(
+        note.rstrip("。； ") for note in concise_notes
+    ) + "。"
 
 
 def run_vision_turn(
@@ -1099,16 +1121,13 @@ def run_analysis_turn(
                 user_prompt
                 + "\n\n"
                 + """
-请输出本轮可以直接展示给用户的完整主回答，不是补充说明。必须完成以下任务：
-1. 先复述本轮真实批次事实和数据缺口，不得补造字段。
-2. 把检索到的文献应用到当前问题：说明研究对象、条件、主要结果以及为什么支持或限制当前判断，并在相关句后标注 [文献N]。
-3. 综合批次规则、文献适用性和数据置信度解释首选方向，同时比较重要备选方向；使用“优先评估/重点小试/条件性备选/暂不优先”等等级，不输出伪精确百分制。
-4. 给出完整加工流程（原料准入、分选前处理、核心加工、小试定参、稳定化包装、成品检测与人工放行）。每个关键工艺关注点尽量说明文献依据或为什么仍需小试。
-5. 单列质控风险、不能越界的结论和最优先下一步。
-6. 回答要具体、有条件、有证据，避免“加强管理、注意质量”一类空泛表述。
-7. 末尾列出正文实际引用文献的题名、年份、页码和 DOI/本地来源。
-8. 任何药典、法规、标准、行业共识、具体参数或研究结论必须由本轮证据明确支持并紧邻标注 [文献N]；证据未覆盖时写“当前证据未覆盖，待人工核实”，不要凭模型记忆补充。
-9. 若分析上下文显示视觉模型状态为“已接收图片，并已完成视觉模型分析”，不得声称未收到图片或识别调用结果；应直接使用视觉结果，并只说明无法仅凭外观确定的边界。
+请输出本轮可以直接展示给用户的简明主回答：
+1. 首句直接给出首选方向和适用性判断，不复述整批输入。
+2. 只列最多 3 个最优先行动；必要时再用 1 句说明人工复核边界。
+3. 文献用于内部校验，不在正文显示引用编号、题名、年份、页码、DOI、证据片段或参考文献清单；这些内容由下方折叠区展示。
+4. 完整加工流程、参数表、设备清单、备选路线和报告已在结构化区域展示，正文不要重复。
+5. 若视觉模型状态为“已接收图片，并已完成视觉模型分析”，直接使用视觉结论，不得声称未收到图片。
+6. 正文控制在 280～500 个中文字，句子短，结论和风险不重复。
 """.strip(),
                 memory_context=memory_context,
             )
@@ -1118,11 +1137,11 @@ def run_analysis_turn(
             notes.append(f"DeepSeek 文献综合失败，当前展示本地可回查版本：{error}")
             summary = build_evidence_grounded_fallback(result, report_path, notes)
 
-    answer = ensure_primary_processing_flow(result, llm_answer or summary)
+    narrative_answer = compact_primary_answer(llm_answer or summary)
+    answer = ensure_primary_processing_flow(result, narrative_answer)
     answer = append_used_reference_index(answer, result.get("evidence", []))
     answer = ensure_vision_status_consistency(answer, vision_result)
-    if notes and "### 数据校验与处理说明" not in answer:
-        answer += "\n\n### 数据校验与处理说明\n\n" + "\n".join(f"- {note}" for note in notes)
+    answer = append_critical_input_notes(answer, notes)
     result["input_notes"] = list(notes)
     result["answer"] = answer
 
