@@ -917,8 +917,8 @@ SCROLL_POSITION_MANAGER_INSTALLER = r"""
                 restorePosition();
                 manager.scheduleMotion(
                     restorePosition,
-                    [40, 120, 280, 600, 1000],
-                    1200,
+                    [40, 120, 280, 600, 1000, 1600, 2400, 3600],
+                    3800,
                     manager.remember
                 );
             }

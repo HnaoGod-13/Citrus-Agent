@@ -115,6 +115,11 @@ class ScrollPositionManagerTests(unittest.TestCase):
             installer.index("resetTop();"),
             installer.index("manager.scheduleMotion(resetTop"),
         )
+        self.assertIn(
+            "[40, 120, 280, 600, 1000, 1600, 2400, 3600]",
+            installer,
+        )
+        self.assertIn("3800,\n                    manager.remember", installer)
 
     def test_clicks_do_not_turn_programmatic_jumps_into_saved_user_scroll(self) -> None:
         installer = app_main.SCROLL_POSITION_MANAGER_INSTALLER
