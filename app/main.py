@@ -3555,15 +3555,12 @@ def render_agent_job_monitor(active_view: str) -> None:
     snapshot = _active_agent_job_snapshot()
     if snapshot is None:
         return
-    reveal_id = None
-    if active_view == "chat" and not bool(st.session_state.active_agent_progress_revealed):
-        reveal_id = snapshot.job_id
+    if active_view == "chat":
         st.session_state.active_agent_progress_revealed = True
     with st.container(key="background_agent_progress_host"):
         render_agent_progress(
             st.empty(),
             snapshot.progress,
-            reveal_id=reveal_id,
             retrieval_mode=str(
                 st.session_state.get("active_agent_retrieval_mode") or "quick"
             ),
@@ -3779,7 +3776,6 @@ def handle_prompt(
             render_agent_progress(
                 progress_slot,
                 "正在启动 Agent 任务",
-                reveal_id=user_message_id,
                 retrieval_mode=submitted_retrieval_mode,
             )
 

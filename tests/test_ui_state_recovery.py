@@ -285,7 +285,7 @@ class EmptyStateProgressLayoutTests(unittest.TestCase):
             reduced_motion_rule.index(spinner_override),
         )
 
-    def test_background_progress_reveals_once_without_rendering_from_worker(self) -> None:
+    def test_background_progress_never_repositions_the_transcript(self) -> None:
         source = Path(app_main.__file__).read_text(encoding="utf-8-sig")
         monitor = source[
             source.index("def render_agent_job_monitor") : source.index("def handle_prompt")
@@ -295,10 +295,14 @@ class EmptyStateProgressLayoutTests(unittest.TestCase):
         ]
 
         self.assertIn("active_agent_progress_revealed", monitor)
-        self.assertIn("reveal_id = snapshot.job_id", monitor)
+        self.assertNotIn("reveal_id = snapshot.job_id", monitor)
+        self.assertNotIn("reveal_id=", monitor)
         self.assertEqual(1, monitor.count("render_agent_progress("))
         self.assertNotIn("render_agent_progress(", worker)
         self.assertNotIn("st.session_state", worker)
+
+        handle_prompt = source[source.index("def handle_prompt") : source.index("def main")]
+        self.assertNotIn("reveal_id=user_message_id", handle_prompt)
 
 
 class DeepRetrievalUiStateTests(unittest.TestCase):
