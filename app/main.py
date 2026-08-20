@@ -1807,7 +1807,12 @@ def render_processing_plan(plan: dict[str, Any]) -> None:
     basis = "；".join(str(item) for item in plan.get("basis", []))
     pilot_parameters = "；".join(str(item) for item in plan.get("pilot_parameters", []))
     release_checks = "；".join(str(item) for item in plan.get("release_checks", []))
-    missing_data = "；".join(str(item) for item in plan.get("missing_data", []))
+    visible_missing_data = [
+        str(item)
+        for item in plan.get("missing_data", [])
+        if not re.search(r"文献|原文|页码|DOI|来源", str(item), flags=re.IGNORECASE)
+    ]
+    missing_data = "；".join(visible_missing_data) or "暂无额外业务或检测资料待补"
     risk_controls = "；".join(str(item) for item in plan.get("risk_controls", []))
     st.markdown(
         f"""
@@ -1914,20 +1919,26 @@ def render_vision_result(vision_result: dict[str, Any]) -> None:
 
 
 def _compact_analysis_narrative(value: Any) -> str:
-    """Keep the decision summary while moving bulky evidence into its expander."""
-    hidden_sections = (
+    """Keep substantive analysis while moving source metadata into its expander."""
+    hidden_sections = {
         "文献证据及其适用边界",
         "本次引用文献",
         "参考文献",
+        "引用文献",
+        "参考资料",
         "原文证据",
-    )
+        "证据来源",
+        "来源与页码",
+        "参考文献及来源",
+    }
     output: list[str] = []
     skipping = False
     for line in str(value or "").splitlines():
         heading_match = re.match(r"^\s*#{1,6}\s+(.+?)\s*$", line)
         if heading_match:
-            heading = re.sub(r"[*_`~]", "", heading_match.group(1)).strip()
-            if any(label in heading for label in hidden_sections):
+            heading = re.sub(r"[*_`~：:\s]", "", heading_match.group(1))
+            base_heading = re.sub(r"[（(][^）)]*[）)]$", "", heading)
+            if base_heading in hidden_sections:
                 skipping = True
                 continue
             skipping = False
@@ -1937,23 +1948,87 @@ def _compact_analysis_narrative(value: Any) -> str:
             continue
         output.append(re.sub(r"\s*\[文献\s*\d+\]", "", line))
     compacted = re.sub(r"\n{3,}", "\n\n", "\n".join(output)).strip()
-    return _compact_visible_answer(compacted, max_chars=600)
+    return _compact_visible_answer(compacted)
 
 
-def _compact_visible_answer(value: Any, *, max_chars: int = 600) -> str:
-    """Compact answers across Streamlit hot deploys with stale module imports."""
+def _compact_visible_answer(value: Any, *, max_chars: int | None = None) -> str:
+    """Remove duplicate lines and citation metadata without truncating prose."""
+    _ = max_chars  # Compatibility for persisted code paths from earlier deployments.
     compactor = getattr(orchestrator, "compact_primary_answer", None)
     if callable(compactor):
-        return str(compactor(str(value or ""), max_chars=max_chars))
-
-    text = re.sub(r"\s*\[文献\s*\d+\]", "", str(value or "")).strip()
-    if len(text) <= max_chars:
-        return text
-    candidate = text[:max_chars]
-    boundary = max(candidate.rfind(mark) for mark in ("。", "！", "？", "；", "\n"))
-    if boundary >= max_chars * 3 // 5:
-        candidate = candidate[: boundary + 1]
-    return candidate.rstrip(" \n，、；：") + "…"
+        try:
+            return str(compactor(str(value or ""), max_chars=None))
+        except TypeError:
+            # An old hot-loaded module expected an integer limit. Use the local
+            # compatibility cleaner until Streamlit completes its full restart.
+            pass
+    reference_labels = (
+        "本次引用文献",
+        "参考文献",
+        "引用文献",
+        "参考资料",
+        "文献证据",
+        "原文证据",
+        "证据来源",
+        "来源与页码",
+        "参考文献及来源",
+    )
+    output: list[str] = []
+    seen_content: set[str] = set()
+    skipping_reference_section = False
+    for line in str(value or "").splitlines():
+        heading_match = re.match(r"^\s*#{1,6}\s+(.+?)\s*$", line)
+        label_source = heading_match.group(1) if heading_match else line
+        normalized_label = re.sub(r"[*_`~：:\s]", "", label_source)
+        base_label = re.sub(
+            r"[（(][^）)]*[）)]$",
+            "",
+            normalized_label,
+        )
+        is_reference_heading = base_label in reference_labels
+        if is_reference_heading:
+            skipping_reference_section = True
+            continue
+        if skipping_reference_section:
+            if not heading_match:
+                continue
+            skipping_reference_section = False
+        if re.match(r"^\s*(?:[-*+]\s*)?\[?文献\s*\d+", line, flags=re.IGNORECASE) and re.search(
+            r"(?:第\s*\d+\s*页|页码|DOI\b|来源[：:])",
+            line,
+            flags=re.IGNORECASE,
+        ):
+            continue
+        cleaned_line = re.sub(
+            r"\s*[\[【（(]\s*文献\s*\d+(?:\s*[,，、-]\s*(?:文献\s*)?\d+)*\s*[\]】）)]",
+            "",
+            line,
+            flags=re.IGNORECASE,
+        )
+        cleaned_line = re.sub(r"[ \t]+([，。！？；：])", r"\1", cleaned_line)
+        sentence_parts = re.split(r"(?<=[。！？])", cleaned_line)
+        if len(sentence_parts) > 1:
+            unique_parts: list[str] = []
+            seen_parts: set[str] = set()
+            for part in sentence_parts:
+                comparable_part = re.sub(r"[*_`~\s]", "", part).strip()
+                if comparable_part and comparable_part in seen_parts:
+                    continue
+                if comparable_part:
+                    seen_parts.add(comparable_part)
+                unique_parts.append(part)
+            cleaned_line = "".join(unique_parts)
+        comparable = re.sub(
+            r"[*_`~\s]",
+            "",
+            re.sub(r"^\s*(?:[-*+]\s*|\d+[.、]\s*)", "", cleaned_line),
+        )
+        if cleaned_line.strip() and not heading_match:
+            if comparable in seen_content:
+                continue
+            seen_content.add(comparable)
+        output.append(cleaned_line.rstrip())
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(output)).strip()
 
 
 def render_adjacent_evidence(value: Any) -> None:
@@ -2072,25 +2147,23 @@ def render_analysis_payload(payload: dict[str, Any]) -> None:
             result.get("parameterized_plan") or {},
             result.get("parameter_groups") or [],
             result.get("processing_intent") or {},
+            include_source_metadata=False,
+            include_flow=False,
         )
         parameterized_text = re.sub(r"(?m)^### 5\.\d+\s+", "### ", parameterized_text)
 
-    # Keep the first view scannable. Detailed stages, parameters, and source
-    # locations remain available immediately below in collapsed sections.
+    # The structured plan carries the workflow and parameters once; the narrative
+    # that follows explains the decision without repeating those details.
     if processing_plan:
-        render_processing_flow_summary(processing_plan)
+        render_processing_plan(processing_plan)
+        if parameterized_text:
+            st.markdown(parameterized_text)
 
     narrative_answer = _compact_analysis_narrative(
         orchestrator.strip_primary_processing_flow(answer)
     )
     if narrative_answer:
         st.markdown(narrative_answer)
-
-    if processing_plan:
-        with st.expander("完整加工方案", expanded=False):
-            render_processing_plan(processing_plan)
-            if parameterized_text:
-                st.markdown(parameterized_text)
 
     if payload.get("vision_result"):
         with st.expander("图片识别结果", expanded=False):
@@ -2435,7 +2508,7 @@ def run_general_turn(
     try:
         answer = chat_with_deepseek(api_key, messages)
         trace["model_raw_output"] = answer
-        return _compact_visible_answer(answer, max_chars=600), trace
+        return _compact_visible_answer(answer), trace
     except DeepSeekAPIError as error:
         trace["error"] = str(error)
         return f"调用 DeepSeek 失败：{error}", trace

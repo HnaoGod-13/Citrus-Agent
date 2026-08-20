@@ -636,13 +636,16 @@ class ProductRouteStateTests(unittest.TestCase):
 
 
 class AnalysisPayloadLayoutTests(unittest.TestCase):
-    def test_visible_answer_compacts_when_hot_deploy_has_stale_orchestrator(self) -> None:
-        raw = "建议先小试[文献1]。" + "需要继续补充数据。" * 100
+    def test_visible_answer_cleans_references_without_truncating_detail(self) -> None:
+        raw = "建议先小试[文献1]。\n" + "\n".join(
+            f"{index}. 保留第{index}项不同的分析内容。" for index in range(1, 81)
+        )
 
         with patch.object(app_main.orchestrator, "compact_primary_answer", None):
             compact = app_main._compact_visible_answer(raw, max_chars=120)
 
-        self.assertLessEqual(len(compact), 121)
+        self.assertGreater(len(compact), 120)
+        self.assertIn("保留第80项不同的分析内容", compact)
         self.assertNotIn("[文献1]", compact)
 
     def test_compact_narrative_moves_evidence_and_report_path_out_of_the_summary(self) -> None:
@@ -672,7 +675,52 @@ class AnalysisPayloadLayoutTests(unittest.TestCase):
         self.assertNotIn("本次引用文献", compact)
         self.assertNotIn("Citation", compact)
 
-    def test_answer_defaults_to_compact_flow_and_hides_full_plan(self) -> None:
+    def test_compact_narrative_keeps_reference_reasoning_not_source_metadata(self) -> None:
+        narrative = """### 参考文献如何影响判断
+研究条件说明该路线需要对照小试[文献1]。
+
+### 参考文献（回查信息）
+- [文献1] Paper title（2026；第8页）
+
+### 下一步行动
+确认小试设计。
+"""
+
+        compact = app_main._compact_analysis_narrative(narrative)
+
+        self.assertIn("参考文献如何影响判断", compact)
+        self.assertIn("研究条件说明该路线需要对照小试", compact)
+        self.assertIn("下一步行动", compact)
+        self.assertNotIn("[文献1]", compact)
+        self.assertNotIn("Paper title", compact)
+        self.assertNotIn("第8页", compact)
+
+    def test_visible_processing_plan_hides_reference_review_metadata(self) -> None:
+        plan = {
+            "product_form": "陈皮",
+            "status": "待小试",
+            "flow": ["验收", "干燥"],
+            "stages": [],
+            "basis": ["产地：新会"],
+            "pilot_parameters": ["干燥温度"],
+            "release_checks": ["水分"],
+            "missing_data": [
+                "补齐农残检测",
+                "对已检索文献的原文、页码和来源完成人工复核",
+            ],
+            "risk_controls": ["不得直接放行"],
+        }
+
+        with patch.object(app_main.st, "markdown") as markdown:
+            app_main.render_processing_plan(plan)
+
+        rendered = markdown.call_args.args[0]
+        self.assertIn("补齐农残检测", rendered)
+        self.assertNotIn("已检索文献", rendered)
+        self.assertNotIn("页码", rendered)
+        self.assertNotIn("来源", rendered)
+
+    def test_answer_shows_full_plan_once_before_the_narrative(self) -> None:
         source = Path(app_main.__file__).read_text(encoding="utf-8-sig")
         render_source = source[
             source.index("def render_analysis_payload") : source.index("def render_message")
@@ -680,23 +728,22 @@ class AnalysisPayloadLayoutTests(unittest.TestCase):
 
         narrative = "if narrative_answer:\n        st.markdown(narrative_answer)"
         self.assertIn(narrative, render_source)
-        self.assertIn("render_processing_flow_summary(processing_plan)", render_source)
-        self.assertIn(
-            'with st.expander("完整加工方案", expanded=False):',
-            render_source,
-        )
+        self.assertNotIn("render_processing_flow_summary(processing_plan)", render_source)
+        self.assertNotIn('with st.expander("完整加工方案"', render_source)
         self.assertIn("render_processing_plan(processing_plan)", render_source)
         self.assertIn("st.markdown(parameterized_text)", render_source)
+        self.assertIn("include_source_metadata=False", render_source)
+        self.assertIn("include_flow=False", render_source)
         self.assertLess(
-            render_source.index("render_processing_flow_summary(processing_plan)"),
+            render_source.index("render_processing_plan(processing_plan)"),
             render_source.index(narrative),
         )
         self.assertLess(
+            render_source.index("st.markdown(parameterized_text)"),
             render_source.index(narrative),
-            render_source.index('with st.expander("完整加工方案"'),
         )
 
-    def test_render_places_summary_before_narrative_and_details_after_it(self) -> None:
+    def test_render_places_full_plan_and_parameters_before_narrative(self) -> None:
         events: list[tuple[str, str]] = []
 
         @contextmanager
@@ -755,16 +802,13 @@ class AnalysisPayloadLayoutTests(unittest.TestCase):
         ):
             app_main.render_analysis_payload(payload)
 
-        flow_index = events.index(("flow", "summary"))
-        narrative_index = events.index(("markdown", "NARRATIVE"))
-        details_index = events.index(("enter", "完整加工方案"))
         plan_index = events.index(("plan", "rendered"))
         parameter_index = events.index(("markdown", "PARAMETER DETAILS"))
-        self.assertLess(flow_index, narrative_index)
-        self.assertLess(narrative_index, details_index)
-        self.assertLess(details_index, plan_index)
+        narrative_index = events.index(("markdown", "NARRATIVE"))
         self.assertLess(plan_index, parameter_index)
-        self.assertIn(("enter", "完整加工方案"), events)
+        self.assertLess(parameter_index, narrative_index)
+        self.assertNotIn(("flow", "summary"), events)
+        self.assertNotIn(("enter", "完整加工方案"), events)
 
 
 class VisionStateRecoveryTests(unittest.TestCase):

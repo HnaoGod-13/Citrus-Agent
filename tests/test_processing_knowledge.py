@@ -107,6 +107,13 @@ class ProcessingKnowledgeTests(unittest.TestCase):
         groups = aggregate_parameter_evidence(records)
         plan = build_parameterized_process_plan(intent, groups, chunks)
         markdown = parameterized_plan_markdown(plan, groups, intent)
+        visible_markdown = parameterized_plan_markdown(
+            plan,
+            groups,
+            intent,
+            include_source_metadata=False,
+            include_flow=False,
+        )
 
         self.assertEqual(intent["primary_product"], "陈皮")
         self.assertTrue(any(item["process_step"] == "干燥" for item in records))
@@ -118,6 +125,16 @@ class ProcessingKnowledgeTests(unittest.TestCase):
         self.assertIn("chenpi-001", markdown)
         self.assertIn("chenpi-001-c1", markdown)
         self.assertIn("第3页", markdown)
+        self.assertIn("详细操作参数", visible_markdown)
+        self.assertIn("设备需求及替代设备", visible_markdown)
+        self.assertNotIn("证据来源", visible_markdown)
+        self.assertNotIn("来源定位", visible_markdown)
+        self.assertNotIn("证据定位", visible_markdown)
+        self.assertNotIn("chenpi-001", visible_markdown)
+        self.assertNotIn("第3页", visible_markdown)
+        self.assertNotIn("推荐工艺流程", visible_markdown)
+        self.assertNotIn("原文条件", visible_markdown)
+        self.assertNotIn("实验室采用热风干燥", visible_markdown)
 
     def test_conflicting_parameters_are_preserved_not_averaged(self) -> None:
         base = {

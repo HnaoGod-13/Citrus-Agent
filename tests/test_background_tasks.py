@@ -452,6 +452,34 @@ class DeepRetrievalBackgroundWiringTests(unittest.TestCase):
         self.assertEqual("deep", retrieve.call_args.kwargs["retrieval_mode"])
         self.assertEqual("deep", build_messages.call_args.kwargs["retrieval_mode"])
 
+    def test_general_answer_keeps_long_analysis_tail_while_removing_references(self) -> None:
+        detailed_answer = "".join(
+            f"第{index}项说明包含不同的条件和执行重点。"
+            for index in range(1, 81)
+        )
+        model_answer = (
+            detailed_answer
+            + "最终行动：核对全部条件后再确认方案。[文献1]\n\n"
+            + "### 参考文献\n- [文献1] Citrus source（2026；第12页；DOI 10.1000/citrus）"
+        )
+        with (
+            patch.object(
+                app_main,
+                "retrieve_general_literature",
+                return_value={"evidence": [], "deep_retrieval_stats": {}},
+            ),
+            patch.object(app_main, "build_general_chat_messages", return_value=[]),
+            patch.object(app_main, "chat_with_deepseek", return_value=model_answer),
+        ):
+            answer, _trace = app_main.run_general_turn("question", "api-key", [])
+
+        self.assertGreater(len(answer), 600)
+        self.assertIn("第80项说明", answer)
+        self.assertIn("最终行动：核对全部条件后再确认方案。", answer)
+        self.assertNotIn("[文献1]", answer)
+        self.assertNotIn("Citrus source", answer)
+        self.assertNotIn("第12页", answer)
+
     def test_general_local_fallback_keeps_reference_details_out_of_main_answer(self) -> None:
         evidence = [
             {

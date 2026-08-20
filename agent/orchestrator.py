@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any, Callable
 from uuid import uuid4
@@ -778,7 +779,7 @@ def ensure_primary_processing_flow(result: dict[str, Any], answer: str) -> str:
         return processing_flow
     if re.match(r"^\s*#{1,6}\s+", normalized_answer):
         return processing_flow + "\n\n" + normalized_answer
-    return processing_flow + "\n\n### 简明结论\n\n" + normalized_answer
+    return processing_flow + "\n\n### 综合判断\n\n" + normalized_answer
 
 
 def strip_primary_processing_flow(answer: str) -> str:
@@ -797,10 +798,13 @@ def strip_primary_processing_flow(answer: str) -> str:
 _REFERENCE_SECTION_LABELS = (
     "本次引用文献",
     "参考文献",
+    "引用文献",
+    "参考资料",
     "文献证据",
     "原文证据",
     "证据来源",
     "来源与页码",
+    "参考文献及来源",
 )
 _INLINE_CITATION_PATTERN = re.compile(
     r"\s*[\[【（(]\s*文献\s*\d+(?:\s*[,，、-]\s*(?:文献\s*)?\d+)*\s*[\]】）)]",
@@ -808,22 +812,39 @@ _INLINE_CITATION_PATTERN = re.compile(
 )
 
 
-def _compact_answer_text(value: str, max_chars: int) -> str:
-    """Remove bibliography UI data and cap unexpectedly long model prose."""
+def _deduplicate_repeated_sentences(value: str) -> str:
+    """Drop exact sentence repeats while leaving distinct reasoning intact."""
+    parts = re.split(r"(?<=[。！？])", value)
+    if len(parts) <= 1:
+        return value
     output: list[str] = []
+    seen: set[str] = set()
+    for part in parts:
+        comparable = re.sub(r"[*_`~\s]", "", part).strip()
+        if comparable and comparable in seen:
+            continue
+        if comparable:
+            seen.add(comparable)
+        output.append(part)
+    return "".join(output)
+
+
+def _compact_answer_text(value: str, max_chars: int | None = None) -> str:
+    """Remove repeated lines and reference metadata without shortening the answer."""
+    _ = max_chars  # Retained for compatibility with already-running UI modules.
+    output: list[str] = []
+    seen_content: set[str] = set()
     skipping_reference_section = False
     for line in str(value or "").splitlines():
         heading_match = re.match(r"^\s*#{1,6}\s+(.+?)\s*$", line)
         label_source = heading_match.group(1) if heading_match else line
         normalized_label = re.sub(r"[*_`~：:\s]", "", label_source)
-        is_reference_heading = any(
-            normalized_label == label
-            or (
-                normalized_label.startswith(label)
-                and (heading_match is not None or len(normalized_label) <= 18)
-            )
-            for label in _REFERENCE_SECTION_LABELS
+        base_label = re.sub(
+            r"[（(][^）)]*[）)]$",
+            "",
+            normalized_label,
         )
+        is_reference_heading = base_label in _REFERENCE_SECTION_LABELS
         if is_reference_heading:
             skipping_reference_section = True
             continue
@@ -842,29 +863,23 @@ def _compact_answer_text(value: str, max_chars: int) -> str:
             continue
         cleaned_line = _INLINE_CITATION_PATTERN.sub("", line)
         cleaned_line = re.sub(r"[ \t]+([，。！？；：])", r"\1", cleaned_line)
+        cleaned_line = _deduplicate_repeated_sentences(cleaned_line)
+        comparable = re.sub(
+            r"[*_`~\s]",
+            "",
+            re.sub(r"^\s*(?:[-*+]\s*|\d+[.、]\s*)", "", cleaned_line),
+        )
+        if cleaned_line.strip() and not heading_match:
+            if comparable in seen_content:
+                continue
+            seen_content.add(comparable)
         output.append(cleaned_line.rstrip())
 
-    compact = re.sub(r"\n{3,}", "\n\n", "\n".join(output)).strip()
-    if len(compact) <= max_chars:
-        return compact
-
-    if max_chars <= 1:
-        return "…"[:max_chars]
-    content_limit = max_chars - 1
-    candidate = compact[:content_limit]
-    minimum_boundary = content_limit * 3 // 5
-    boundaries = [
-        candidate.rfind(mark)
-        for mark in ("。", "！", "？", "；", "\n")
-    ]
-    boundary = max((index for index in boundaries if index >= minimum_boundary), default=-1)
-    if boundary >= 0:
-        candidate = candidate[: boundary + 1]
-    return candidate.rstrip(" \n，、；：") + "…"
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(output)).strip()
 
 
-def compact_primary_answer(answer: str, max_chars: int = 600) -> str:
-    """Keep the visible narrative concise while preserving structured flow data."""
+def compact_primary_answer(answer: str, max_chars: int | None = None) -> str:
+    """Clean the visible narrative while preserving all substantive content."""
     text = str(answer or "")
     start = text.find(PROCESSING_FLOW_START)
     if start < 0:
@@ -875,12 +890,7 @@ def compact_primary_answer(answer: str, max_chars: int = 600) -> str:
     end += len(PROCESSING_FLOW_END)
     structured_flow = text[start:end].strip()
     leading_narrative = _compact_answer_text(text[:start], max_chars)
-    remaining_chars = max_chars - len(leading_narrative)
-    trailing_narrative = (
-        _compact_answer_text(text[end:], remaining_chars)
-        if remaining_chars > 0
-        else ""
-    )
+    trailing_narrative = _compact_answer_text(text[end:], max_chars)
     return "\n\n".join(
         part for part in (leading_narrative, structured_flow, trailing_narrative) if part
     )
@@ -900,36 +910,101 @@ def build_evidence_grounded_fallback(
     report_path: Path,
     notes: list[str] | None = None,
 ) -> str:
-    """Build a concise local answer while evidence remains in ``result`` for the UI."""
+    """Build a complete local answer while source metadata remains in the UI."""
     _ = report_path
+
+    def unique_text(items: Iterable[Any]) -> list[str]:
+        return list(
+            dict.fromkeys(
+                str(item).strip().rstrip("。；; ")
+                for item in items
+                if str(item).strip()
+            )
+        )
+
+    def substantive_reasons(item: Any) -> list[str]:
+        return [
+            reason
+            for reason in unique_text(_item_value(item, "reasons", []))
+            if not re.search(
+                r"(?:本轮)?检索到\s*\d+\s*篇|已纳入路线排序|"
+                r"(?:原文|页码|DOI|来源)复核",
+                reason,
+                flags=re.IGNORECASE,
+            )
+        ]
+
+    def concise_evidence_support(item: Any) -> str:
+        support = str(_item_value(item, "evidence_support", "未评估"))
+        return re.sub(r"[（(][^）)]*(?:篇|条)[^）)]*[）)]", "", support).strip()
+
     scores = result.get("scores", [])
     top = scores[0] if scores else None
     risks = result.get("quality_risks", [])
     primary_processing_flow = build_primary_processing_flow(result)
     actions = result.get("next_actions", [])
-    top_reasons = [str(item).strip() for item in _item_value(top, "reasons", []) if str(item).strip()]
-    reason_text = _short_evidence_text("；".join(top_reasons[:2]), limit=180)
-    action_lines = [f"- {str(action).strip()}" for action in actions[:3] if str(action).strip()]
-    risk_lines = [
-        f"- [{_item_value(item, 'level', '提示')}] {_item_value(item, 'item', '风险项')}："
-        f"{_item_value(item, 'suggestion', '需人工复核')}"
-        for item in risks[:2]
-    ]
+    top_reasons = substantive_reasons(top)
+    top_risk_notes = unique_text(_item_value(top, "risk_notes", []))
+    alternatives = list(
+        {
+            str(_item_value(item, "direction", "备选方向")): item
+            for item in scores[1:]
+        }.values()
+    )[:3]
+    alternative_lines: list[str] = []
+    used_reasons = set(top_reasons)
+    has_shared_alternative_basis = False
+    for item in alternatives:
+        reasons = [reason for reason in substantive_reasons(item) if reason not in used_reasons]
+        used_reasons.update(reasons)
+        if not reasons:
+            has_shared_alternative_basis = True
+        reason_text = f"{'；'.join(reasons)}。" if reasons else ""
+        alternative_lines.append(
+            f"- **{_item_value(item, 'direction', '备选方向')}**："
+            f"{_item_value(item, 'match_level', '待评估')}；"
+            f"文献支持为{concise_evidence_support(item)}，"
+            f"数据置信度为{_item_value(item, 'data_confidence', '低')}。"
+            f"{reason_text}"
+        )
+    if has_shared_alternative_basis:
+        alternative_lines.append(
+            "- 以上未单列理由的备选与首选共享当前原料基础，"
+            "需按目标产品、设备能力和小试结果比较取舍。"
+        )
+    action_lines = [f"- {action}" for action in unique_text(actions)]
+    risk_lines = list(
+        dict.fromkeys(
+            f"- [{_item_value(item, 'level', '提示')}] {_item_value(item, 'item', '风险项')}："
+            f"{_item_value(item, 'suggestion', '需人工复核')}"
+            for item in risks
+        )
+    )
+    risk_lines.extend(f"- {item}" for item in top_risk_notes)
 
     sections = [
-        "### 结论",
+        "### 综合判断",
         "",
-        f"**推荐方向**：{_item_value(top, 'direction', '暂无')}"
-        f"（{_item_value(top, 'match_level', '待评估')}）。",
-        reason_text or "当前信息不足，先补齐关键数据再确认路线。",
+        f"**推荐方向**：{_item_value(top, 'direction', '暂无')}；适配等级为"
+        f" **{_item_value(top, 'match_level', '待评估')}**，文献支持为"
+        f" **{concise_evidence_support(top)}**，数据置信度为"
+        f" **{_item_value(top, 'data_confidence', '低')}**。"
+        "该方向仍应以当前批次检测和小试结果作为最终定案依据。",
         "",
         primary_processing_flow,
         "",
-        "**下一步动作**：",
-        *(action_lines or ["- 补齐关键数据后开展小试。"]),
+        "### 推荐理由与重要备选",
         "",
-        "**质控风险**：",
-        *(risk_lines or ["- 暂未触发额外风险项；成品仍须人工放行。"]),
+        f"**首选依据**：{'；'.join(top_reasons) or '当前结构化信息有限，需补充数据后复核'}。",
+        *(alternative_lines or ["- 当前没有形成需要优先比较的备选方向。"]),
+        "",
+        "### 关键风险",
+        "",
+        *(risk_lines or ["- 暂未触发额外风险项，成品仍须按批次人工复核和放行。"]),
+        "",
+        "### 下一步行动",
+        "",
+        *(action_lines or ["- 补齐关键数据，并围绕首选方向开展小试验证。"]),
     ]
     return compact_primary_answer("\n".join(str(item) for item in sections))
 
@@ -1121,13 +1196,16 @@ def run_analysis_turn(
                 user_prompt
                 + "\n\n"
                 + """
-请输出本轮可以直接展示给用户的简明主回答：
-1. 首句直接给出首选方向和适用性判断，不复述整批输入。
-2. 只列最多 3 个最优先行动；必要时再用 1 句说明人工复核边界。
-3. 文献用于内部校验，不在正文显示引用编号、题名、年份、页码、DOI、证据片段或参考文献清单；这些内容由下方折叠区展示。
-4. 完整加工流程、参数表、设备清单、备选路线和报告已在结构化区域展示，正文不要重复。
-5. 若视觉模型状态为“已接收图片，并已完成视觉模型分析”，直接使用视觉结论，不得声称未收到图片。
-6. 正文控制在 280～500 个中文字，句子短，结论和风险不重复。
+请输出本轮可以直接展示给用户的完整主回答，而不是几句简略提示：
+1. 先给出首选方向、适用性判断及成立条件，不逐字段复述整批输入。
+2. 解释首选方向的关键理由，并比较重要备选方向的适用条件、取舍和不优先原因。
+3. 把文献中的研究结论、条件和局限真正用于分析，但正文不得显示引用编号、题名、年份、页码、DOI、匹配分、原文片段或参考文献清单；这些来源信息由下方“参考依据”展示。
+4. 完整加工流程、分阶段操作、参数表和设备信息已在结构化方案中完整展示，正文不要重复抄写，也不要说明检索过程、候选片段数、采用文献数或证据目录；不得以去重为由省略判断、理由、备选、风险或行动。
+5. 单列关键质控风险、结论边界和有先后顺序的下一步行动。行动数量按问题实际需要决定，不设固定上限。
+6. 回答要具体、有条件、有证据、可执行，避免“加强管理、注意质量”一类空泛表述；同一事实、结论或风险只表达一次。
+7. 任何药典、法规、标准、行业共识、具体参数或研究结论必须由本轮证据明确支持；证据未覆盖时说明缺口及其影响，不要凭模型记忆补充。
+8. 若分析上下文显示视觉模型状态为“已接收图片，并已完成视觉模型分析”，直接使用视觉结论，不得声称未收到图片或识别调用结果，只说明无法仅凭外观确定的边界。
+9. 使用“综合判断”“推荐理由与重要备选”“关键风险”“下一步行动”等清晰小标题组织答案，不设置固定字数或条目上限。
 """.strip(),
                 memory_context=memory_context,
             )

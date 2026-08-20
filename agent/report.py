@@ -340,6 +340,9 @@ def parameterized_plan_markdown(
     parameterized_plan: dict[str, Any] | None,
     parameter_groups: list[dict[str, Any]] | None,
     processing_intent: dict[str, Any] | None,
+    *,
+    include_source_metadata: bool = True,
+    include_flow: bool = True,
 ) -> str:
     if not parameterized_plan:
         return (
@@ -356,16 +359,29 @@ def parameterized_plan_markdown(
         f"- 目标规模：{parameterized_plan.get('scale') or 'unknown'}；unknown 表示文献或用户输入未明确规模，不能直接按工业参数使用。",
         f"- 用户已说明设备：{'、'.join(intent.get('equipment') or []) or '未提供'}。",
         "- 参数证据分为文献直接报告、多文献归纳和工程配置提示；工程配置提示不作为文献参数。",
-        "",
-        "### 5.5 推荐工艺流程",
-        "",
-        " → ".join(str(step) for step in parameterized_plan.get("flow", [])),
-        "",
-        "### 5.6 详细操作参数",
-        "",
-        "| 步骤 | 操作说明 | 推荐参数/证据状态 | 适用条件 | 关键控制点 | 证据来源 |",
-        "|---|---|---|---|---|---|",
     ]
+    if include_flow:
+        lines.extend(
+            [
+                "",
+                "### 5.5 推荐工艺流程",
+                "",
+                " → ".join(str(step) for step in parameterized_plan.get("flow", [])),
+            ]
+        )
+    lines.extend(
+        [
+            "",
+            "### 5.6 详细操作参数",
+            "",
+            (
+                "| 步骤 | 操作说明 | 推荐参数/证据状态 | 适用条件 | 关键控制点 | 证据来源 |"
+                if include_source_metadata
+                else "| 步骤 | 操作说明 | 推荐参数/证据状态 | 适用条件 | 关键控制点 |"
+            ),
+            "|---|---|---|---|---|---|" if include_source_metadata else "|---|---|---|---|---|",
+        ]
+    )
     for row in parameterized_plan.get("rows", []):
         params = row.get("parameters") or []
         if params:
@@ -380,48 +396,58 @@ def parameterized_plan_markdown(
         else:
             parameter_text = str(row.get("parameter_status") or "现有知识库证据不足")
             applicability = "需结合原料、设备和规模补充证据"
-        lines.append(
-            "| " + " | ".join(
-                _md_cell(value)
-                for value in (
-                    row.get("step"),
-                    row.get("operation"),
-                    parameter_text,
-                    applicability,
-                    row.get("key_control"),
-                    "｜".join(row.get("source_refs") or row.get("source_ids") or []) or "无直接参数证据",
-                )
-            ) + " |"
-        )
+        row_values = [
+            row.get("step"),
+            row.get("operation"),
+            parameter_text,
+            applicability,
+            row.get("key_control"),
+        ]
+        if include_source_metadata:
+            row_values.append(
+                "｜".join(row.get("source_refs") or row.get("source_ids") or [])
+                or "无直接参数证据"
+            )
+        lines.append("| " + " | ".join(_md_cell(value) for value in row_values) + " |")
     lines.extend(["", "参数设置理由与变化影响：", ""])
     if groups:
         for group in groups[:30]:
             conflict_note = "；存在冲突，禁止合并成单一范围" if group.get("conflict") else ""
-            source_text = "｜".join(
-                group.get("source_refs") or group.get("source_ids") or []
-            ) or "无"
+            source_text = "｜".join(group.get("source_refs") or group.get("source_ids") or []) or "无"
+            source_note = f"；来源定位 {source_text}" if include_source_metadata else ""
+            effect_text = (
+                group.get("effect_summary")
+                if include_source_metadata
+                else "参数变化的实际影响需在当前原料和设备条件下通过对照小试确认"
+            )
             lines.append(
                 f"- **{group.get('process_step')}—{group.get('parameter_name')}**："
                 f"{group.get('recommended_range')}，{group.get('confidence_level')}；"
-                f"适用条件为 {group.get('applicability')}；{group.get('effect_summary')}"
-                f"；来源定位 {source_text}{conflict_note}。"
+                f"适用条件为 {group.get('applicability')}；{effect_text}"
+                f"{source_note}{conflict_note}。"
             )
             for alternative in (group.get("alternatives") or [])[:5]:
-                locator_parts = [
-                    str(alternative.get("title") or "未命名文献"),
-                    str(alternative.get("year") or "年份未知"),
-                    (
-                        f"片段 {alternative.get('source_chunk_id')}"
-                        if alternative.get("source_chunk_id")
-                        else ""
-                    ),
-                    str(alternative.get("source_location") or "页码未标注"),
-                ]
-                locator = "；".join(part for part in locator_parts if part)
-                lines.append(
-                    f"  - 证据定位：{locator}；报告值 {alternative.get('reported')}；"
-                    f"原文条件：{alternative.get('conditions') or '未注明'}"
-                )
+                if include_source_metadata:
+                    locator_parts = [
+                        str(alternative.get("title") or "未命名文献"),
+                        str(alternative.get("year") or "年份未知"),
+                        (
+                            f"片段 {alternative.get('source_chunk_id')}"
+                            if alternative.get("source_chunk_id")
+                            else ""
+                        ),
+                        str(alternative.get("source_location") or "页码未标注"),
+                    ]
+                    locator = "；".join(part for part in locator_parts if part)
+                    lines.append(
+                        f"  - 证据定位：{locator}；报告值 {alternative.get('reported')}；"
+                        f"原文条件：{alternative.get('conditions') or '未注明'}"
+                    )
+                else:
+                    lines.append(
+                        f"  - 候选值：{alternative.get('reported')}；"
+                        "仅用于对照设计，不能直接视为生产参数。"
+                    )
     else:
         lines.append("- 未提取到单位、适用条件和来源均完整的参数，所有数值保持空缺，需补充文献或开展小试。")
     lines.extend(["", "### 5.7 设备需求及替代设备", ""])

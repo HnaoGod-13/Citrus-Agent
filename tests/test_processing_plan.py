@@ -93,7 +93,7 @@ class ProcessingPlanTests(unittest.TestCase):
         answer = summarize_result(result, Path("demo.md"))
         recommendation_position = answer.index("**推荐方向**")
         plan_position = answer.index("### 完整加工流程（方案）")
-        risk_position = answer.index("**质控风险**")
+        risk_position = answer.index("### 关键风险")
         self.assertLess(recommendation_position, plan_position)
         self.assertLess(plan_position, risk_position)
         self.assertIn("#### 01 原料准入与隔离", answer)
@@ -131,7 +131,7 @@ class ProcessingPlanTests(unittest.TestCase):
         self.assertIn(PROCESSING_FLOW_START, answer)
         self.assertIn("原料验收", answer)
         self.assertIn("成品检测与人工放行", answer)
-        self.assertLess(answer.index("完整加工流程（方案）"), answer.index("简明结论"))
+        self.assertLess(answer.index("完整加工流程（方案）"), answer.index("综合判断"))
         self.assertIn(model_answer, strip_primary_processing_flow(answer))
 
     @patch("agent.tools.comprehensive_search_knowledge")
