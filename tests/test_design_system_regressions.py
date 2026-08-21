@@ -404,6 +404,18 @@ class DesignSystemRegressionTests(unittest.TestCase):
         )
         retrieval_start = css.index(retrieval_selector)
         retrieval_rule = css[retrieval_start : css.index("}", retrieval_start) + 1]
+        stats_start = css.index(".deep-retrieval-stats {")
+        stats_rule = css[stats_start : css.index("}", stats_start) + 1]
+        stats_values_start = css.index(".deep-retrieval-stats-values {")
+        stats_values_rule = css[
+            stats_values_start : css.index("}", stats_values_start) + 1
+        ]
+        stat_start = css.index(".deep-retrieval-stat {")
+        stat_rule = css[stat_start : css.index("}", stat_start) + 1]
+        tablet_start = css.index("@media (max-width: 1099px) {")
+        tablet_css = css[
+            tablet_start : css.index("@media (max-width: 899px) {", tablet_start)
+        ]
         mobile_start = css.index("@media (max-width: 699px) {")
         mobile_css = css[mobile_start : css.index("@media (prefers-reduced-motion", mobile_start)]
 
@@ -418,12 +430,38 @@ class DesignSystemRegressionTests(unittest.TestCase):
         self.assertIn(".deep-retrieval-status.is-error {", css)
         self.assertIn(".deep-retrieval-status.is-warning {", css)
         self.assertIn("overflow-wrap: anywhere;", css)
+        self.assertIn("display: grid;", stats_rule)
+        self.assertIn("grid-template-columns: minmax(0, 1fr);", stats_rule)
+        self.assertIn("background: var(--surface-panel);", stats_rule)
+        self.assertIn("border: 1px solid var(--border);", stats_rule)
+        self.assertIn("border-radius: var(--radius-sm);", stats_rule)
+        self.assertNotIn("border-top:", stats_rule)
+        self.assertNotIn("border-bottom:", stats_rule)
+        self.assertIn(
+            "grid-template-columns: repeat(4, minmax(0, 1fr));",
+            stats_values_rule,
+        )
+        self.assertIn("justify-items: start;", stat_rule)
+        self.assertIn("text-align: left;", stat_rule)
+        self.assertIn(
+            "grid-template-columns: repeat(2, minmax(0, 1fr));",
+            tablet_css,
+        )
         self.assertIn(".adjacent-evidence {", css)
         self.assertIn(".adjacent-evidence-item {", css)
         self.assertIn(".adjacent-evidence-meta {", css)
         self.assertIn(".adjacent-evidence-excerpt {", css)
+        self.assertIn(".reference-evidence-item {", css)
+        self.assertIn(".reference-evidence-locator,", css)
+        self.assertIn(".reference-evidence-excerpt {", css)
+        self.assertIn(".reference-evidence-full > div {", css)
+        self.assertIn(".evidence-match {", css)
         self.assertIn(".deep-retrieval-stats {", mobile_css)
-        self.assertIn("flex-direction: column;", mobile_css)
+        self.assertIn("padding: 14px;", mobile_css)
+        self.assertIn(
+            "grid-template-columns: repeat(2, minmax(0, 1fr));",
+            mobile_css,
+        )
         self.assertNotIn('\n[data-testid="stButtonGroup"] {', css)
 
     def test_assistant_label_matches_answer_type_scale(self) -> None:

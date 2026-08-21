@@ -2032,43 +2032,383 @@ def _compact_visible_answer(value: Any, *, max_chars: int | None = None) -> str:
     return re.sub(r"\n{3,}", "\n\n", "\n".join(output)).strip()
 
 
+_EVIDENCE_CONTROL_RE = re.compile(
+    r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\u200b-\u200f\u202a-\u202e\u2060\ufeff]"
+)
+_EVIDENCE_PAGE_LINE_RE = re.compile(
+    r"^(?:第\s*\d{1,4}\s*页|page\s+\d{1,4}(?:\s+of\s+\d{1,4})?)$",
+    flags=re.IGNORECASE,
+)
+_EVIDENCE_NOISE_LINE_RE = re.compile(
+    r"^(?:https?://\S+|www\.\S+|downloaded\s+from\b.*|copyright\b.*|all\s+rights\s+reserved\b.*)$",
+    flags=re.IGNORECASE,
+)
+_EVIDENCE_PARAMETER_RE = re.compile(
+    r"(?:\d+(?:\.\d+)?\s*(?:%|°\s*[CF]|℃|K|MPa|kPa|Pa|bar|rpm|r/min|g|kg|mg|μg|ug|mL|ml|L|h|min|s|d|天|小时|分钟|秒)|"
+    r"温度|时间|压力|转速|浓度|得率|产率|含量|显著|temperature|time|pressure|yield|content)",
+    flags=re.IGNORECASE,
+)
+_EVIDENCE_METADATA_RE = re.compile(
+    r"^\s*serial\s+JL\b.*\barticleinfo\b.*\bcontenttype\b.*\bdateloaded(?:txt)?\b",
+    flags=re.IGNORECASE | re.DOTALL,
+)
+_EVIDENCE_METADATA_MESSAGE = "该片段主要是文献索引元数据，未提取到可核验的正文信息。"
+
+
+def _is_evidence_metadata_blob(value: Any) -> bool:
+    return bool(_EVIDENCE_METADATA_RE.search(str(value or "")))
+
+
+def clean_evidence_display_text(value: Any, *, page_numbers: Any = None) -> str:
+    """Clean OCR display noise without changing the stored evidence payload."""
+    text = str(value or "").replace("\r\n", "\n").replace("\r", "\n")
+    if _is_evidence_metadata_blob(text):
+        return ""
+    text = _EVIDENCE_CONTROL_RE.sub("", text)
+    text = re.sub(r"(?<=[A-Za-z])-\s*\n\s*(?=[a-z])", "-", text)
+    page_candidates = (
+        page_numbers
+        if isinstance(page_numbers, (list, tuple, set))
+        else [page_numbers]
+    )
+    known_pages = {
+        str(page).strip() for page in page_candidates if page not in (None, "")
+    }
+    raw_lines = [
+        re.sub(r"[ \t]+", " ", raw_line).strip()
+        for raw_line in text.splitlines()
+    ]
+    nonempty_indexes = [index for index, line in enumerate(raw_lines) if line]
+    drop_indexes: set[int] = set()
+    for position, index in enumerate(nonempty_indexes):
+        line = raw_lines[index]
+        if line not in known_pages or not re.fullmatch(r"\d{1,4}", line):
+            continue
+        if position == 0 or position == len(nonempty_indexes) - 1:
+            drop_indexes.add(index)
+        elif position == 1:
+            drop_indexes.add(index)
+            header_index = nonempty_indexes[0]
+            header = raw_lines[header_index]
+            if (
+                len(header) <= 80
+                and not _EVIDENCE_PARAMETER_RE.search(header)
+                and not re.search(r"[。.!?；;:]", header)
+            ):
+                drop_indexes.add(header_index)
+    lines: list[str] = []
+    for index, line in enumerate(raw_lines):
+        if index in drop_indexes:
+            continue
+        if not line or _EVIDENCE_PAGE_LINE_RE.fullmatch(line):
+            continue
+        if re.fullmatch(r"(?:\|?\s*:?-{3,}:?\s*)+\|?", line):
+            continue
+        if _EVIDENCE_NOISE_LINE_RE.match(line):
+            continue
+        line = re.sub(r"~~([^~]+)~~", r"\1", line)
+        line = re.sub(r"(^|\s)#{1,6}\s+", r"\1", line)
+        lines.append(line)
+    cleaned = " ".join(lines)
+    cleaned = re.sub(r"\s+([,.;:!?，。；：！？、）】])", r"\1", cleaned)
+    cleaned = re.sub(r"([（【])\s+", r"\1", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return re.sub(r"^(?:[|¦•·▪►◆◇]+\s*)+", "", cleaned)
+
+
+def full_evidence_display_text(value: Any) -> str:
+    text = str(value or "").replace("\r\n", "\n").replace("\r", "\n")
+    if _is_evidence_metadata_blob(text):
+        return _EVIDENCE_METADATA_MESSAGE
+    return _EVIDENCE_CONTROL_RE.sub("", text).strip()
+
+
+def _evidence_match_terms(value: Any) -> list[str]:
+    candidates = value if isinstance(value, (list, tuple, set)) else [value]
+    terms: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        term = re.sub(r"\s+", " ", str(candidate or "")).strip()
+        comparable = term.casefold()
+        if (
+            len(term) < 2
+            or comparable.startswith("concept_")
+            or comparable in seen
+        ):
+            continue
+        seen.add(comparable)
+        terms.append(term)
+    return sorted(terms, key=lambda item: (-len(item), item.casefold()))[:16]
+
+
+def _split_evidence_sentences(text: str) -> list[str]:
+    parts = re.split(
+        r"(?<=[。！？!?；;])\s*|(?<=\.)\s+(?=[A-Z\u4e00-\u9fff])",
+        text,
+    )
+    sentences = [part.strip() for part in parts if part and part.strip()]
+    if len(sentences) <= 1 and text:
+        clauses = re.split(r"(?<=[，,：:])\s*", text)
+        sentences = [part.strip() for part in clauses if part and part.strip()]
+    return sentences
+
+
+def _join_evidence_text(left: str, right: str) -> str:
+    if not left or not right:
+        return left + right
+    needs_space = (
+        left[-1].isascii()
+        and right[0].isascii()
+        and (left[-1].isalnum() or left[-1] in ".,;:!?)%")
+        and (right[0].isalnum() or right[0] in "([")
+    )
+    return left + (" " if needs_space else "") + right
+
+
+def _crop_evidence_sentence(
+    sentence: str,
+    terms: list[str],
+    *,
+    max_chars: int,
+) -> str:
+    if len(sentence) <= max_chars:
+        return sentence
+    clauses = [
+        part.strip()
+        for part in re.split(r"(?<=[，,；;：:])\s*", sentence)
+        if part and part.strip()
+    ]
+    comparable_terms = [term.casefold() for term in terms]
+    hit_index = next(
+        (
+            index
+            for index, clause in enumerate(clauses)
+            if any(term in clause.casefold() for term in comparable_terms)
+        ),
+        0,
+    )
+    selected = clauses[hit_index] if clauses else sentence
+    left = hit_index - 1
+    right = hit_index + 1
+    while clauses and (left >= 0 or right < len(clauses)):
+        candidate_index = left if left >= 0 else right
+        candidate = clauses[candidate_index]
+        combined = (
+            _join_evidence_text(candidate, selected)
+            if candidate_index < hit_index
+            else _join_evidence_text(selected, candidate)
+        )
+        if len(combined) > max_chars:
+            if candidate_index < hit_index:
+                left = -1
+            else:
+                right = len(clauses)
+            continue
+        selected = combined
+        if candidate_index < hit_index:
+            left -= 1
+        else:
+            right += 1
+    if len(selected) > max_chars:
+        lowered = selected.casefold()
+        hit = min(
+            (lowered.find(term) for term in comparable_terms if term in lowered),
+            default=0,
+        )
+        start = max(0, min(hit - max_chars // 3, len(selected) - max_chars))
+        end = min(len(selected), start + max_chars)
+        selected = selected[start:end].strip()
+    prefix = "…" if hit_index > 0 or selected != sentence[: len(selected)] else ""
+    suffix = "…" if hit_index < len(clauses) - 1 or len(selected) < len(sentence) else ""
+    available = max(1, max_chars - len(prefix) - len(suffix))
+    if len(selected) > available:
+        selected = selected[:available].rstrip()
+        suffix = "…"
+    return f"{prefix}{selected}{suffix}"
+
+
+def build_evidence_excerpt(
+    value: Any,
+    matched_terms: Any = None,
+    *,
+    max_chars: int = 420,
+    page_numbers: Any = None,
+) -> str:
+    """Select compact, sentence-level evidence for display."""
+    if _is_evidence_metadata_blob(value):
+        return _EVIDENCE_METADATA_MESSAGE
+    text = clean_evidence_display_text(value, page_numbers=page_numbers)
+    if not text:
+        return "暂无可展示的原文片段。"
+    sentences = _split_evidence_sentences(text)
+    if not sentences:
+        return text[:max_chars]
+    terms = _evidence_match_terms(matched_terms)
+    lowered_terms = [term.casefold() for term in terms]
+
+    def sentence_score(sentence: str) -> tuple[int, int, int]:
+        lowered = sentence.casefold()
+        hits = [term for term in lowered_terms if term in lowered]
+        parameter_bonus = 1 if _EVIDENCE_PARAMETER_RE.search(sentence) else 0
+        return (len(hits), sum(len(term) for term in hits), parameter_bonus)
+
+    ranked = sorted(
+        range(len(sentences)),
+        key=lambda index: (sentence_score(sentences[index]), -index),
+        reverse=True,
+    )
+    hit_indexes = [
+        index for index in ranked if sentence_score(sentences[index])[0] > 0
+    ]
+    primary = hit_indexes[0] if hit_indexes else (ranked[0] if ranked else 0)
+    priority = list(hit_indexes[:2]) or [primary]
+    priority.extend(index for index in (primary - 1, primary + 1) if 0 <= index < len(sentences))
+    priority.extend(ranked)
+
+    selected: list[int] = []
+    for index in priority:
+        if index in selected:
+            continue
+        projected = sum(len(sentences[item]) for item in selected) + len(sentences[index])
+        projected += len(selected) + 2
+        if projected <= max_chars:
+            selected.append(index)
+        elif not selected:
+            selected.append(index)
+        if len(selected) >= (3 if len("".join(sentences[item] for item in selected)) < 280 else 2):
+            break
+
+    def assemble(indexes: list[int]) -> str:
+        ordered = sorted(indexes)
+        parts: list[str] = []
+        previous: int | None = None
+        for index in ordered:
+            if previous is not None and index > previous + 1:
+                parts.append("…")
+            sentence = sentences[index]
+            if parts and parts[-1] != "…":
+                parts[-1] = _join_evidence_text(parts[-1], sentence)
+            else:
+                parts.append(sentence)
+            previous = index
+        excerpt_value = "".join(parts).strip()
+        if ordered[0] > 0:
+            excerpt_value = "…" + excerpt_value
+        if ordered[-1] < len(sentences) - 1:
+            excerpt_value += "…"
+        return excerpt_value
+
+    excerpt = assemble(selected)
+    while len(excerpt) > max_chars and len(selected) > 1:
+        removable = next(
+            (index for index in reversed(selected) if index != primary),
+            selected[-1],
+        )
+        selected.remove(removable)
+        excerpt = assemble(selected)
+    if len(excerpt) > max_chars:
+        parameter_match = _EVIDENCE_PARAMETER_RE.search(excerpt)
+        crop_terms = terms or ([parameter_match.group(0)] if parameter_match else [])
+        excerpt = _crop_evidence_sentence(excerpt, crop_terms, max_chars=max_chars)
+    return excerpt
+
+
+def highlight_evidence_excerpt(value: Any, matched_terms: Any = None) -> str:
+    text = str(value or "")
+    terms = _evidence_match_terms(matched_terms)
+    spans: list[tuple[int, int]] = []
+    for term in terms:
+        for match in re.finditer(re.escape(term), text, flags=re.IGNORECASE):
+            start, end = match.span()
+            if any(start < existing_end and end > existing_start for existing_start, existing_end in spans):
+                continue
+            spans.append((start, end))
+    spans.sort()
+    if not spans:
+        return html.escape(text)
+    fragments: list[str] = []
+    cursor = 0
+    for start, end in spans:
+        fragments.append(html.escape(text[cursor:start]))
+        fragments.append(
+            '<mark class="evidence-match">' + html.escape(text[start:end]) + "</mark>"
+        )
+        cursor = end
+    fragments.append(html.escape(text[cursor:]))
+    return "".join(fragments)
+
+
+def evidence_location_labels(item: Mapping[str, Any]) -> list[str]:
+    labels: list[str] = []
+    section = str(item.get("section") or "").strip()
+    if section and section.casefold() not in {"unknown", "未标注章节", "none"}:
+        labels.append(f"章节：{section}")
+    page_start = item.get("page_start")
+    page = item.get("page")
+    page_end = item.get("page_end")
+    start = page_start if page_start not in (None, "") else page
+    if start not in (None, ""):
+        if page_end not in (None, "") and str(page_end) != str(start):
+            labels.append(f"PDF 第 {start}–{page_end} 页")
+        else:
+            labels.append(f"PDF 第 {start} 页")
+    chunk_id = item.get("chunk_id")
+    chunk_index = item.get("chunk_index")
+    if chunk_id not in (None, ""):
+        labels.append(f"片段：{chunk_id}")
+    elif chunk_index not in (None, ""):
+        labels.append(f"片段序号：{chunk_index}")
+    return labels
+
+
+def _evidence_source_label(item: Mapping[str, Any]) -> str:
+    source = item.get("source") or item.get("publication")
+    if source not in (None, ""):
+        source_label = str(source).strip()
+        if (
+            re.match(r"^(?:[A-Za-z]:[\\/]|[\\/])", source_label)
+            or (re.search(r"\.(?:pdf|docx?|txt)$", source_label, flags=re.IGNORECASE) and re.search(r"[\\/]", source_label))
+        ):
+            return re.split(r"[\\/]", source_label)[-1] or "本地文献库"
+        return source_label
+    source_file = str(item.get("source_file") or "").strip()
+    if source_file:
+        return re.split(r"[\\/]", source_file)[-1] or "本地文献库"
+    return "本地文献库"
+
+
 def render_adjacent_evidence(value: Any) -> None:
     if not isinstance(value, list):
         return
-    rows = []
+    rows: list[str] = []
     for item in value:
-        if not isinstance(item, dict):
+        if not isinstance(item, Mapping):
             continue
-        section = str(item.get("section") or "未标注章节")
-        locations = []
-        page = item.get("page")
-        page_start = item.get("page_start")
-        if page not in (None, ""):
-            locations.append(f"page: {page}")
-        if page_start not in (None, ""):
-            locations.append(f"page_start: {page_start}")
-        if not locations:
-            locations.append("页码未标注")
-        chunk_id = str(item.get("chunk_id") or "未记录 chunk_id")
-        excerpt = html.escape(str(item.get("chunk_text") or "无可用原文片段")).replace(
-            "\n", "<br>"
+        labels = evidence_location_labels(item) or ["定位信息未标注"]
+        locator = "".join(
+            f"<span>{html.escape(label)}</span>" for label in labels
+        )
+        excerpt = build_evidence_excerpt(
+            item.get("chunk_text"),
+            item.get("matched_terms"),
+            max_chars=300,
+            page_numbers=(item.get("page"), item.get("page_start"), item.get("page_end")),
         )
         rows.append(
             '<article class="adjacent-evidence-item">'
-            '<div class="adjacent-evidence-meta">'
-            f"<span>section: {html.escape(section)}</span>"
-            f"<span>{html.escape(' / '.join(locations))}</span>"
-            f"<span>chunk_id: {html.escape(chunk_id)}</span>"
-            "</div>"
-            f'<div class="adjacent-evidence-excerpt">{excerpt}</div>'
+            '<div class="adjacent-evidence-context">补充上下文</div>'
+            f'<div class="adjacent-evidence-meta">{locator}</div>'
+            f'<div class="adjacent-evidence-excerpt">{highlight_evidence_excerpt(excerpt, item.get("matched_terms"))}</div>'
             "</article>"
         )
     if not rows:
         return
+    count = len(rows)
     st.markdown(
-        '<section class="adjacent-evidence" aria-label="相邻方法或结果证据">'
-        '<div class="adjacent-evidence-title">相邻方法/结果证据</div>'
-        f"{''.join(rows)}</section>",
+        '<details class="adjacent-evidence" aria-label="同篇文献补充上下文">'
+        f"<summary>同篇文献补充上下文（{count}）</summary>"
+        f'<div class="adjacent-evidence-list">{"".join(rows)}</div>'
+        "</details>",
         unsafe_allow_html=True,
     )
 
@@ -2089,24 +2429,58 @@ def render_reference_evidence(
         st.info("没有检索到可用的本地资料。")
         return
     for index, item in enumerate(evidence, 1):
-        title = item.get("title") or "未命名文献"
-        year = item.get("year") or "年份未知"
-        match_score = item.get("match_score")
-        match_text = f" · 匹配分 {match_score}" if match_score not in (None, "") else ""
-        st.markdown(f"**[文献{index}] {title}（{year}）**{match_text}")
-        st.write(item.get("chunk_text") or "暂无可展示的原文片段。")
-        page = item.get("page") or item.get("page_start")
-        page_text = f"；页码：{page}" if page not in (None, "") else ""
-        doi_text = f"；DOI：{item.get('doi')}" if item.get("doi") else ""
-        source = (
-            item.get("source")
-            or item.get("publication")
-            or item.get("source_file")
-            or "本地文献库"
-        )
+        if not isinstance(item, Mapping):
+            continue
+        title = html.escape(str(item.get("title") or "未命名文献"))
+        year = html.escape(str(item.get("year") or "年份未知"))
+        source = html.escape(_evidence_source_label(item))
         topic = item.get("topic") or item.get("category") or item.get("product")
-        topic_text = f"；主题：{topic}" if topic else ""
-        st.caption(f"来源：{source}{topic_text}{page_text}{doi_text}")
+        doi = item.get("doi")
+        match_score = item.get("match_score")
+        labels = evidence_location_labels(item) or ["定位信息未标注"]
+        locator_html = "".join(
+            f"<span>{html.escape(label)}</span>" for label in labels
+        )
+        source_parts = [f"来源：{source}"]
+        if topic not in (None, ""):
+            source_parts.append(f"主题：{html.escape(str(topic))}")
+        if doi not in (None, ""):
+            source_parts.append(f"DOI：{html.escape(str(doi))}")
+        score_html = (
+            f'<span class="reference-evidence-score">匹配度 {html.escape(str(match_score))}</span>'
+            if match_score not in (None, "")
+            else ""
+        )
+        raw_text = str(item.get("chunk_text") or "")
+        excerpt = build_evidence_excerpt(
+            raw_text,
+            item.get("matched_terms"),
+            page_numbers=(item.get("page"), item.get("page_start"), item.get("page_end")),
+        )
+        excerpt_html = highlight_evidence_excerpt(excerpt, item.get("matched_terms"))
+        full_text = full_evidence_display_text(raw_text)
+        full_text_html = html.escape(full_text or "暂无可展示的原文片段。")
+        st.markdown(
+            '<article class="reference-evidence-item">'
+            '<header class="reference-evidence-head">'
+            f'<div class="reference-evidence-index">文献 {index:02d}</div>'
+            '<div class="reference-evidence-title-row">'
+            f'<div class="reference-evidence-title">{title}</div>'
+            f'<span class="reference-evidence-year">{year}</span>{score_html}'
+            "</div></header>"
+            + f'<div class="reference-evidence-locator">{locator_html}</div>'
+            + '<div class="reference-evidence-source">'
+            + "<span> · </span>".join(source_parts)
+            + "</div>"
+            '<div class="reference-evidence-focus-label">关键信息</div>'
+            f'<div class="reference-evidence-excerpt">{excerpt_html}</div>'
+            '<details class="reference-evidence-full">'
+            '<summary>查看完整原文片段</summary>'
+            f'<div>{full_text_html}</div>'
+            "</details>"
+            "</article>",
+            unsafe_allow_html=True,
+        )
         if include_adjacent:
             render_adjacent_evidence(item.get("adjacent_chunks"))
 
@@ -2470,11 +2844,16 @@ def run_general_turn(
             {
                 key: item.get(key)
                 for key in (
+                    "document_id",
+                    "chunk_id",
+                    "chunk_index",
                     "title",
                     "year",
                     "chunk_text",
                     "page",
                     "page_start",
+                    "page_end",
+                    "section",
                     "doi",
                     "source",
                     "source_file",
@@ -2483,6 +2862,7 @@ def run_general_turn(
                     "category",
                     "product",
                     "match_score",
+                    "matched_terms",
                 )
                 if item.get(key) not in (None, "")
             }

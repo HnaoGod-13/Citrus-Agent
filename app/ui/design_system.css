@@ -2610,14 +2610,20 @@ div[data-testid="stDataFrame"] * {
 }
 
 .deep-retrieval-stats {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 18px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+    justify-items: stretch;
+    gap: 14px;
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
     margin: 18px 0;
-    padding: 12px 0;
-    border-top: 1px solid var(--border);
-    border-bottom: 1px solid var(--border);
+    padding: 16px;
+    background: var(--surface-panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    text-align: left;
 }
 
 .deep-retrieval-stats-title {
@@ -2628,15 +2634,21 @@ div[data-testid="stDataFrame"] * {
 }
 
 .deep-retrieval-stats-heading {
-    display: grid;
-    gap: 8px;
-    min-width: min(300px, 100%);
+    display: flex;
+    align-items: flex-start;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    gap: 8px 14px;
+    width: 100%;
+    min-width: 0;
 }
 
 .deep-retrieval-status {
     display: grid;
     gap: 2px;
     max-width: 420px;
+    min-width: 0;
+    box-sizing: border-box;
     padding: 8px 10px;
     border: 1px solid var(--border);
     border-left-width: 3px;
@@ -2668,8 +2680,11 @@ div[data-testid="stDataFrame"] * {
 
 .deep-retrieval-stats-values {
     display: grid;
-    grid-template-columns: repeat(2, minmax(86px, 1fr));
-    gap: 18px;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    align-items: start;
+    gap: 12px 18px;
+    width: 100%;
+    min-width: 0;
 }
 
 .deep-retrieval-stats-values:empty {
@@ -2678,10 +2693,13 @@ div[data-testid="stDataFrame"] * {
 
 .deep-retrieval-stat {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: baseline;
-    gap: 8px;
+    grid-template-columns: minmax(0, 1fr);
+    align-content: start;
+    justify-items: start;
+    gap: 2px;
     min-width: 0;
+    padding: 4px 0;
+    text-align: left;
 }
 
 .deep-retrieval-stat.is-scope {
@@ -2692,7 +2710,7 @@ div[data-testid="stDataFrame"] * {
     color: var(--text-tertiary);
     font-size: 11px;
     line-height: 16px;
-    white-space: nowrap;
+    overflow-wrap: anywhere;
 }
 
 .deep-retrieval-stat strong {
@@ -2700,47 +2718,166 @@ div[data-testid="stDataFrame"] * {
     font-size: 14px;
     font-weight: var(--weight-semibold);
     line-height: 18px;
+    overflow-wrap: anywhere;
 }
 
-.adjacent-evidence {
-    margin: 12px 0 20px;
-    padding-left: 14px;
-    border-left: 2px solid var(--border-strong);
+.reference-evidence-item {
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+    margin: 0 0 14px;
+    padding: 16px;
+    color: var(--text-primary);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
 }
 
-.adjacent-evidence-title {
-    margin-bottom: 2px;
-    color: var(--text-secondary);
-    font-size: 12px;
+.reference-evidence-head {
+    display: grid;
+    gap: 5px;
+    min-width: 0;
+}
+
+.reference-evidence-index,
+.reference-evidence-focus-label,
+.adjacent-evidence-context {
+    color: var(--text-tertiary);
+    font-size: 10px;
     font-weight: var(--weight-semibold);
-    line-height: 18px;
+    line-height: 15px;
 }
 
-.adjacent-evidence-item {
-    padding: 10px 0;
-    border-top: 1px solid var(--border-subtle);
+.reference-evidence-title-row {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 4px 8px;
+    min-width: 0;
 }
 
+.reference-evidence-title {
+    min-width: 0;
+    color: var(--text-primary);
+    font-size: 14px;
+    font-weight: var(--weight-semibold);
+    line-height: 1.55;
+    overflow-wrap: anywhere;
+}
+
+.reference-evidence-year,
+.reference-evidence-score {
+    color: var(--text-tertiary);
+    font-size: 11px;
+    line-height: 17px;
+    white-space: nowrap;
+}
+
+.reference-evidence-locator,
 .adjacent-evidence-meta {
     display: flex;
     flex-wrap: wrap;
     gap: 4px 12px;
+    margin-top: 9px;
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: var(--weight-medium);
+    line-height: 17px;
+}
+
+.reference-evidence-locator span,
+.adjacent-evidence-meta span {
+    overflow-wrap: anywhere;
+}
+
+.reference-evidence-source {
+    margin-top: 5px;
     color: var(--text-tertiary);
-    font-family: var(--font-mono) !important;
+    font-size: 10px;
+    line-height: 16px;
+    overflow-wrap: anywhere;
+}
+
+.reference-evidence-focus-label {
+    margin-top: 13px;
+}
+
+.reference-evidence-excerpt {
+    margin-top: 4px;
+    color: var(--text-primary);
+    font-size: 13px;
+    line-height: 1.75;
+    overflow-wrap: anywhere;
+}
+
+.evidence-match {
+    padding: 0 2px;
+    color: inherit;
+    background: #fff0ad;
+    border-radius: 2px;
+}
+
+.reference-evidence-full,
+.adjacent-evidence {
+    margin-top: 12px;
+    color: var(--text-secondary);
+    font-size: 11px;
+    line-height: 1.65;
+}
+
+.reference-evidence-full summary,
+.adjacent-evidence summary {
+    width: fit-content;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-weight: var(--weight-medium);
+}
+
+.reference-evidence-full > div {
+    max-height: 300px;
+    margin-top: 9px;
+    padding: 11px 12px;
+    overflow: auto;
+    color: var(--text-secondary);
+    background: var(--surface-panel);
+    border-left: 2px solid var(--border-strong);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.adjacent-evidence {
+    margin: -4px 0 18px;
+    padding: 0 14px;
+}
+
+.adjacent-evidence-list {
+    margin-top: 8px;
+    padding-left: 12px;
+    border-left: 2px solid var(--border-strong);
+}
+
+.adjacent-evidence-item {
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border-subtle);
+}
+
+.adjacent-evidence-item:last-child {
+    border-bottom: 0;
+}
+
+.adjacent-evidence-meta {
+    margin-top: 3px;
+    color: var(--text-tertiary);
     font-size: 10px;
     line-height: 15px;
 }
 
-.adjacent-evidence-meta span,
 .adjacent-evidence-excerpt {
-    overflow-wrap: anywhere;
-}
-
-.adjacent-evidence-excerpt {
-    margin-top: 6px;
+    margin-top: 5px;
     color: var(--text-secondary);
     font-size: 12px;
     line-height: 1.7;
+    overflow-wrap: anywhere;
 }
 
 .agent-live-dot {
@@ -3505,7 +3642,14 @@ div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label)
     }
 }
 
+@media (max-width: 1099px) {
+    .deep-retrieval-stats-values {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
 @media (max-width: 899px) {
+
     [class*="st-key-product_shell_overlays"] {
         z-index: 1210;
     }
@@ -4139,14 +4283,19 @@ div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label)
     }
 
     .deep-retrieval-stats {
-        align-items: stretch;
-        flex-direction: column;
-        gap: 9px;
+        gap: 12px;
+        margin: 14px 0;
+        padding: 14px;
     }
 
     .deep-retrieval-stats-values {
         grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 12px;
+        gap: 10px 12px;
+    }
+
+    .deep-retrieval-status {
+        width: 100%;
+        max-width: none;
     }
 
     .message-row.user .message-bubble {

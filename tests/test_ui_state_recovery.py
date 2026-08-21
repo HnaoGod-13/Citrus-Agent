@@ -431,9 +431,10 @@ class DeepRetrievalUiStateTests(unittest.TestCase):
             )
 
         rendered = markdown.call_args.args[0]
-        self.assertIn("相邻方法/结果证据", rendered)
+        self.assertIn("同篇文献补充上下文（1）", rendered)
+        self.assertIn("补充上下文", rendered)
         self.assertIn("材料与方法", rendered)
-        self.assertIn("page_start: 7", rendered)
+        self.assertIn("PDF 第 7 页", rendered)
         self.assertIn("doc-1:chunk-8", rendered)
         self.assertIn("温度 &lt; 60 °C", rendered)
         self.assertEqual(
@@ -452,6 +453,138 @@ class DeepRetrievalUiStateTests(unittest.TestCase):
         analysis_source = Path(app_main.__file__).read_text(encoding="utf-8-sig")
         self.assertIn('render_adjacent_evidence(item.get("adjacent_chunks"))', analysis_source)
         self.assertIn('"来源定位": parameter_source_location(item)', analysis_source)
+
+    def test_evidence_excerpt_focuses_tail_match_and_cleans_display_noise(self) -> None:
+        raw = (
+            "\x00 7\nDownloaded from https://example.org/article\n"
+            + "背景描述与本轮问题无关。" * 32
+            + "材料与方法中采用 60 °C 处理 30 min，随后立即冷却。"
+            + "结果表明该条件下得率提高 12.5%。"
+        )
+
+        excerpt = app_main.build_evidence_excerpt(
+            raw,
+            ["60 °C", "30 min", "得率"],
+        )
+
+        self.assertLessEqual(len(excerpt), 420)
+        self.assertIn("60 °C", excerpt)
+        self.assertIn("30 min", excerpt)
+        self.assertIn("得率", excerpt)
+        self.assertNotIn("Downloaded from", excerpt)
+        self.assertNotIn("\x00", excerpt)
+
+    def test_evidence_cleaning_preserves_numeric_results_and_hyphen_meaning(self) -> None:
+        raw = (
+            "Treatment A yield (%)\n60\nTreatment B yield (%)\n45\n"
+            "A dose-\nresponse relationship was observed."
+        )
+
+        cleaned = app_main.clean_evidence_display_text(raw)
+        full_text = app_main.full_evidence_display_text(raw)
+
+        self.assertIn("yield (%) 60", cleaned)
+        self.assertIn("yield (%) 45", cleaned)
+        self.assertIn("dose-response", cleaned)
+        self.assertIn("\n60\n", full_text)
+        self.assertIn("dose-\nresponse", full_text)
+
+        marker_cleaned = app_main.clean_evidence_display_text(
+            "---\n~~Repeated header~~\n# Results\nUseful evidence."
+        )
+        self.assertEqual("Repeated header Results Useful evidence.", marker_cleaned)
+
+        page_cleaned = app_main.clean_evidence_display_text(
+            "Journal running header\n12\nUseful evidence at 65 °C.",
+            page_numbers=[12],
+        )
+        self.assertEqual("Useful evidence at 65 °C.", page_cleaned)
+
+    def test_realistic_index_metadata_is_not_presented_as_scientific_evidence(self) -> None:
+        raw = (
+            "serial JL 272552 291210 Bioorganic Chemistry 2024-04-16 "
+            "articleinfo articlenumber authfirstinitialnorm contenttype copyright "
+            "dateloaded dateloadedtxt doi itemstage FULL-TEXT 147 Volume "
+            "1 Introduction 2 Material and methods"
+        )
+
+        cleaned = app_main.clean_evidence_display_text(raw)
+        excerpt = app_main.build_evidence_excerpt(raw, ["Material and methods"])
+
+        self.assertEqual("", cleaned)
+        self.assertEqual(
+            "该片段主要是文献索引元数据，未提取到可核验的正文信息。",
+            excerpt,
+        )
+        self.assertNotIn("articleinfo", excerpt)
+
+    def test_evidence_excerpt_keeps_spaces_between_english_sentences(self) -> None:
+        excerpt = app_main.build_evidence_excerpt(
+            "First result improved. Second result confirmed. Third sentence adds context.",
+            ["improved", "confirmed"],
+        )
+
+        self.assertIn("improved. Second", excerpt)
+        self.assertNotIn("improved.Second", excerpt)
+
+    def test_reference_evidence_is_literal_safe_located_and_non_mutating(self) -> None:
+        evidence = [
+            {
+                "title": "<script>alert('x')</script> Citrus -- study",
+                "year": 2026,
+                "source_file": r"C:\private\papers\citrus-study.pdf",
+                "section": "材料与方法",
+                "page": 7,
+                "page_start": 7,
+                "page_end": 8,
+                "chunk_id": "paper-1:chunk-8",
+                "doi": "10.1000/a&b",
+                "matched_terms": ["60 °C", "30 min", "60 °C"],
+                "chunk_text": "---\n~~原始标记~~ # 标题\n温度 < 60 °C，时间 30 min。",
+            }
+        ]
+        before = json.loads(json.dumps(evidence, ensure_ascii=False))
+
+        with (
+            patch.object(app_main.st, "markdown") as markdown,
+            patch.object(app_main.st, "write") as write,
+            patch.object(app_main.st, "caption") as caption,
+        ):
+            app_main.render_reference_evidence(evidence)
+
+        rendered = markdown.call_args.args[0]
+        self.assertEqual(before, evidence)
+        self.assertIn("&lt;script&gt;alert(&#x27;x&#x27;)&lt;/script&gt;", rendered)
+        self.assertNotIn("<script>", rendered)
+        self.assertIn("citrus-study.pdf", rendered)
+        self.assertNotIn(r"C:\private", rendered)
+        self.assertIn("章节：材料与方法", rendered)
+        self.assertIn("PDF 第 7–8 页", rendered)
+        self.assertIn("片段：paper-1:chunk-8", rendered)
+        self.assertIn("10.1000/a&amp;b", rendered)
+        self.assertIn('<mark class="evidence-match">60 °C</mark>', rendered)
+        self.assertIn("温度 &lt; ", rendered)
+        self.assertIn("查看完整原文片段", rendered)
+        write.assert_not_called()
+        caption.assert_not_called()
+
+    def test_evidence_location_and_excerpt_degrade_without_optional_metadata(self) -> None:
+        self.assertEqual([], app_main.evidence_location_labels({}))
+        self.assertEqual(
+            ["片段序号：4"],
+            app_main.evidence_location_labels({"chunk_index": 4}),
+        )
+        excerpt = app_main.build_evidence_excerpt(
+            "第一句提供背景。第二句给出压力 80 MPa。第三句报告结果。",
+            [],
+        )
+        self.assertIn("80 MPa", excerpt)
+
+        with patch.object(app_main.st, "markdown") as markdown:
+            app_main.render_reference_evidence(
+                [{"title": "No locator", "chunk_text": "Evidence text."}]
+            )
+        self.assertIn("定位信息未标注", markdown.call_args.args[0])
 
     def test_quick_statistics_remain_hidden(self) -> None:
         with patch.object(app_main.st, "markdown") as markdown:

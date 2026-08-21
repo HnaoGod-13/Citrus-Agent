@@ -452,6 +452,67 @@ class DeepRetrievalBackgroundWiringTests(unittest.TestCase):
         self.assertEqual("deep", retrieve.call_args.kwargs["retrieval_mode"])
         self.assertEqual("deep", build_messages.call_args.kwargs["retrieval_mode"])
 
+    def test_general_answer_trace_preserves_evidence_locator_fields(self) -> None:
+        evidence = [
+            {
+                "document_id": "paper-1",
+                "chunk_id": "paper-1_p0007_0008",
+                "chunk_index": 8,
+                "title": "Orange juice homogenization",
+                "year": 2026,
+                "chunk_text": "Orange juice was homogenized at 80 MPa before filling.",
+                "page": 7,
+                "page_start": 7,
+                "page_end": 8,
+                "section": "材料与方法",
+                "doi": "10.1000/orange",
+                "source": "Journal of Citrus Processing",
+                "source_file": "orange-processing.pdf",
+                "publication": "Journal of Citrus Processing",
+                "topic": "工艺优化",
+                "category": "橙汁",
+                "product": "橙汁",
+                "match_score": 91.25,
+                "matched_terms": ["orange juice", "homogenized", "80 mpa"],
+            }
+        ]
+        with (
+            patch.object(
+                app_main,
+                "retrieve_general_literature",
+                return_value={"evidence": evidence, "deep_retrieval_stats": {}},
+            ),
+            patch.object(
+                app_main,
+                "build_general_chat_messages",
+                return_value=[{"role": "user", "content": "question"}],
+            ) as build_messages,
+            patch.object(app_main, "chat_with_deepseek", return_value="answer"),
+        ):
+            answer, trace = app_main.run_general_turn(
+                "question",
+                "api-key",
+                [],
+                retrieval_mode="deep",
+            )
+
+        self.assertEqual("answer", answer)
+        self.assertEqual(evidence, trace["evidence"])
+        self.assertEqual(evidence, build_messages.call_args.kwargs["evidence"])
+
+        restored = app_main.restore_ui_messages(
+            [
+                {
+                    "message_id": "assistant-with-locators",
+                    "role": "assistant",
+                    "content": answer,
+                    "message_type": "chat",
+                    "metadata": {"evidence": trace["evidence"]},
+                }
+            ]
+        )
+        self.assertEqual(trace["evidence"], restored[0]["evidence"])
+
     def test_general_answer_keeps_long_analysis_tail_while_removing_references(self) -> None:
         detailed_answer = "".join(
             f"第{index}项说明包含不同的条件和执行重点。"
