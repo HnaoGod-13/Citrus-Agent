@@ -2231,11 +2231,25 @@ div[data-testid="stExpander"] {
 }
 
 div[data-testid="stExpander"] summary {
+    display: flex;
     min-height: 52px;
+    box-sizing: border-box;
+    align-items: center;
     color: var(--text-primary) !important;
     background: var(--surface) !important;
     font-size: 13px;
     font-weight: var(--weight-medium);
+}
+
+div[data-testid="stExpander"] summary > span {
+    display: flex;
+    width: 100%;
+    align-items: center;
+}
+
+div[data-testid="stExpander"] summary [data-testid="stMarkdownContainer"] p {
+    margin: 0 !important;
+    line-height: 20px !important;
 }
 
 div[data-testid="stExpander"] summary:hover,
@@ -2309,6 +2323,14 @@ div[data-testid="stExpander"] details[open] > summary {
     margin: 0 0 10px !important;
     font-size: var(--report-body-size) !important;
     line-height: var(--report-body-leading) !important;
+}
+
+:is(.analysis-shell, [class*="st-key-analysis_shell_"])
+    div[data-testid="stExpander"]:has(.report-anchor)
+    summary [data-testid="stMarkdownContainer"] p {
+    margin: 0 !important;
+    font-size: 15px !important;
+    line-height: 20px !important;
 }
 
 :is(.analysis-shell, [class*="st-key-analysis_shell_"])

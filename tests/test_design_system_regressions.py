@@ -308,6 +308,31 @@ class DesignSystemRegressionTests(unittest.TestCase):
         self.assertIn("active_job is not None", composer)
         self.assertIn('pending_agent_persistence', composer)
 
+    def test_expander_headers_are_vertically_centered(self) -> None:
+        css = CSS_PATH.read_text(encoding="utf-8-sig")
+        summary_start = css.index('div[data-testid="stExpander"] summary {')
+        summary_rule = css[summary_start : css.index("}", summary_start) + 1]
+        title_start = css.index(
+            'div[data-testid="stExpander"] summary [data-testid="stMarkdownContainer"] p {'
+        )
+        title_rule = css[title_start : css.index("}", title_start) + 1]
+        report_title_start = css.index(
+            'summary [data-testid="stMarkdownContainer"] p {',
+            title_start + len(title_rule),
+        )
+        report_title_rule = css[
+            report_title_start : css.index("}", report_title_start) + 1
+        ]
+
+        self.assertIn("display: flex;", summary_rule)
+        self.assertIn("min-height: 52px;", summary_rule)
+        self.assertIn("box-sizing: border-box;", summary_rule)
+        self.assertIn("align-items: center;", summary_rule)
+        self.assertIn("margin: 0 !important;", title_rule)
+        self.assertIn("line-height: 20px !important;", title_rule)
+        self.assertIn("margin: 0 !important;", report_title_rule)
+        self.assertIn("font-size: 15px !important;", report_title_rule)
+
     def test_sidebar_controls_share_a_deliberate_type_scale(self) -> None:
         css = CSS_PATH.read_text(encoding="utf-8-sig")
         main_source = MAIN_PATH.read_text(encoding="utf-8-sig")

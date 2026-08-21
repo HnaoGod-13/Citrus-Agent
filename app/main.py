@@ -647,7 +647,7 @@ SCROLL_POSITION_MANAGER_INSTALLER = r"""
 
     const createManager = () => {
         const manager = {
-            version: 7,
+            version: 8,
             restoring: false,
             userScrollUntil: 0,
             scroller: null,
@@ -688,8 +688,8 @@ SCROLL_POSITION_MANAGER_INSTALLER = r"""
         };
         manager.preservePosition = (
             scrollTop,
-            delays = [0, 40, 120, 280],
-            releaseDelay = 360
+            delays = [0, 40, 120, 280, 520, 800, 1200, 1600],
+            releaseDelay = 1700
         ) => {
             const savedPosition = Number(scrollTop);
             if (!Number.isFinite(savedPosition)) return;
@@ -851,7 +851,7 @@ SCROLL_POSITION_MANAGER_INSTALLER = r"""
         if (!scroller) return;
 
         let manager = window[managerKey];
-        if (!manager || manager.version !== 7) {
+        if (!manager || manager.version !== 8) {
             teardown(manager);
             manager = createManager();
             window[managerKey] = manager;
@@ -925,7 +925,7 @@ SCROLL_POSITION_MANAGER_INSTALLER = r"""
         }
     };
 
-    install.version = 7;
+    install.version = 8;
     window[installerKey] = install;
 })();
 """
@@ -968,7 +968,7 @@ def render_scroll_position_manager(
             const doc = host.document;
             const commandId = {command_marker};
             const installerKey = "__citrusAgentInstallScrollManager";
-            if (!host[installerKey] || host[installerKey].version !== 7) {{
+            if (!host[installerKey] || host[installerKey].version !== 8) {{
                 const loader = doc.createElement("script");
                 loader.textContent = {installer_source};
                 (doc.head || doc.documentElement).appendChild(loader);
@@ -1025,7 +1025,7 @@ def render_progress_reveal(reveal_id: str) -> None:
             const doc = host.document;
             const installerKey = "__citrusAgentInstallScrollManager";
             const managerKey = "__citrusAgentScrollManager";
-            if (!host[installerKey] || host[installerKey].version !== 7) {{
+            if (!host[installerKey] || host[installerKey].version !== 8) {{
                 const loader = doc.createElement("script");
                 loader.textContent = {installer_source};
                 (doc.head || doc.documentElement).appendChild(loader);

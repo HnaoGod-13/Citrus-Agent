@@ -70,7 +70,7 @@ class ScrollPositionManagerTests(unittest.TestCase):
         self.assertIn("const commandId = 7;", bootstrap)
         self.assertIn("commandId,", bootstrap)
 
-        self.assertIn("version: 7", installer)
+        self.assertIn("version: 8", installer)
         self.assertIn("window[installerKey] = install;", installer)
         self.assertIn(
             "savedPosition = Number(window.sessionStorage.getItem(storageKey));",
@@ -145,7 +145,7 @@ class ScrollPositionManagerTests(unittest.TestCase):
             pointer_handler,
         )
 
-    def test_expander_position_guard_is_short_and_user_cancelable(self) -> None:
+    def test_expander_position_guard_outlasts_animation_and_is_user_cancelable(self) -> None:
         installer = app_main.SCROLL_POSITION_MANAGER_INSTALLER
         preserve = installer[
             installer.index("manager.preservePosition = (") : installer.index(
@@ -153,8 +153,11 @@ class ScrollPositionManagerTests(unittest.TestCase):
             )
         ]
 
-        self.assertIn("delays = [0, 40, 120, 280]", preserve)
-        self.assertIn("releaseDelay = 360", preserve)
+        self.assertIn(
+            "delays = [0, 40, 120, 280, 520, 800, 1200, 1600]",
+            preserve,
+        )
+        self.assertIn("releaseDelay = 1700", preserve)
         self.assertIn("manager.scheduleMotion(", preserve)
         self.assertIn("manager.remember", preserve)
         self.assertIn(
@@ -176,8 +179,8 @@ class ScrollPositionManagerTests(unittest.TestCase):
             app_main.render_progress_reveal("progress-version-check")
             progress_bootstrap = iframe.call_args.args[0]
 
-        self.assertIn("version !== 7", scroll_bootstrap)
-        self.assertIn("version !== 7", progress_bootstrap)
+        self.assertIn("version !== 8", scroll_bootstrap)
+        self.assertIn("version !== 8", progress_bootstrap)
         self.assertNotIn("version !== 4", progress_bootstrap)
 
     def test_empty_state_reruns_do_not_force_scroll_reset(self) -> None:
