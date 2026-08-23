@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -22,6 +23,18 @@ DIRECTION_WHOLE_POWDER_TEA = "整果-果粉/果茶"
 DIRECTION_WHOLE_MEDICINAL = "整果-药橘/咸柑橘/枳实"
 DIRECTION_SEED = "种子-籽油/橘核"
 DIRECTION_BYPRODUCT = "副产物-饲料/有机肥"
+
+
+TARGET_PRODUCT_DIRECTIONS = {
+    "陈皮": DIRECTION_PEEL,
+    "柑橘汁": DIRECTION_JUICE,
+    "浓缩汁": DIRECTION_CONCENTRATE,
+    "精油": DIRECTION_PEEL_OIL,
+    "果胶": DIRECTION_PEEL_PECTIN,
+    "果酒/果醋": DIRECTION_VINEGAR_WINE,
+    "果脯/蜜饯": DIRECTION_WHOLE_PRESERVE,
+    "柑橘干片": DIRECTION_WHOLE_DRY,
+}
 
 
 ALL_DIRECTIONS = [
@@ -126,7 +139,9 @@ def _has_serious_decay(text: str) -> bool:
         "未见腐烂",
         "没有腐烂",
     ]
-    cleaned = text
+    # Aflatoxin and mold-test statements describe laboratory results, not
+    # visible fruit decay. Their word "霉" must not trigger the appearance gate.
+    cleaned = re.sub(r"黄曲霉毒素|霉菌(?:总数)?", "", text)
     for phrase in negative_phrases:
         cleaned = cleaned.replace(phrase, "")
     return _contains(cleaned, ["霉", "腐烂", "霉斑", "发黑", "异味", "软烂"])
@@ -198,6 +213,7 @@ def score_processing_options(
     batch: dict[str, Any],
     image_observation: str,
     evidence: list[dict[str, Any]] | None = None,
+    target_product: str = "",
 ) -> list[ScoreResult]:
     """Rank routes with auditable batch rules plus direct literature applicability."""
     origin = str(batch.get("origin", ""))
@@ -359,7 +375,18 @@ def score_processing_options(
         result.score = max(0, min(100, result.score))
         result.match_level = _match_level(result.score)
 
-    return sorted(results.values(), key=lambda item: item.score, reverse=True)
+    ranked = sorted(results.values(), key=lambda item: item.score, reverse=True)
+    target_direction = TARGET_PRODUCT_DIRECTIONS.get(str(target_product or ""))
+    if not target_direction:
+        return ranked
+    focused = next((item for item in ranked if item.direction == target_direction), None)
+    if focused is None:
+        return ranked
+    focused.reasons.insert(
+        0,
+        f"用户已明确目标产品为{target_product}；本轮优先评估该路线的可行性，适配等级仍按批次数据与证据独立计算。",
+    )
+    return [focused, *(item for item in ranked if item.direction != target_direction)]
 
 
 def check_quality_risks(batch: dict[str, Any], image_observation: str) -> list[QualityRisk]:

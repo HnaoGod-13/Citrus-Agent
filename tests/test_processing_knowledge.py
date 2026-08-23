@@ -782,6 +782,59 @@ class ProcessingKnowledgeTests(unittest.TestCase):
 
         self.assertFalse(any(item["parameter_name"] == "时间" for item in records))
 
+    def test_distilled_water_is_not_classified_as_a_distillation_method(self) -> None:
+        intent = analyze_processing_intent(
+            "目标产品为果胶，已有温控搅拌提取罐。",
+            {"origin": "赣南", "variety": "脐橙"},
+        )
+        chunk = evidence(
+            "pectin-water",
+            "脐橙皮果胶水提方法",
+            "果胶提取时加入60℃蒸馏水，搅拌提取30 min。",
+            category="果胶",
+        )
+
+        records = extract_processing_parameters([chunk], intent)
+
+        self.assertTrue(records)
+        self.assertTrue(all("蒸馏" not in item["process_method"] for item in records))
+
+    def test_drying_value_cannot_be_published_as_a_cleaning_parameter(self) -> None:
+        intent = analyze_processing_intent(
+            "目标产品为果胶，已有清洗机、提取罐和低温干燥设备。",
+            {"origin": "赣南", "variety": "脐橙"},
+        )
+        chunk = evidence(
+            "pectin-freeze-dry",
+            "脐橙皮果胶提取与干燥方法",
+            "沉淀用乙醇清洗除杂，于-10℃进行真空冷冻干燥。",
+            category="果胶",
+        )
+
+        annotated, _records, groups = verified_parameters([chunk], intent)
+        plan = build_parameterized_process_plan(intent, groups, annotated)
+        cleaning = next(row for row in plan["rows"] if row["step"] == "清洗消毒")
+
+        self.assertFalse(cleaning["parameters"])
+
+    def test_high_pressure_extraction_requires_matching_equipment(self) -> None:
+        intent = analyze_processing_intent(
+            "目标产品为果胶，小试规模，已有温控搅拌提取罐。",
+            {"origin": "赣南", "variety": "脐橙"},
+        )
+        chunk = evidence(
+            "pectin-high-pressure",
+            "脐橙皮高压果胶提取方法",
+            "在高压反应釜中提取果胶，压力为20 MPa，提取30 min。",
+            category="果胶",
+        )
+
+        records = extract_processing_parameters([chunk], intent)
+        pressure = next(item for item in records if item["parameter_name"] == "压力")
+
+        self.assertFalse(pressure["eligible_for_recommendation"])
+        self.assertIn("方法所需设备与用户已说明设备不匹配", pressure["scope_issues"])
+
     def test_invalid_search_typeerror_is_not_retried_as_legacy_signature(self) -> None:
         intent = analyze_processing_intent("橙汁怎样加工", {"variety": "甜橙"})
         calls = 0

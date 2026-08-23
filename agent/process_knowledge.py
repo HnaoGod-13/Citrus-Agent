@@ -85,8 +85,8 @@ EQUIPMENT_ALIASES = (
     "清洗机", "榨汁机", "破碎机", "压榨机", "过滤器", "离心机", "均质机", "脱气机",
     "杀菌机", "灌装机", "热风干燥箱", "真空干燥机", "冻干机", "冷库", "蒸发器",
     "膜设备", "发酵罐", "提取罐", "浸提罐", "蒸馏设备", "蒸馏釜", "冷压机",
-    "油水分离机", "centrifuge", "homogenizer", "pasteurizer", "evaporator", "extractor",
-    "distillation unit",
+    "油水分离机", "高压提取罐", "高温高压反应釜", "超临界萃取设备", "超声提取设备",
+    "centrifuge", "homogenizer", "pasteurizer", "evaporator", "extractor", "distillation unit",
 )
 
 QUALITY_TERMS = (
@@ -263,6 +263,11 @@ ROTATION_PROCESS_EQUIPMENT_TERMS = (
 )
 
 STEP_METHOD_TAGS: dict[str, set[str]] = {
+    "原料验收": set(),
+    "清洗消毒": set(),
+    "去皮/取皮": set(),
+    "破碎/预处理": set(),
+    "提取": {"水提", "酸提", "酶提", "冷压", "蒸馏", "超临界", "高压", "超声/热超声"},
     "过滤/离心": {"膜处理"},
     "浓缩": {"真空", "膜处理"},
     "均质": {"高压", "超声/热超声"},
@@ -272,6 +277,11 @@ STEP_METHOD_TAGS: dict[str, set[str]] = {
 }
 
 STEP_METHOD_EQUIPMENT: dict[tuple[str, str], tuple[str, ...]] = {
+    ("提取", "冷压"): ("冷压机",),
+    ("提取", "蒸馏"): ("蒸馏设备", "蒸馏釜"),
+    ("提取", "超临界"): ("超临界萃取设备",),
+    ("提取", "高压"): ("高压提取罐", "高温高压反应釜"),
+    ("提取", "超声/热超声"): ("超声提取设备",),
     ("过滤/离心", "膜处理"): ("过滤器", "膜设备"),
     ("浓缩", "真空"): ("蒸发器", "真空干燥机"),
     ("浓缩", "膜处理"): ("膜设备",),
@@ -522,6 +532,32 @@ def _explicit_target_product(text: str) -> str:
     return min(matches)[1] if matches else ""
 
 
+def _target_is_explicit(user_text: str, target_product: str, user_targets: list[str]) -> bool:
+    """Distinguish a requested output from a comparison or literature mention."""
+    if not target_product:
+        return False
+    text = str(user_text or "")
+    lower = text.lower()
+    aliases = PRODUCT_ALIASES.get(target_product, (target_product,))
+    target_positions = [
+        lower.find(alias.lower())
+        for alias in aliases
+        if lower.find(alias.lower()) >= 0
+    ]
+    cue_positions = [
+        lower.find(cue.lower())
+        for cue in (
+            "目标产品", "目标产物", "目标方向", "加工成", "制成", "做成",
+            "生产", "想做", "要做", "希望做", "产出",
+        )
+        if lower.find(cue.lower()) >= 0
+    ]
+    if any(abs(target - cue) <= 28 for target in target_positions for cue in cue_positions):
+        return True
+    comparison = any(term in lower for term in ("比较", "对比", "区别", "哪个好", "各自", "分别"))
+    return len(set(user_targets)) == 1 and not comparison
+
+
 def _scale(text: str) -> str:
     lower = text.lower()
     for scale, aliases in SCALE_ALIASES.items():
@@ -539,6 +575,10 @@ def analyze_processing_intent(
     batch = batch or {}
     combined = _text(user_text, direction, batch.get("variety"), batch.get("origin"), batch.get("customer_type"))
     targets = [product for product, aliases in PRODUCT_ALIASES.items() if _contains(combined, aliases)]
+    user_targets = [
+        product for product, aliases in PRODUCT_ALIASES.items()
+        if _contains(user_text, aliases)
+    ]
     preferred_product = _explicit_target_product(direction) or _explicit_target_product(user_text)
     if preferred_product:
         targets = [preferred_product, *(product for product in targets if product != preferred_product)]
@@ -556,6 +596,11 @@ def analyze_processing_intent(
         "maturity": str(batch.get("maturity") or batch.get("ripeness") or ""),
         "target_products": targets,
         "primary_product": targets[0] if targets else "柑橘加工品",
+        "target_is_explicit": _target_is_explicit(
+            user_text,
+            _explicit_target_product(user_text) or (user_targets[0] if len(user_targets) == 1 else ""),
+            user_targets,
+        ),
         "operations": operations,
         "parameter_targets": [term for term in PARAMETER_REQUEST_TERMS if term.lower() in combined.lower()],
         "scale": _scale(combined),
@@ -1027,7 +1072,10 @@ def _infer_raw_material(text: str, fallback: str) -> str:
 
 
 def _infer_method(text: str) -> str:
-    lower = text.lower()
+    # Distilled water is an ingredient, not evidence that the process uses a
+    # distillation unit. Treating it as a method can project unrelated values
+    # into extraction or cleaning steps.
+    lower = re.sub(r"蒸馏水|distilled\s+water", " ", text.lower())
     return "/".join(tag for tag, aliases in METHOD_TAGS.items() if any(alias.lower() in lower for alias in aliases)) or "未标明方法"
 
 

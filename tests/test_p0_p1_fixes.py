@@ -18,7 +18,15 @@ from agent.orchestrator import (
     references_current_batch,
     references_previous_evidence,
 )
-from agent.rules import DIRECTION_PEEL_PECTIN, score_processing_options
+from agent.process_knowledge import analyze_processing_intent
+from agent.report import build_processing_plan
+from agent.rules import (
+    DIRECTION_JUICE,
+    DIRECTION_PEEL_PECTIN,
+    check_quality_risks,
+    score_processing_options,
+)
+from agent.tools import score_processing
 
 
 class ConversationMemoryAndRoutingTests(unittest.TestCase):
@@ -75,6 +83,53 @@ class InputValidationTests(unittest.TestCase):
 
 
 class EvidenceAwareRankingTests(unittest.TestCase):
+    def test_explicit_pectin_target_controls_route_plan_and_keeps_feasibility_score(self) -> None:
+        batch = default_batch()
+        batch.update({
+            "origin": "赣南",
+            "variety": "脐橙",
+            "brix": 12,
+            "customer_type": "食品加工厂",
+        })
+        request = "目标产品为果皮果胶，小试规模，请给出完整加工流程。"
+        intent = analyze_processing_intent(request, batch)
+
+        result = score_processing(batch, request, [], intent)
+        scores = result.data
+        plan = build_processing_plan(batch, scores[0].direction, [], request)
+
+        self.assertTrue(intent["target_is_explicit"])
+        self.assertEqual(intent["primary_product"], "果胶")
+        self.assertEqual(scores[0].direction, DIRECTION_PEEL_PECTIN)
+        self.assertLess(scores[0].score, next(item.score for item in scores if item.direction == DIRECTION_JUICE))
+        self.assertEqual(plan["direction"], DIRECTION_PEEL_PECTIN)
+        self.assertIn("酸提或酶提", plan["flow"])
+        self.assertNotIn("榨汁", plan["flow"])
+
+    def test_comparison_does_not_force_the_first_named_product_to_the_top(self) -> None:
+        batch = default_batch()
+        batch.update({"origin": "赣南", "variety": "脐橙", "brix": 12})
+        request = "比较NFC果汁与果胶两条路线的优缺点。"
+        intent = analyze_processing_intent(request, batch)
+
+        scores = score_processing(batch, request, [], intent).data
+
+        self.assertFalse(intent["target_is_explicit"])
+        self.assertEqual(scores[0].direction, DIRECTION_JUICE)
+
+    def test_negative_aflatoxin_result_is_not_treated_as_visible_mold(self) -> None:
+        batch = default_batch()
+        batch.update({
+            "pesticide": True,
+            "heavy_metal": True,
+            "microbe": True,
+            "aflatoxin": True,
+        })
+
+        risks = check_quality_risks(batch, "黄曲霉毒素未检出，农残和微生物均未超标。")
+
+        self.assertFalse(any(item.item == "疑似霉变或腐烂" for item in risks))
+
     def test_direct_literature_changes_route_ranking_metadata(self) -> None:
         batch = default_batch()
         batch.update({"origin": "广西", "variety": "柑橘", "customer_type": "食品加工厂"})

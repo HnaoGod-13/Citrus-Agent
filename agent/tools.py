@@ -444,9 +444,23 @@ def retrieve_processing_parameters(
         metadata={"deep_retrieval_stats": retrieval_stats},
     )
 def score_processing(
-    batch: dict[str, Any], image_observation: str, evidence: list[dict[str, Any]]
+    batch: dict[str, Any],
+    image_observation: str,
+    evidence: list[dict[str, Any]],
+    processing_intent: dict[str, Any] | None = None,
 ) -> ToolResult:
-    scores = score_processing_options(batch, image_observation, evidence=evidence)
+    processing_intent = processing_intent or {}
+    target_product = (
+        str(processing_intent.get("primary_product") or "")
+        if processing_intent.get("target_is_explicit")
+        else ""
+    )
+    scores = score_processing_options(
+        batch,
+        image_observation,
+        evidence=evidence,
+        target_product=target_product,
+    )
     top_score = scores[0] if scores else None
     return ToolResult(
         name="评估加工路线",

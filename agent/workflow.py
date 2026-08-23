@@ -309,7 +309,7 @@ def run_demo_agent(
         broad_evidence = evidence
 
     _notify(progress_callback, "正在综合批次规则、文献适用性和数据完整度评估加工路线")
-    score_result = score_processing(batch, image_observation, evidence)
+    score_result = score_processing(batch, image_observation, evidence, processing_intent)
     scores = score_result.data
     completed_tool_keys.append("rule_scoring_engine")
     agent_steps.append(_step_from_tool_result(score_result))
@@ -340,7 +340,7 @@ def run_demo_agent(
         )
         agent_steps.append(_step_from_tool_result(process_result))
         # Re-evaluate support labels after focused evidence has been added.
-        score_result = score_processing(batch, image_observation, evidence)
+        score_result = score_processing(batch, image_observation, evidence, processing_intent)
         scores = score_result.data
 
     completed_tool_keys.append("processing_evidence_aggregator")
