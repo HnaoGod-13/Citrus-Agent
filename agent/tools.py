@@ -3,11 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from .evidence import annotate_evidence, annotate_parameter_groups
 from .process_knowledge import (
     aggregate_parameter_evidence,
     analyze_processing_intent,
     build_parameterized_process_plan,
     extract_processing_parameters,
+    is_public_parameter_group,
     retrieve_processing_evidence,
 )
 from .rag import comprehensive_search_knowledge
@@ -396,14 +398,18 @@ def retrieve_processing_parameters(
     else:
         evidence, subquestions = retrieval
         retrieval_stats = {}
+    evidence = annotate_evidence(evidence, intent)
     parameters = extract_processing_parameters(evidence, intent)
-    parameter_groups = aggregate_parameter_evidence(parameters)
+    parameter_groups = annotate_parameter_groups(
+        aggregate_parameter_evidence(parameters),
+        evidence,
+    )
     parameterized_plan = build_parameterized_process_plan(intent, parameter_groups, evidence)
     usable = sum(
         1
         for item in parameter_groups
-        if item.get("confidence_level") in {"高可信度", "中可信度"}
-        and not item.get("conflict")
+        if is_public_parameter_group(item)
+        and item.get("confidence_level") in {"高可信度", "中可信度"}
     )
     total_subquestions = len(subquestions)
     attempted_subquestions = int(
@@ -476,6 +482,7 @@ def write_report(
     process_parameters: list[dict[str, Any]] | None = None,
     parameter_groups: list[dict[str, Any]] | None = None,
     parameterized_plan: dict[str, Any] | None = None,
+    key_conclusions: list[dict[str, Any]] | None = None,
 ) -> ToolResult:
     top_direction = scores[0].direction
     processing_plan = build_processing_plan(
@@ -496,6 +503,7 @@ def write_report(
         process_parameters=process_parameters,
         parameter_groups=parameter_groups,
         parameterized_plan=parameterized_plan,
+        key_conclusions=key_conclusions,
     )
     compliance_issues = check_compliance(report)
     return ToolResult(

@@ -2721,6 +2721,62 @@ div[data-testid="stDataFrame"] * {
     overflow-wrap: anywhere;
 }
 
+.key-conclusion-evidence-card {
+    width: 100%;
+    box-sizing: border-box;
+    margin: 0 0 14px;
+    padding: 16px;
+    color: var(--text-primary);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--agent-accent);
+    border-radius: var(--radius-sm);
+    font-size: 12px;
+    line-height: 1.7;
+}
+
+.key-conclusion-type {
+    color: var(--text-tertiary);
+    font-size: 10px;
+    font-weight: var(--weight-semibold);
+}
+
+.key-conclusion-text {
+    margin: 4px 0 8px;
+    color: var(--text-primary);
+    font-size: 14px;
+    font-weight: var(--weight-semibold);
+}
+
+.key-conclusion-level,
+.reference-evidence-level {
+    display: inline-block;
+    margin: 0 8px 6px 0;
+    padding: 2px 7px;
+    color: var(--text-primary);
+    background: var(--surface-secondary);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    font-size: 10px;
+    line-height: 16px;
+}
+
+.key-conclusion-reference,
+.key-conclusion-reference-empty {
+    margin-top: 10px;
+    padding: 10px 12px;
+    background: var(--surface-secondary);
+    border-radius: var(--radius-sm);
+    overflow-wrap: anywhere;
+}
+
+.key-conclusion-reference a,
+.reference-evidence-source a {
+    color: var(--agent-accent);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+
 .reference-evidence-item {
     width: 100%;
     min-width: 0;
@@ -2795,6 +2851,15 @@ div[data-testid="stDataFrame"] * {
     color: var(--text-tertiary);
     font-size: 10px;
     line-height: 16px;
+    overflow-wrap: anywhere;
+}
+
+.reference-evidence-level-reason,
+.reference-evidence-applicability {
+    margin-top: 6px;
+    color: var(--text-secondary);
+    font-size: 11px;
+    line-height: 1.65;
     overflow-wrap: anywhere;
 }
 

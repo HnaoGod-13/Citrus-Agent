@@ -4,7 +4,11 @@ import json
 import unittest
 from unittest.mock import patch
 
-from agent.llm_client import DeepSeekAPIError, chat_with_deepseek
+from agent.llm_client import (
+    DeepSeekAPIError,
+    build_general_chat_messages,
+    chat_with_deepseek,
+)
 
 
 class FakeResponse:
@@ -38,6 +42,13 @@ def completion(content: str | None, *, finish_reason: str = "stop") -> FakeRespo
 
 
 class DeepSeekCompletionTests(unittest.TestCase):
+    def test_general_prompt_keeps_reported_values_but_blocks_parameter_recommendations(self) -> None:
+        messages = build_general_chat_messages([], "介绍一篇橙汁加工研究", evidence=[])
+        system_prompt = messages[0]["content"]
+        self.assertIn("原文报告值", system_prompt)
+        self.assertIn("推荐参数", system_prompt)
+        self.assertIn("严禁改写", system_prompt)
+
     def test_nonempty_thinking_answer_is_returned_without_retry(self) -> None:
         with patch(
             "agent.llm_client.urllib.request.urlopen",

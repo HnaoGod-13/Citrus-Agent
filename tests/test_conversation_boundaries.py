@@ -10,6 +10,7 @@ from agent.orchestrator import (
     extract_batch_from_text,
     missing_batch_inputs,
     references_current_batch,
+    references_previous_evidence,
     should_request_batch_data,
     should_run_tools,
 )
@@ -109,6 +110,74 @@ class ConversationIsolationTests(unittest.TestCase):
     def test_only_explicit_wording_references_current_batch(self) -> None:
         self.assertTrue(references_current_batch("继续分析刚才那批"))
         self.assertFalse(references_current_batch(UNRELATED_QUESTION))
+
+
+class GeneralChatRoutingTests(unittest.TestCase):
+    def test_reported_literature_numbers_do_not_request_batch_data(self) -> None:
+        prompt = "总结这篇橙汁文献中报告的85℃和15秒"
+
+        self.assertFalse(references_current_batch(prompt))
+        self.assertFalse(should_request_batch_data(prompt))
+        self.assertFalse(
+            should_run_tools(
+                prompt,
+                has_current_batch=True,
+                has_minimum_batch_data=True,
+            )
+        )
+
+    def test_literature_synthesis_variants_stay_in_general_chat(self) -> None:
+        prompts = [
+            "摘要一下柑橘果汁杀菌论文",
+            "归纳橙汁热处理研究的主要结论",
+            "整理柑橘汁巴氏杀菌文献",
+            "汇总柑橘精油提取研究",
+            "梳理柑橘果胶提取相关文献",
+            "概括这篇论文中报告的处理条件",
+        ]
+
+        for prompt in prompts:
+            with self.subTest(prompt=prompt):
+                self.assertFalse(should_request_batch_data(prompt))
+                self.assertFalse(
+                    should_run_tools(
+                        prompt,
+                        has_current_batch=True,
+                        has_minimum_batch_data=True,
+                    )
+                )
+
+    def test_topic_literature_request_does_not_inherit_current_batch(self) -> None:
+        prompt = "列出橙汁杀菌相关文献"
+
+        self.assertFalse(references_previous_evidence(prompt))
+        self.assertFalse(references_current_batch(prompt))
+
+    def test_parameter_recommendation_still_requests_batch_data(self) -> None:
+        for prompt in [
+            "推荐杀菌温度",
+            "请设定杀菌温度",
+            "总结相关文献并推荐杀菌温度",
+        ]:
+            with self.subTest(prompt=prompt):
+                self.assertTrue(should_request_batch_data(prompt))
+
+    def test_parameter_recommendation_runs_tools_when_current_batch_is_complete(self) -> None:
+        prompt = "请为这批设定杀菌温度"
+        batch = default_batch()
+        batch.update({"origin": "赣南", "variety": "脐橙", "brix": 11.5})
+        missing = missing_batch_inputs(prompt, current_batch=batch)
+
+        self.assertEqual([], missing)
+        self.assertTrue(references_current_batch(prompt))
+        self.assertFalse(should_request_batch_data(prompt, current_batch=batch))
+        self.assertTrue(
+            should_run_tools(
+                prompt,
+                has_current_batch=True,
+                has_minimum_batch_data=True,
+            )
+        )
 
 
 class ControlledMemoryTests(unittest.TestCase):

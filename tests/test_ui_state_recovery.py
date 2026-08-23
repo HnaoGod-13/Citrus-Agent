@@ -671,9 +671,9 @@ class ProductRouteStateTests(unittest.TestCase):
         preserve_draft.assert_called_once_with()
         set_query.assert_not_called()
 
-    def test_query_sid_switch_restores_only_the_target_conversation(self) -> None:
-        user_token = "u_" + "a" * 32
-        user_id = "anon_" + hashlib.sha256(user_token.encode("utf-8")).hexdigest()[:24]
+    def test_query_context_grant_restores_only_the_target_conversation(self) -> None:
+        context_token = "ctx_" + "a" * 43
+        user_id = "anon_server_scope"
         old_session_id = "s_" + "b" * 32
         target_session_id = "s_" + "c" * 32
         state = SessionStateStub(
@@ -692,20 +692,34 @@ class ProductRouteStateTests(unittest.TestCase):
             memory_project_id="citrus-agent",
             memory_session_id=old_session_id,
             memory_restored_session=old_session_id,
+            memory_context_token="",
+            memory_privacy_event_marker="",
+            pending_agent_persistence={},
         )
         manager = SimpleNamespace(
+            resolve_session_access_grant=Mock(
+                return_value={
+                    "user_id": user_id,
+                    "project_id": "citrus-agent",
+                    "session_id": target_session_id,
+                    "expires_at": "2099-01-01T00:00:00+00:00",
+                }
+            ),
             ensure_session=Mock(),
             restore_session_messages=Mock(return_value=[{"message_id": "target-row"}]),
+            create_session_access_grant=Mock(),
+            log_privacy_event=Mock(),
         )
         restored_messages = [{"role": "assistant", "content": "target conversation"}]
 
         def query_value(name: str) -> str:
-            return {"uid": user_token, "sid": target_session_id}.get(name, "")
+            return {"ctx": context_token}.get(name, "")
 
         with (
             patch.object(app_main.st, "session_state", state),
             patch.object(app_main, "_query_value", side_effect=query_value),
-            patch.object(app_main, "_set_query_value"),
+            patch.object(app_main, "_set_query_value") as set_query,
+            patch.object(app_main, "_delete_query_value") as delete_query,
             patch.object(app_main, "_authenticated_identity", return_value=""),
             patch.object(app_main, "get_memory_manager", return_value=manager),
             patch.object(app_main, "restore_ui_messages", return_value=restored_messages),
@@ -730,11 +744,246 @@ class ProductRouteStateTests(unittest.TestCase):
         self.assertTrue(state.reset_main_scroll_position)
         self.assertNotIn("sidebar_draft_image_bytes", state)
         self.assertNotIn("sidebar_draft_observation", state)
+        manager.resolve_session_access_grant.assert_called_once_with(
+            context_token,
+            project_id="citrus-agent",
+        )
+        manager.create_session_access_grant.assert_not_called()
+        set_query.assert_called_once_with("ctx", context_token)
+        self.assertEqual([call("uid"), call("sid")], delete_query.call_args_list)
         manager.restore_session_messages.assert_called_once_with(
             user_id,
             target_session_id,
             "citrus-agent",
         )
+
+    def test_invalid_context_grant_creates_isolated_identity_without_legacy_fallback(self) -> None:
+        invalid_context_token = "ctx_" + "d" * 43
+        fresh_context_token = "ctx_" + "e" * 43
+        old_user_id = "anon_old_scope"
+        old_session_id = "s_" + "f" * 32
+        state = SessionStateStub(
+            agent_messages=[{"role": "assistant", "content": "old conversation"}],
+            current_batch={"batch": "old"},
+            last_result={"result": "old"},
+            last_vision_context={"vision": "old"},
+            clear_sidebar_inputs=False,
+            image_uploader_version=0,
+            sidebar_draft_observation="old observation",
+            memory_user_id=old_user_id,
+            memory_project_id="citrus-agent",
+            memory_session_id=old_session_id,
+            memory_restored_session=old_session_id,
+            memory_context_token="",
+            memory_privacy_event_marker="",
+            pending_agent_persistence={},
+        )
+        manager = SimpleNamespace(
+            resolve_session_access_grant=Mock(return_value=None),
+            ensure_session=Mock(),
+            restore_session_messages=Mock(return_value=[]),
+            create_session_access_grant=Mock(return_value=fresh_context_token),
+            log_privacy_event=Mock(),
+        )
+
+        def query_value(name: str) -> str:
+            return {
+                "ctx": invalid_context_token,
+                "uid": "u_legacy_identifier",
+                "sid": old_session_id,
+            }.get(name, "")
+
+        with (
+            patch.object(app_main.st, "session_state", state),
+            patch.object(app_main, "_query_value", side_effect=query_value),
+            patch.object(app_main, "_set_query_value") as set_query,
+            patch.object(app_main, "_delete_query_value") as delete_query,
+            patch.object(app_main, "_authenticated_identity", return_value=""),
+            patch.object(app_main, "get_memory_manager", return_value=manager),
+            patch.object(app_main, "restore_ui_messages", return_value=[]),
+            patch.object(
+                app_main,
+                "restore_latest_analysis_state",
+                return_value=(None, None, None),
+            ),
+        ):
+            app_main.initialize_memory_identity()
+
+        self.assertNotEqual(old_user_id, state.memory_user_id)
+        self.assertNotEqual(old_session_id, state.memory_session_id)
+        self.assertTrue(str(state.memory_user_id).startswith("anon_"))
+        self.assertTrue(str(state.memory_session_id).startswith("s_"))
+        self.assertEqual(fresh_context_token, state.memory_context_token)
+        manager.resolve_session_access_grant.assert_called_once_with(
+            invalid_context_token,
+            project_id="citrus-agent",
+        )
+        manager.create_session_access_grant.assert_called_once_with(
+            state.memory_user_id,
+            state.memory_session_id,
+            "citrus-agent",
+        )
+        set_query.assert_called_once_with("ctx", fresh_context_token)
+        self.assertEqual([call("uid"), call("sid")], delete_query.call_args_list)
+
+    def test_authenticated_context_cannot_resume_in_an_unauthenticated_browser(self) -> None:
+        protected_context_token = "ctx_" + "h" * 43
+        fresh_context_token = "ctx_" + "i" * 43
+        protected_session_id = "s_" + "j" * 32
+        state = SessionStateStub(
+            agent_messages=[],
+            current_batch=None,
+            last_result=None,
+            last_vision_context=None,
+            clear_sidebar_inputs=False,
+            image_uploader_version=0,
+            pending_agent_persistence={},
+            memory_user_id="",
+            memory_project_id="",
+            memory_session_id="",
+            memory_restored_session="",
+            memory_context_token="",
+            memory_privacy_event_marker="",
+        )
+        manager = SimpleNamespace(
+            resolve_session_access_grant=Mock(
+                return_value={
+                    "user_id": "user_protected_scope",
+                    "project_id": "citrus-agent",
+                    "session_id": protected_session_id,
+                    "expires_at": "2099-01-01T00:00:00+00:00",
+                }
+            ),
+            ensure_session=Mock(),
+            restore_session_messages=Mock(return_value=[]),
+            create_session_access_grant=Mock(return_value=fresh_context_token),
+            log_privacy_event=Mock(),
+        )
+
+        with (
+            patch.object(app_main.st, "session_state", state),
+            patch.object(
+                app_main,
+                "_query_value",
+                side_effect=lambda name: protected_context_token if name == "ctx" else "",
+            ),
+            patch.object(app_main, "_set_query_value"),
+            patch.object(app_main, "_delete_query_value"),
+            patch.object(app_main, "_authenticated_identity", return_value=""),
+            patch.object(app_main, "get_memory_manager", return_value=manager),
+            patch.object(app_main, "restore_ui_messages", return_value=[]),
+            patch.object(
+                app_main,
+                "restore_latest_analysis_state",
+                return_value=(None, None, None),
+            ),
+        ):
+            app_main.initialize_memory_identity()
+
+        self.assertNotEqual("user_protected_scope", state.memory_user_id)
+        self.assertNotEqual(protected_session_id, state.memory_session_id)
+        self.assertTrue(str(state.memory_user_id).startswith("anon_"))
+        manager.create_session_access_grant.assert_called_once_with(
+            state.memory_user_id,
+            state.memory_session_id,
+            "citrus-agent",
+        )
+
+    def test_logout_does_not_reuse_an_authenticated_live_scope(self) -> None:
+        protected_context_token = "ctx_" + "k" * 43
+        fresh_context_token = "ctx_" + "m" * 43
+        protected_user_id = "user_protected_scope"
+        protected_session_id = "s_" + "n" * 32
+        state = SessionStateStub(
+            agent_messages=[{"role": "assistant", "content": "protected"}],
+            current_batch=None,
+            last_result=None,
+            last_vision_context=None,
+            clear_sidebar_inputs=False,
+            image_uploader_version=0,
+            pending_agent_persistence={},
+            memory_user_id=protected_user_id,
+            memory_project_id="citrus-agent",
+            memory_session_id=protected_session_id,
+            memory_restored_session=protected_session_id,
+            memory_context_token=protected_context_token,
+            memory_privacy_event_marker="",
+        )
+        manager = SimpleNamespace(
+            resolve_session_access_grant=Mock(
+                return_value={
+                    "user_id": protected_user_id,
+                    "project_id": "citrus-agent",
+                    "session_id": protected_session_id,
+                    "expires_at": "2099-01-01T00:00:00+00:00",
+                }
+            ),
+            ensure_session=Mock(),
+            restore_session_messages=Mock(return_value=[]),
+            create_session_access_grant=Mock(return_value=fresh_context_token),
+            log_privacy_event=Mock(),
+        )
+
+        with (
+            patch.object(app_main.st, "session_state", state),
+            patch.object(app_main, "_query_value", return_value=""),
+            patch.object(app_main, "_set_query_value"),
+            patch.object(app_main, "_delete_query_value"),
+            patch.object(app_main, "_authenticated_identity", return_value=""),
+            patch.object(app_main, "get_memory_manager", return_value=manager),
+            patch.object(app_main, "restore_ui_messages", return_value=[]),
+            patch.object(
+                app_main,
+                "restore_latest_analysis_state",
+                return_value=(None, None, None),
+            ),
+        ):
+            app_main.initialize_memory_identity()
+
+        self.assertNotEqual(protected_user_id, state.memory_user_id)
+        self.assertNotEqual(protected_session_id, state.memory_session_id)
+        self.assertTrue(str(state.memory_user_id).startswith("anon_"))
+        manager.create_session_access_grant.assert_called_once_with(
+            state.memory_user_id,
+            state.memory_session_id,
+            "citrus-agent",
+        )
+
+    def test_navigation_keeps_context_but_share_link_carries_no_data_grant(self) -> None:
+        context_token = "ctx_" + "g" * 43
+        components = app_main.ui_components
+
+        self.assertEqual(
+            f"?view=settings&ctx={context_token}",
+            components._view_url("settings", context_token),
+        )
+        self.assertEqual(
+            "?view=knowledge",
+            components._view_url(
+                "knowledge",
+                context_token,
+                include_context=False,
+            ),
+        )
+
+        with (
+            patch.object(components.st, "markdown") as markdown,
+            patch.object(
+                components.st,
+                "context",
+                SimpleNamespace(url="https://example.test/citrus?ctx=old"),
+            ),
+        ):
+            components.render_top_actions("knowledge", context_token)
+
+        rendered = str(markdown.call_args.args[0])
+        share_start = rendered.index('class="top-share-action"')
+        share_tag = rendered[share_start : rendered.index(">", share_start)]
+        self.assertIn('href="https://example.test/citrus?view=knowledge"', share_tag)
+        self.assertNotIn("ctx=", share_tag)
+        self.assertNotIn("uid=", rendered)
+        self.assertNotIn("sid=", rendered)
+        self.assertIn("无数据链接", rendered)
 
     def test_production_path_only_reloads_lightweight_ui_modules(self) -> None:
         source = Path(app_main.__file__).read_text(encoding="utf-8-sig")

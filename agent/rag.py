@@ -1274,7 +1274,10 @@ def format_evidence_context(evidence: list[dict[str, Any]], excerpt_chars: int =
         excerpt = re.sub(r"\s+", " ", str(item.get("chunk_text") or "")).strip()
         if len(excerpt) > excerpt_chars:
             excerpt = excerpt[:excerpt_chars].rstrip() + "…"
+        evidence_level = str(item.get("evidence_level") or "证据不足")
+        applicability = str(item.get("applicability") or "需回查原文确认适用条件")
         lines.append(
-            f"[文献{index}] {title}（{year}；类别：{category}；{section}；{locator}；{source}）\n证据片段：{excerpt}"
+            f"[文献{index}] {title}（{year}；类别：{category}；{section}；{locator}；{source}；"
+            f"证据等级：{evidence_level}）\n适用条件：{applicability}\n证据片段：{excerpt}"
         )
     return "\n\n".join(lines)

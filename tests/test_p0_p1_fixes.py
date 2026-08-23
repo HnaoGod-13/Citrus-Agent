@@ -81,9 +81,13 @@ class EvidenceAwareRankingTests(unittest.TestCase):
         evidence = [
             {
                 "document_id": f"pectin-{index}",
+                "chunk_id": f"pectin-{index}-results",
                 "title": f"柑橘果胶提取研究{index}",
+                "year": "2024",
                 "category": "果胶",
-                "chunk_text": "果胶提取、酯化度和凝胶性能。",
+                "section": "结果与讨论",
+                "page": index + 1,
+                "chunk_text": "结果表明，果胶提取条件会影响酯化度、得率和凝胶性能。",
             }
             for index in range(3)
         ]

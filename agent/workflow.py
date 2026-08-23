@@ -7,9 +7,18 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
+from .evidence import (
+    EVIDENCE_LEVELS,
+    annotate_evidence,
+    annotate_parameter_groups,
+    build_key_conclusions,
+    effective_evidence_level,
+)
 from .guardrails import run_fixed_guardrails
 from .memory import build_memory_snapshot, redact_sensitive
 from .planner import build_controlled_plan, serialize_plan
+from .process_knowledge import build_parameterized_process_plan
+from .rules import DIRECTION_EVIDENCE_TERMS
 from .tools import (
     TOOL_REGISTRY,
     ToolResult,
@@ -291,6 +300,14 @@ def run_demo_agent(
         agent_steps.append(_step_from_tool_result(evidence_result))
     completed_tool_keys.append("literature_retriever")
 
+    # Evidence strength is assigned deterministically before any route score is
+    # changed. A retrieval score alone is never allowed to count as direct support.
+    evidence = annotate_evidence(evidence, processing_intent)
+    if explicit_processing_target:
+        process_payload["evidence"] = evidence
+    else:
+        broad_evidence = evidence
+
     _notify(progress_callback, "正在综合批次规则、文献适用性和数据完整度评估加工路线")
     score_result = score_processing(batch, image_observation, evidence)
     scores = score_result.data
@@ -309,7 +326,12 @@ def run_demo_agent(
             retrieval_mode=retrieval_mode,
         )
         process_payload = process_result.data
-        processing_evidence = list(process_payload.get("evidence") or [])
+        processing_evidence = annotate_evidence(
+            list(process_payload.get("evidence") or []),
+            processing_intent,
+        )
+        process_payload["evidence"] = processing_evidence
+        broad_evidence = annotate_evidence(broad_evidence, processing_intent)
         evidence = _merge_evidence(
             processing_evidence,
             broad_evidence,
@@ -323,8 +345,17 @@ def run_demo_agent(
 
     completed_tool_keys.append("processing_evidence_aggregator")
     process_parameters = list(process_payload.get("parameters") or [])
-    parameter_groups = list(process_payload.get("parameter_groups") or [])
-    parameterized_plan = process_payload.get("parameterized_plan") or {}
+    parameter_groups = annotate_parameter_groups(
+        list(process_payload.get("parameter_groups") or []),
+        evidence,
+    )
+    parameterized_plan = build_parameterized_process_plan(
+        processing_intent,
+        parameter_groups,
+        evidence,
+    )
+    process_payload["parameter_groups"] = parameter_groups
+    process_payload["parameterized_plan"] = parameterized_plan
     processing_subquestions = list(process_payload.get("subquestions") or [])
     processing_evidence = list(process_payload.get("evidence") or [])
     deep_retrieval_stats = _merge_retrieval_stats(
@@ -346,6 +377,15 @@ def run_demo_agent(
     completed_tool_keys.append("quality_gate")
     agent_steps.append(_step_from_tool_result(risk_result))
 
+    key_conclusions = build_key_conclusions(
+        scores,
+        evidence,
+        parameter_groups,
+        quality_risks,
+        processing_intent,
+        DIRECTION_EVIDENCE_TERMS,
+    )
+
     _notify(progress_callback, "正在生成可复核的 Markdown 报告")
     report_result = write_report(
         batch,
@@ -357,6 +397,7 @@ def run_demo_agent(
         process_parameters=process_parameters,
         parameter_groups=parameter_groups,
         parameterized_plan=parameterized_plan,
+        key_conclusions=key_conclusions,
     )
     report_payload = report_result.data
     report = report_payload["report"]
@@ -403,6 +444,7 @@ def run_demo_agent(
         "process_parameters": process_parameters,
         "parameter_groups": parameter_groups,
         "parameterized_plan": parameterized_plan,
+        "key_conclusions": key_conclusions,
         "scores": scores,
         "quality_risks": quality_risks,
         "processing_plan": processing_plan,
@@ -439,6 +481,14 @@ def write_audit_event(result: dict[str, Any], report_path: Path) -> None:
         "top_match_level": result["scores"][0].match_level if result["scores"] else None,
         "risk_count": len(result["quality_risks"]),
         "evidence_count": len(result["evidence"]),
+        "evidence_level_counts": {
+            level: sum(
+                effective_evidence_level(item) == level
+                for item in result.get("evidence", [])
+            )
+            for level in sorted(EVIDENCE_LEVELS)
+        },
+        "key_conclusion_count": len(result.get("key_conclusions", [])),
         "processing_evidence_count": len(result.get("processing_evidence", [])),
         "parameter_count": len(result.get("process_parameters", [])),
         "parameter_ids": [

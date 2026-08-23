@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Callable
 from uuid import uuid4
 
+from .evidence import format_key_conclusions_markdown
 from .llm_client import DeepSeekAPIError, build_chat_messages, chat_with_deepseek
 from .memory import describe_model_messages
 from .report import parameterized_plan_markdown
@@ -16,6 +17,8 @@ from .workflow import run_demo_agent, save_report, write_audit_event
 CUSTOMER_OPTIONS = ["陈皮经销商", "茶饮品牌", "食品加工厂"]
 PROCESSING_FLOW_START = "<!-- citrus-agent-processing-flow:start -->"
 PROCESSING_FLOW_END = "<!-- citrus-agent-processing-flow:end -->"
+KEY_CONCLUSION_EVIDENCE_START = "<!-- citrus-agent-key-conclusion-evidence:start -->"
+KEY_CONCLUSION_EVIDENCE_END = "<!-- citrus-agent-key-conclusion-evidence:end -->"
 TEST_LABELS = {
     "pesticide": "农残",
     "heavy_metal": "重金属",
@@ -84,6 +87,79 @@ GENERAL_KNOWLEDGE_KEYWORDS = [
     "历史",
     "区别",
     "用途",
+]
+LITERATURE_SOURCE_KEYWORDS = [
+    "文献",
+    "论文",
+    "研究",
+    "参考资料",
+    "学术资料",
+    "literature",
+    "paper",
+]
+LITERATURE_SYNTHESIS_KEYWORDS = [
+    "总结",
+    "摘要",
+    "归纳",
+    "整理",
+    "汇总",
+    "综述",
+    "梳理",
+    "概括",
+    "提炼",
+    "解读",
+    "研究进展",
+    "主要结论",
+    "summarize",
+    "summary",
+    "review",
+]
+ACTIONABLE_PROCESSING_KEYWORDS = [
+    "推荐",
+    "建议",
+    "设定",
+    "设置",
+    "定为",
+    "取值",
+    "最佳",
+    "最优",
+    "应该",
+    "应当",
+    "制定",
+    "加工方案",
+    "加工路线",
+    "生产流程",
+    "加工流程",
+    "完整流程",
+    "生产参数",
+    "工艺参数",
+    "质控方案",
+    "小试方案",
+    "出报告",
+    "生成报告",
+]
+PROCESSING_PARAMETER_TOPICS = [
+    "杀菌",
+    "巴氏",
+    "灭菌",
+    "干燥",
+    "烘干",
+    "提取",
+    "酶解",
+    "澄清",
+    "过滤",
+    "均质",
+    "脱气",
+    "灌装",
+    "浓缩",
+    "发酵",
+    "温度",
+    "时间",
+    "压力",
+    "流量",
+    "浓度",
+    "料液比",
+    "ph",
 ]
 TOOL_INTENT_KEYWORDS = [
     "分析",
@@ -292,6 +368,21 @@ def _has_any(text: str, keywords: list[str]) -> bool:
     return any(keyword.lower() in normalized for keyword in keywords)
 
 
+def _is_literature_synthesis_request(text: str) -> bool:
+    """Identify requests to explain reported literature rather than make a batch decision."""
+    normalized = re.sub(r"\s+", "", text.lower())
+    return _has_any(normalized, LITERATURE_SOURCE_KEYWORDS) and _has_any(
+        normalized,
+        LITERATURE_SYNTHESIS_KEYWORDS,
+    )
+
+
+def _has_actionable_processing_intent(text: str) -> bool:
+    """Keep parameter recommendations on the controlled batch-analysis route."""
+    normalized = re.sub(r"\s+", "", text.lower())
+    return _has_any(normalized, ACTIONABLE_PROCESSING_KEYWORDS)
+
+
 def should_answer_with_vision_only(text: str, has_image: bool = False) -> bool:
     """Route an attached-image question to vision unless processing work is explicit."""
     if not has_image:
@@ -325,13 +416,50 @@ def references_previous_evidence(text: str) -> bool:
     normalized = re.sub(r"\s+", "", text.lower())
     if not any(term in normalized for term in ["文献", "论文", "依据", "来源", "参考资料"]):
         return False
-    return bool(
-        len(normalized) <= 80
-        and (
-            any(term in normalized for term in ["单独", "列出", "整理", "给我", "发我", "上面", "刚才", "引用", "用到"])
-            or normalized in {"文献", "依据", "来源", "参考文献"}
-        )
-    )
+    if _is_literature_synthesis_request(normalized):
+        return False
+    if len(normalized) > 80:
+        return False
+    if any(
+        term in normalized
+        for term in ["上面", "刚才", "上一轮", "前面", "之前", "引用", "用到", "采用", "检索到"]
+    ):
+        return True
+    if normalized in {"文献", "论文", "依据", "来源", "参考文献", "参考资料"}:
+        return True
+
+    # A short source-only request ("单独把文献给我") is an ellipsis.  A topical
+    # request ("列出橙汁杀菌文献") leaves subject words behind and starts a new
+    # literature question instead of silently inheriting the current batch.
+    residual = normalized
+    request_fillers = [
+        "参考文献",
+        "参考资料",
+        "单独",
+        "这些",
+        "相关",
+        "文献",
+        "论文",
+        "依据",
+        "来源",
+        "请",
+        "麻烦",
+        "能否",
+        "可以",
+        "把",
+        "将",
+        "给我",
+        "发我",
+        "列出来",
+        "列出",
+        "展开",
+        "一下",
+        "呢",
+        "吗",
+    ]
+    for filler in request_fillers:
+        residual = residual.replace(filler, "")
+    return not residual
 
 
 def references_previous_vision_entity(text: str) -> bool:
@@ -525,10 +653,17 @@ def should_request_batch_data(
     if should_answer_with_vision_only(text, has_image=has_image):
         return False
     normalized = text.lower()
+    literature_synthesis = _is_literature_synthesis_request(normalized)
+    actionable_processing = _has_actionable_processing_intent(normalized)
+    if literature_synthesis and not actionable_processing:
+        return False
     has_general_knowledge_intent = _has_any(normalized, GENERAL_KNOWLEDGE_KEYWORDS)
-    has_analysis_intent = _has_any(normalized, TOOL_INTENT_KEYWORDS)
-    has_batch_topic = _has_any(normalized, BATCH_REFERENCE_KEYWORDS + DOMAIN_KEYWORDS + IMAGE_INTENT_KEYWORDS)
-    if has_general_knowledge_intent and not references_current_batch(text):
+    has_analysis_intent = _has_any(normalized, TOOL_INTENT_KEYWORDS) or actionable_processing
+    has_batch_topic = _has_any(
+        normalized,
+        BATCH_REFERENCE_KEYWORDS + DOMAIN_KEYWORDS + IMAGE_INTENT_KEYWORDS,
+    ) or (actionable_processing and _has_any(normalized, PROCESSING_PARAMETER_TOPICS))
+    if has_general_knowledge_intent and not actionable_processing and not references_current_batch(text):
         return False
     if not (has_analysis_intent and (has_batch_topic or has_image)):
         return False
@@ -558,8 +693,12 @@ def should_run_tools(
     if not has_minimum_batch_data:
         return False
     normalized = text.lower()
+    literature_synthesis = _is_literature_synthesis_request(normalized)
+    actionable_processing = _has_actionable_processing_intent(normalized)
+    if literature_synthesis and not actionable_processing:
+        return False
     has_general_knowledge_intent = _has_any(normalized, GENERAL_KNOWLEDGE_KEYWORDS)
-    has_tool_intent = _has_any(normalized, TOOL_INTENT_KEYWORDS)
+    has_tool_intent = _has_any(normalized, TOOL_INTENT_KEYWORDS) or actionable_processing
     has_batch_reference = _has_any(normalized, BATCH_REFERENCE_KEYWORDS)
     has_strong_batch_data = _has_any(normalized, BATCH_DATA_KEYWORDS) or bool(
         re.search(r"\d+(?:\.\d+)?\s*(?:%|kg|公斤|千克|brix|bx|°brix)", normalized, flags=re.IGNORECASE)
@@ -568,7 +707,11 @@ def should_run_tools(
     has_domain = _has_any(normalized, DOMAIN_KEYWORDS)
     has_image_intent = _has_any(normalized, IMAGE_INTENT_KEYWORDS)
 
-    if has_general_knowledge_intent and not (has_batch_reference or has_strong_batch_data):
+    if (
+        has_general_knowledge_intent
+        and not actionable_processing
+        and not (has_batch_reference or has_strong_batch_data)
+    ):
         return False
     if has_image and (has_image_intent or has_batch_reference or has_strong_batch_data):
         return True
@@ -1015,6 +1158,37 @@ def append_used_reference_index(answer: str, evidence: list[dict[str, Any]]) -> 
     return compact_primary_answer(answer)
 
 
+def strip_key_conclusion_evidence(answer: str) -> str:
+    """Remove deterministic evidence cards before reusing an answer as model context."""
+    text = str(answer or "")
+    start = text.find(KEY_CONCLUSION_EVIDENCE_START)
+    if start < 0:
+        return text.strip()
+    end = text.find(KEY_CONCLUSION_EVIDENCE_END, start)
+    if end < 0:
+        return text[:start].strip()
+    return (text[:start] + text[end + len(KEY_CONCLUSION_EVIDENCE_END) :]).strip()
+
+
+def append_key_conclusion_evidence(
+    answer: str,
+    conclusions: list[dict[str, Any]],
+) -> str:
+    """Attach concise, traceable cards without another model call."""
+    narrative = strip_key_conclusion_evidence(answer)
+    cards = format_key_conclusions_markdown(
+        conclusions,
+        heading="### 关键结论证据卡",
+        max_items=8,
+        max_references=1,
+        excerpt_chars=240,
+    )
+    if not cards:
+        return narrative
+    block = f"{KEY_CONCLUSION_EVIDENCE_START}\n{cards}\n{KEY_CONCLUSION_EVIDENCE_END}"
+    return "\n\n".join(part for part in (narrative, block) if part)
+
+
 def build_previous_evidence_answer(result: dict[str, Any]) -> str:
     """Return the exact evidence used by the previous batch turn without a new model guess."""
     evidence = list(result.get("evidence") or [])
@@ -1218,6 +1392,7 @@ def run_analysis_turn(
     narrative_answer = compact_primary_answer(llm_answer or summary)
     answer = ensure_primary_processing_flow(result, narrative_answer)
     answer = append_used_reference_index(answer, result.get("evidence", []))
+    answer = append_key_conclusion_evidence(answer, result.get("key_conclusions", []))
     answer = ensure_vision_status_consistency(answer, vision_result)
     answer = append_critical_input_notes(answer, notes)
     result["input_notes"] = list(notes)

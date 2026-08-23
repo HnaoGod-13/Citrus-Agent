@@ -1,11 +1,10 @@
-"""Read-only product pages used by the Citrus AI Streamlit application.
+"""Product pages used by the Citrus AI Streamlit application.
 
-The module intentionally contains no Agent mutations. Workspace and analytics
-queries are always scoped by both ``memory_user_id`` and ``memory_project_id``;
-if either identity is unavailable, those pages render a safe empty state rather
-than falling back to an unscoped query. On cloud deployments the immutable,
-packaged literature index may be materialized into its runtime cache before the
-Knowledge page opens it in read-only mode.
+Workspace and analytics queries are always scoped by both ``memory_user_id``
+and ``memory_project_id``. The Settings page is the sole exception to the
+otherwise read-only product pages: it exposes explicit, confirmed export and
+deletion controls for that exact scope. If identity is unavailable, pages
+render a safe empty state rather than falling back to an unscoped query.
 """
 
 from __future__ import annotations
@@ -14,6 +13,7 @@ from collections import Counter
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
+import hashlib
 import html
 import json
 from pathlib import Path
@@ -23,6 +23,7 @@ from typing import Any, Iterator
 
 import streamlit as st
 
+from agent import memory as agent_memory
 from app import knowledge_catalog as catalog_index
 from app.ui import components as ui_components
 
@@ -49,6 +50,7 @@ OFF_DOMAIN_TITLE_PATTERN = catalog_index.OFF_DOMAIN_TITLE_PATTERN
 class _Scope:
     user_id: str
     project_id: str
+    session_id: str = ""
 
 
 def _current_scope() -> _Scope | None:
@@ -56,11 +58,12 @@ def _current_scope() -> _Scope | None:
     try:
         user_id = str(st.session_state.get("memory_user_id") or "").strip()
         project_id = str(st.session_state.get("memory_project_id") or "").strip()
+        session_id = str(st.session_state.get("memory_session_id") or "").strip()
     except Exception:
         return None
     if not user_id or not project_id:
         return None
-    return _Scope(user_id=user_id, project_id=project_id)
+    return _Scope(user_id=user_id, project_id=project_id, session_id=session_id)
 
 
 def _memory_db_path() -> Path:
@@ -1643,19 +1646,151 @@ def _knowledge_storage_counts(path: Path) -> dict[str, int]:
         )
 
 
+def _privacy_manager(scope: _Scope) -> agent_memory.MemoryManager:
+    return agent_memory.MemoryManager(
+        _memory_db_path(),
+        default_user_id=scope.user_id,
+        default_project_id=scope.project_id,
+    )
+
+
+def _privacy_event_label(value: Any) -> str:
+    return {
+        "session_created": "创建匿名会话",
+        "session_resumed": "使用短期令牌恢复会话",
+        "data_exported": "生成用户数据导出",
+        "session_deleted": "删除会话数据",
+        "retention_cleanup": "执行保存期限清理",
+    }.get(str(value or ""), "隐私操作")
+
+
+def _session_fingerprint(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return "—"
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:10]
+
+
+def _clear_identity_query_values() -> None:
+    try:
+        for key in ("ctx", "uid", "sid"):
+            if key in st.query_params:
+                del st.query_params[key]
+    except Exception:
+        pass
+
+
+def _reset_after_privacy_deletion(*, delete_all: bool) -> None:
+    for key in (
+        "agent_messages",
+        "current_batch",
+        "last_result",
+        "last_vision_context",
+        "memory_restored_session",
+        "memory_session_id",
+        "memory_context_token",
+        "memory_privacy_event_marker",
+        "active_agent_job_id",
+        "active_agent_progress_revealed",
+        "active_agent_retrieval_mode",
+        "pending_agent_persistence",
+        "privacy_export_json",
+        "privacy_export_filename",
+        "privacy_delete_session_confirmation",
+        "privacy_delete_all_confirmation",
+    ):
+        st.session_state.pop(key, None)
+    if delete_all:
+        st.session_state.pop("memory_user_id", None)
+        st.session_state.pop("memory_project_id", None)
+    _clear_identity_query_values()
+
+
+def _privacy_delete_disabled(
+    confirmation: str,
+    expected_phrase: str,
+    *,
+    active_job_running: bool,
+) -> bool:
+    return str(confirmation or "").strip() != expected_phrase or bool(active_job_running)
+
+
+def _privacy_deletion_notice(
+    *,
+    delete_all: bool,
+    file_cleanup_errors: int,
+) -> dict[str, str]:
+    failed = max(int(file_cleanup_errors or 0), 0)
+    if failed:
+        subject = "数据库中的项目数据" if delete_all else "当前会话的数据库记录"
+        return {
+            "level": "warning",
+            "message": f"{subject}已删除，但有 {failed} 个已知文件清理失败，请联系管理员。",
+        }
+    return {
+        "level": "success",
+        "message": (
+            "当前用户在本项目中的全部数据已删除，并已创建新的匿名身份。"
+            if delete_all
+            else "当前会话数据已删除，并已创建新的隔离会话。"
+        ),
+    }
+
+
+def _prepare_privacy_export(
+    manager: agent_memory.MemoryManager,
+    scope: _Scope,
+) -> dict[str, Any]:
+    try:
+        exported = manager.export_user_data(
+            user_id=scope.user_id,
+            project_id=scope.project_id,
+        )
+        manager.log_privacy_event(
+            "data_exported",
+            user_id=scope.user_id,
+            project_id=scope.project_id,
+            session_id=scope.session_id,
+            details={"format": "json", "action": "prepared"},
+        )
+    except (agent_memory.MemoryManagerError, OSError, sqlite3.Error, ValueError):
+        try:
+            manager.log_privacy_event(
+                "data_exported",
+                user_id=scope.user_id,
+                project_id=scope.project_id,
+                session_id=scope.session_id,
+                outcome="failed",
+                details={"format": "json"},
+            )
+        except (agent_memory.MemoryManagerError, OSError, sqlite3.Error, ValueError):
+            pass
+        raise
+    return exported
+
+
 def render_settings_page() -> None:
     _render_page_header(
         "CITRUS AI · SETTINGS",
         "设置",
-        "只读查看产品、模型、存储与隐私状态。",
-        "Read-only product, model, storage and privacy status",
+        "查看产品状态，并管理当前身份范围内的数据与隐私。",
+        "Product status, scoped data controls and privacy",
     )
+
+    deletion_notice = st.session_state.pop("privacy_deletion_notice", None)
+    if isinstance(deletion_notice, dict):
+        message = str(deletion_notice.get("message") or "")
+        if message:
+            if deletion_notice.get("level") == "warning":
+                st.warning(message)
+            else:
+                st.success(message)
 
     st.subheader("产品")
     product_rows = [
         {"项目": "产品", "当前状态": "Citrus AI · Decision Lab"},
         {"项目": "前端运行时", "当前状态": f"Streamlit {getattr(st, '__version__', '未知')}"},
-        {"项目": "页面设置", "当前状态": "只读；不提供未接入业务的保存操作"},
+        {"项目": "页面设置", "当前状态": "业务配置只读；隐私数据支持导出与确认删除"},
     ]
     _render_table(product_rows, "产品状态暂不可用。", height=176, variant="settings")
 
@@ -1744,6 +1879,174 @@ def render_settings_page() -> None:
             {"项目": "凭据展示", "当前状态": "始终隐藏"},
         ]
     _render_table(privacy_rows, "隐私状态暂不可用。", height=248, variant="settings")
+
+    if scope is None or not scope.session_id:
+        st.info("会话身份尚未初始化，暂不能导出、删除或查看访问记录。")
+        return
+
+    try:
+        manager = _privacy_manager(scope)
+        policy = manager.retention_policy()
+        access_events = manager.list_privacy_events(
+            user_id=scope.user_id,
+            project_id=scope.project_id,
+            limit=12,
+        )
+    except (agent_memory.MemoryManagerError, OSError, sqlite3.Error, ValueError) as error:
+        st.warning(f"隐私控制暂不可用：{error}")
+        return
+
+    st.subheader("保存期限与访问记录")
+    cleanup_status = (
+        "已启用自动清理"
+        if policy.get("automatic_cleanup_enabled")
+        else "演示版未启用后台自动清理；可使用下方主动删除"
+    )
+    retention_rows = [
+        {
+            "项目": "匿名恢复令牌",
+            "当前状态": f"{int(policy.get('resume_token_ttl_hours') or 0)} 小时后失效；服务端只保存哈希",
+        },
+        {
+            "项目": "会话数据目标期限",
+            "当前状态": f"{int(policy.get('conversation_retention_days') or 0)} 天 · {cleanup_status}",
+        },
+        {
+            "项目": "Agent 审计目标期限",
+            "当前状态": f"{int(policy.get('agent_audit_retention_days') or 0)} 天",
+        },
+        {
+            "项目": "访问记录目标期限",
+            "当前状态": f"{int(policy.get('access_log_retention_days') or 0)} 天",
+        },
+    ]
+    _render_table(retention_rows, "保存期限配置暂不可用。", height=220, variant="settings")
+    st.caption(
+        "30/90/90 天是可配置的保存目标，不代表系统已经自动执行。"
+        "当前演示版未实现后台批量清理；实际生效的是恢复令牌到期失效，以及用户在下方主动删除。"
+    )
+    st.caption(
+        "地址栏中的 ctx 是最长 24 小时有效的持有式恢复凭据，可能进入浏览器历史或同源访问日志。"
+        "请勿直接转发地址栏；对外分享请使用顶部“无数据链接”。"
+    )
+
+    event_rows = [
+        {
+            "操作": _privacy_event_label(item.get("event_type")),
+            "结果": "成功" if str(item.get("outcome") or "success") == "success" else "异常",
+            "会话指纹": _session_fingerprint(item.get("session_id")),
+            "时间": _display_time(item.get("created_at")),
+        }
+        for item in access_events
+    ]
+    _render_table(event_rows, "当前身份还没有访问记录。", height=260, variant="settings")
+
+    st.subheader("导出我的数据")
+    st.caption(
+        "导出范围严格限定为当前 user_id + project_id；JSON 包含会话、记忆、样本、审计与已知文件的逻辑引用，"
+        "不含恢复令牌/哈希，也不包含图片或报告文件本体。完整 ZIP 携带包尚未实现。"
+    )
+    if st.button("生成我的数据导出", key="privacy_prepare_export", width="stretch"):
+        try:
+            exported = _prepare_privacy_export(manager, scope)
+        except (agent_memory.MemoryManagerError, OSError, sqlite3.Error, ValueError) as error:
+            st.error(f"生成导出失败：{error}")
+        else:
+            st.session_state.privacy_export_json = json.dumps(
+                exported,
+                ensure_ascii=False,
+                indent=2,
+                default=str,
+            )
+            st.session_state.privacy_export_filename = (
+                f"citrus-agent-data-{datetime.now(BEIJING_TIMEZONE):%Y%m%d-%H%M%S}.json"
+            )
+    export_json = str(st.session_state.get("privacy_export_json") or "")
+    if export_json:
+        st.download_button(
+            "下载我的数据（JSON）",
+            data=export_json,
+            file_name=str(
+                st.session_state.get("privacy_export_filename")
+                or "citrus-agent-data.json"
+            ),
+            mime="application/json",
+            key="privacy_download_export",
+            width="stretch",
+        )
+
+    st.subheader("删除数据")
+    st.warning("删除操作不可恢复。系统不会因为打开设置页或查看期限而自动删除任何数据。")
+    active_job_running = bool(st.session_state.get("active_agent_job_id"))
+    if active_job_running:
+        st.info("当前分析任务仍在运行。请等待任务完成后再删除，避免运行结果重新写入已删除的数据范围。")
+    session_confirmation = st.text_input(
+        "删除当前会话确认词",
+        key="privacy_delete_session_confirmation",
+        placeholder="请输入：删除本次会话",
+    )
+    if st.button(
+        "删除本次会话",
+        key="privacy_delete_session",
+        disabled=_privacy_delete_disabled(
+            session_confirmation,
+            "删除本次会话",
+            active_job_running=active_job_running,
+        ),
+        width="stretch",
+    ):
+        try:
+            result = manager.delete_session_data(
+                scope.session_id,
+                user_id=scope.user_id,
+                project_id=scope.project_id,
+            )
+        except (agent_memory.MemoryManagerError, OSError, sqlite3.Error, ValueError) as error:
+            st.error(f"删除失败：{error}")
+        else:
+            if result.get("deleted"):
+                file_cleanup_errors = int(result.get("file_cleanup_errors") or 0)
+                st.session_state.privacy_deletion_notice = _privacy_deletion_notice(
+                    delete_all=False,
+                    file_cleanup_errors=file_cleanup_errors,
+                )
+                _reset_after_privacy_deletion(delete_all=False)
+                st.rerun()
+            else:
+                st.info("当前会话已经不存在，无需重复删除。")
+
+    with st.expander("删除我的全部数据", expanded=False):
+        st.error("这会删除当前用户在本项目中的全部会话、记忆、样本、运行审计和已知上传文件。")
+        all_confirmation = st.text_input(
+            "删除全部数据确认词",
+            key="privacy_delete_all_confirmation",
+            placeholder="请输入：删除我的全部数据",
+        )
+        if st.button(
+            "永久删除我的全部数据",
+            key="privacy_delete_all",
+            disabled=_privacy_delete_disabled(
+                all_confirmation,
+                "删除我的全部数据",
+                active_job_running=active_job_running,
+            ),
+            width="stretch",
+        ):
+            try:
+                result = manager.delete_user_data(
+                    user_id=scope.user_id,
+                    project_id=scope.project_id,
+                )
+            except (agent_memory.MemoryManagerError, OSError, sqlite3.Error, ValueError) as error:
+                st.error(f"删除失败：{error}")
+            else:
+                file_cleanup_errors = int(result.get("file_cleanup_errors") or 0)
+                st.session_state.privacy_deletion_notice = _privacy_deletion_notice(
+                    delete_all=True,
+                    file_cleanup_errors=file_cleanup_errors,
+                )
+                _reset_after_privacy_deletion(delete_all=True)
+                st.rerun()
 
 
 _PAGE_RENDERERS = {

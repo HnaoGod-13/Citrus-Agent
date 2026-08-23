@@ -8,9 +8,10 @@ import urllib.error
 import urllib.request
 from typing import Any
 
+from .evidence import EVIDENCE_POLICY_VERSION, annotate_evidence
 from .memory import build_context_messages, estimate_tokens, select_recent_messages, truncate_to_tokens
 from .memory_config import CONTEXT_TOKEN_BUDGETS, MEMORY_RECENT_TOKEN_LIMIT
-from .process_knowledge import format_processing_context
+from .process_knowledge import format_processing_context, mask_processing_numeric_values
 from .rag import comprehensive_search_knowledge, format_evidence_context
 
 try:
@@ -204,6 +205,7 @@ def build_general_chat_messages(
 系统提供的内容有四种来源，回答时必须严格区分：当前用户输入是当前事实；历史样本只能作为类比案例；本地文献是外部证据；长期记忆和模型推断不能冒充当前事实。出现冲突时，以用户最新明确确认的当前信息为准，并指出冲突。
 遇到“它、这个品种、这个方案、上一个样本”等指代，先结合结构化工作记忆、摘要和最近原始对话解析；仍有两个以上合理对象时再向用户澄清，不要直接说没有上下文。
 只有证据片段明确给出且适用条件一致时，才能引用温度、时间、浓度、得率等数值；同时交代对象与条件，不得把单篇研究参数直接包装成通用生产标准。
+用户询问文献内容或研究摘要时，可以保留“原文报告值 + 原文条件”的事实表述；但未经结构化参数证据链认定为直接证据的数字，严禁改写成“推荐参数、最佳参数、应设定值、生产参数”或写入加工方案。用户询问推荐数值时，应转入结构化加工决策并补充批次、设备和规模信息，再以小试验证。
 若证据章节标记为“题录（待OCR）”，只能说明库中存在该题名，不能把题名推测成研究结果或结论。
 如果回答包含明确的加工方向、方案或工艺建议，必须在建议句后立即给出完整加工流程，至少写清原料准入、分选前处理、核心加工、稳定化包装、成品检测与人工放行；同一流程、参数或设备信息只写一次，不得因去重而省略关键步骤。
 同一对话中的历史消息会作为短期记忆提供给你。先判断本轮是追问、补充、更正还是新话题：追问时必须承接前文；新话题时只回答新问题，不得把旧批次事实硬套进来。只有用户明确要求忽略上文时才丢弃历史。
@@ -221,6 +223,11 @@ def build_general_chat_messages(
             return_metadata=retrieval_mode == "deep",
         )
         evidence = list(retrieval.get("evidence") or []) if isinstance(retrieval, dict) else retrieval
+    if evidence:
+        evidence = annotate_evidence(
+            list(evidence),
+            {"primary_product": user_prompt, "raw_material": "柑橘相关对象"},
+        )
     if evidence:
         mode_note = (
             "本轮已启用全库深度检索：候选来自完整本地索引的多轮聚焦召回，"
@@ -254,9 +261,17 @@ def build_analysis_context(result: dict[str, Any]) -> str:
     batch = result.get("batch", {})
     scores = result.get("scores", [])
     risks = result.get("quality_risks", [])
-    evidence = result.get("evidence", [])
+    evidence = list(result.get("evidence", []))
+    if evidence and any(item.get("evidence_policy_version") != EVIDENCE_POLICY_VERSION for item in evidence):
+        evidence = annotate_evidence(evidence, result.get("processing_intent") or {})
     next_actions = result.get("next_actions", [])
     processing_plan = result.get("processing_plan", {})
+    report_for_context = re.sub(
+        r"\n### 1\.1 关键结论证据卡.*?(?=\n## 2\.)",
+        "",
+        str(result.get("report") or ""),
+        flags=re.S,
+    )
     retrieval_mode = str(result.get("retrieval_mode") or "quick")
     retrieval_stats = result.get("deep_retrieval_stats") or {}
     processing_context = format_processing_context(
@@ -290,11 +305,19 @@ def build_analysis_context(result: dict[str, Any]) -> str:
     excerpt_limit = 420 if retrieval_mode == "deep" else 560
     for index, item in enumerate(evidence[:evidence_limit], 1):
         page = item.get("page") or item.get("page_start") or "未标注"
+        safe_title = mask_processing_numeric_values(item.get("title") or "未命名文献")
+        safe_applicability = mask_processing_numeric_values(
+            item.get("applicability") or "需回查原文确认"
+        )
+        safe_excerpt = mask_processing_numeric_values(item.get("chunk_text") or "")
         line = (
-            f"- [文献{index}] {item.get('title') or '未命名文献'}"
+            f"- [文献{index}] {safe_title}"
             f"（{item.get('year') or '年份未知'}；{item.get('category') or item.get('product') or '未分类'}；"
-            f"{item.get('section') or '正文'}；第{page}页；匹配分 {item.get('match_score')}）："
-            f"{_shorten(item.get('chunk_text') or '', excerpt_limit)}"
+            f"{item.get('section') or '正文'}；第{page}页；"
+            f"证据等级 {item.get('evidence_level') or '证据不足'}；"
+            f"适用条件 {safe_applicability}；"
+            f"检索匹配分 {item.get('match_score')}）："
+            f"{_shorten(safe_excerpt, excerpt_limit)}"
         )
         line_tokens = estimate_tokens(line)
         remaining = CONTEXT_TOKEN_BUDGETS["literature"] - evidence_tokens
@@ -366,7 +389,7 @@ def build_analysis_context(result: dict[str, Any]) -> str:
 {processing_context}
 
 报告草稿摘要：
-{_shorten(result.get('report') or '', 1800)}
+{_shorten(mask_processing_numeric_values(report_for_context), 1800)}
 """.strip()
     return context
 
@@ -389,7 +412,9 @@ def build_chat_messages(
 任何药典、法规、标准、行业共识、具体参数或研究结论，都必须由当前提供的文献证据明确支持；当前证据没有覆盖时，要说明缺口及其对判断的影响，不得依赖模型记忆补充。
 用户询问加工方案时，正文应完整说明适用性判断、推荐理由、重要备选及取舍、关键风险和优先行动；结构化加工流程和参数证据由界面中的独立区域承载，正文不重复抄写。
 结构化参数证据中的“文献直接报告”只能作为对应研究条件；“多文献归纳”才可作为有条件候选范围；工程配置或模型推断不能冒充文献参数。需要时说明证据强弱和适用规模对当前判断的影响，但不要展示来源编号或题录信息。
+证据等级由后端按确定性规则给出：只能把“直接证据”写成直接支持；“仅供参考”只能作为背景或线索；“证据不足”必须明确保留缺口。检索匹配分不等于证据强度，不得自行升级等级。
 不同文献参数冲突时不得求平均或静默合并；应说明冲突会如何影响方案选择，并提出有针对性的对照小试。单位缺失、适用条件不明或标记为不可推荐的参数，不得写入生产参数。
+任何加工数值只能取自“面向加工工艺的结构化证据”中明确列出的“[参数]”条目；普通文献摘要里的分析仪器条件、检测数字或未通过参数闸门的数值，即使看起来像温度、时间、压力或流量，也不得写入工艺建议。
 宽泛结论优先交叉使用多篇不同文献；不得把单篇论文、体外实验、动物实验、网络药理或相关性结果夸大为通用生产结论或人体疗效。
 若文献只支持方向而不足以确定生产参数，应明确写成“小试候选范围/需原文和企业 SOP 复核”，不要退化成空泛套话，也不要编造数值。
 标记为“题录（待OCR）”的条目没有可用正文，只能作为待人工补录线索，不得用于证明结论。

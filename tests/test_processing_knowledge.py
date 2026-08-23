@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import unittest
 
+from agent.evidence import DIRECT_EVIDENCE, annotate_evidence, annotate_parameter_groups
 from agent.process_knowledge import (
     aggregate_parameter_evidence,
     analyze_processing_intent,
     build_parameterized_process_plan,
     build_processing_subquestions,
     extract_processing_parameters,
+    format_processing_context,
+    is_public_parameter_group,
     retrieve_processing_evidence,
 )
 from agent.report import parameterized_plan_markdown
@@ -37,6 +40,19 @@ def evidence(
     }
 
 
+def verified_parameters(
+    chunks: list[dict],
+    intent: dict,
+) -> tuple[list[dict], list[dict], list[dict]]:
+    annotated = annotate_evidence(chunks, intent)
+    records = extract_processing_parameters(annotated, intent)
+    groups = annotate_parameter_groups(
+        aggregate_parameter_evidence(records),
+        annotated,
+    )
+    return annotated, records, groups
+
+
 class ProcessingKnowledgeTests(unittest.TestCase):
     def test_juice_end_to_end_produces_traceable_parameterized_plan(self) -> None:
         intent = analyze_processing_intent(
@@ -63,9 +79,8 @@ class ProcessingKnowledgeTests(unittest.TestCase):
                 page=9,
             ),
         ]
-        records = extract_processing_parameters(chunks, intent)
-        groups = aggregate_parameter_evidence(records)
-        plan = build_parameterized_process_plan(intent, groups, chunks)
+        annotated, records, groups = verified_parameters(chunks, intent)
+        plan = build_parameterized_process_plan(intent, groups, annotated)
 
         required = {
             "product", "raw_material", "process_step", "parameter_name", "value", "unit",
@@ -81,6 +96,66 @@ class ProcessingKnowledgeTests(unittest.TestCase):
         self.assertIn("破碎/榨汁", plan["flow"])
         self.assertTrue(any("juice-001" in group["source_ids"] for group in groups))
         self.assertTrue(any(group["confidence_level"] == "高可信度" for group in groups))
+
+    def test_pectin_direct_extraction_parameters_reach_plan_and_report(self) -> None:
+        intent = analyze_processing_intent(
+            "实验室把柑橘果皮加工成果胶，重点验证 extraction 温度和时间。",
+            {"variety": "柑橘果皮"},
+        )
+        chunk = evidence(
+            "pectin-direct",
+            "Citrus peel pectin extraction",
+            (
+                "Laboratory extraction of citrus peel pectin at 80°C for 60 min "
+                "increased the pectin yield."
+            ),
+            section="Results",
+            category="果胶",
+            page=6,
+            year=2024,
+        )
+
+        annotated, records, groups = verified_parameters([chunk], intent)
+        plan = build_parameterized_process_plan(intent, groups, annotated)
+        markdown = parameterized_plan_markdown(plan, groups, intent)
+        extraction_row = next(row for row in plan["rows"] if row["step"] == "提取")
+
+        self.assertEqual(intent["primary_product"], "果胶")
+        self.assertIn("提取", intent["operations"])
+        self.assertNotIn("破碎/榨汁", intent["operations"])
+        self.assertEqual(
+            {"温度", "时间"},
+            {
+                item["parameter_name"]
+                for item in records
+                if item["eligible_for_recommendation"]
+            },
+        )
+        self.assertEqual({"温度", "时间"}, {item["name"] for item in extraction_row["parameters"]})
+        self.assertEqual(plan["parameter_count"], 2)
+        self.assertIn("沉淀/分离", plan["flow"])
+        self.assertIn("粉碎/标准化", plan["flow"])
+        self.assertTrue(plan["equipment"])
+        self.assertIn("80 °C", markdown)
+        self.assertIn("60 min", markdown)
+        self.assertIn("Citrus peel pectin extraction", markdown)
+
+    def test_essential_oil_has_a_dedicated_complete_route_and_retrieval_facets(self) -> None:
+        intent = analyze_processing_intent(
+            "柑橘果皮加工精油，比较冷压和水蒸气蒸馏路线。",
+            {"variety": "柑橘果皮"},
+        )
+        plan = build_parameterized_process_plan(intent, [], [])
+        specs = build_processing_subquestions(intent)
+
+        self.assertEqual(intent["primary_product"], "精油")
+        self.assertIn("提取", intent["operations"])
+        self.assertIn("油水分离", plan["flow"])
+        self.assertIn("精制/调配", plan["flow"])
+        self.assertIn("质量检测", plan["flow"])
+        self.assertTrue(plan["equipment"])
+        self.assertIn("oil_extraction", {item["id"] for item in specs})
+        self.assertIn("oil_separation", {item["id"] for item in specs})
 
     def test_chenpi_end_to_end_keeps_drying_method_and_scale(self) -> None:
         intent = analyze_processing_intent(
@@ -103,9 +178,8 @@ class ProcessingKnowledgeTests(unittest.TestCase):
                 page=6,
             ),
         ]
-        records = extract_processing_parameters(chunks, intent)
-        groups = aggregate_parameter_evidence(records)
-        plan = build_parameterized_process_plan(intent, groups, chunks)
+        annotated, records, groups = verified_parameters(chunks, intent)
+        plan = build_parameterized_process_plan(intent, groups, annotated)
         markdown = parameterized_plan_markdown(plan, groups, intent)
         visible_markdown = parameterized_plan_markdown(
             plan,
@@ -152,6 +226,7 @@ class ProcessingKnowledgeTests(unittest.TestCase):
             "source_location": "材料与方法，第2页",
             "confidence": 0.8,
             "eligible_for_recommendation": True,
+            "evidence_level": DIRECT_EVIDENCE,
             "unit_missing": False,
             "title": "A",
             "year": "2020",
@@ -188,6 +263,157 @@ class ProcessingKnowledgeTests(unittest.TestCase):
         group = aggregate_parameter_evidence(missing)[0]
         self.assertEqual(group["confidence_level"], "低可信度")
         self.assertIn("单位缺失", group["recommended_range"])
+
+        plan = build_parameterized_process_plan(intent, [group], chunks)
+        markdown = parameterized_plan_markdown(plan, [group], intent)
+        self.assertIn("暂无可靠参数", markdown)
+        self.assertNotIn("0.05 [单位缺失]", markdown)
+
+    def test_hplc_settings_never_become_storage_parameters_or_public_numbers(self) -> None:
+        intent = analyze_processing_intent(
+            "茶枝柑陈皮储藏条件",
+            {"origin": "新会", "variety": "茶枝柑"},
+        )
+        chunk = evidence(
+            "storage-hplc",
+            "Changes in Chenpi quality during storage",
+            (
+                "During storage, samples were kept at 4°C for 30 days. "
+                "The method was modified from the one developed by Zeng's group. "
+                "The flow rate was 0.6 mL/min, the column temperature was 25°C "
+                "and the maximal pressure was 250 bar. The mobile phase was followed "
+                "by a gradient elution: 0–6 min, 16–19% B."
+            ),
+            section="Materials and Methods",
+            category="陈皮",
+        )
+
+        annotated, records, groups = verified_parameters([chunk], intent)
+        public_groups = [item for item in groups if is_public_parameter_group(item)]
+        plan = build_parameterized_process_plan(intent, groups, annotated)
+        markdown = parameterized_plan_markdown(plan, groups, intent)
+        model_context = format_processing_context(intent, groups, [chunk])
+
+        self.assertTrue(any(item["parameter_name"] == "温度" and item["value"] == "4" for item in records))
+        self.assertTrue(any(item["parameter_name"] == "时间" and item["value"] == "30" for item in records))
+        self.assertFalse(any(item["value"] in {"250", "0.6"} for item in records))
+        self.assertFalse(any(item.get("range") == "0–6" for item in records))
+        self.assertEqual({item["parameter_name"] for item in public_groups}, {"温度", "时间"})
+        for forbidden in ("250 bar", "0.6 mL/min", "0–6 min"):
+            self.assertNotIn(forbidden, markdown)
+            self.assertNotIn(forbidden, model_context)
+
+    def test_storage_step_rejects_pressure_minutes_and_flow_even_without_hplc_words(self) -> None:
+        intent = analyze_processing_intent(
+            "茶枝柑陈皮储藏条件",
+            {"origin": "新会", "variety": "茶枝柑"},
+        )
+        chunk = evidence(
+            "bad-storage-units",
+            "Chenpi storage trial",
+            "Chenpi samples were stored at 250 bar for 6 min with a flow rate of 0.6 mL/min.",
+            category="陈皮",
+        )
+
+        records = extract_processing_parameters([chunk], intent)
+        groups = aggregate_parameter_evidence(records)
+        plan = build_parameterized_process_plan(intent, groups, [chunk])
+        markdown = parameterized_plan_markdown(plan, groups, intent)
+
+        self.assertTrue(records)
+        self.assertTrue(all(not item["eligible_for_recommendation"] for item in records))
+        self.assertTrue(all(item.get("scope_issues") for item in records))
+        self.assertTrue(all(not is_public_parameter_group(item) for item in groups))
+        self.assertIn("暂无可靠参数", markdown)
+        for forbidden in ("250 bar", "6 min", "0.6 mL/min"):
+            self.assertNotIn(forbidden, markdown)
+
+        legacy_groups = [
+            {
+                "recommendable": True,
+                "conflict": False,
+                "process_step": "储藏",
+                "parameter_name": "压力",
+                "unit": "bar",
+                "recommended_range": "250 bar（单篇文献直接报告，需小试验证）",
+            },
+            {
+                "recommendable": True,
+                "conflict": False,
+                "process_step": "储藏",
+                "parameter_name": "时间",
+                "unit": "min",
+                "recommended_range": "0–6 min（单篇文献直接报告，需小试验证）",
+            },
+            {
+                "recommendable": True,
+                "conflict": False,
+                "process_step": "储藏",
+                "parameter_name": "流量",
+                "unit": "mL/min",
+                "recommended_range": "0.6 mL/min（单篇文献直接报告，需小试验证）",
+            },
+        ]
+        self.assertTrue(all(not is_public_parameter_group(item) for item in legacy_groups))
+
+    def test_known_raw_scale_and_required_equipment_mismatches_block_parameter(self) -> None:
+        intent = analyze_processing_intent(
+            "脐橙汁中试处理，现有杀菌机。",
+            {"origin": "赣南", "variety": "脐橙"},
+        )
+        chunk = evidence(
+            "mismatch",
+            "Laboratory high-pressure homogenization of mandarin juice",
+            "Mandarin juice was homogenized at 80 MPa in a laboratory experiment.",
+            category="橙汁",
+        )
+
+        records = extract_processing_parameters([chunk], intent)
+        pressure = next(item for item in records if item["parameter_name"] == "压力")
+        groups = aggregate_parameter_evidence(records)
+        plan = build_parameterized_process_plan(intent, groups, [chunk])
+        markdown = parameterized_plan_markdown(plan, groups, intent)
+
+        self.assertFalse(pressure["eligible_for_recommendation"])
+        self.assertTrue(any("原料" in issue for issue in pressure["scope_issues"]))
+        self.assertTrue(any("规模" in issue for issue in pressure["scope_issues"]))
+        self.assertTrue(any("设备" in issue for issue in pressure["scope_issues"]))
+        self.assertTrue(all(not is_public_parameter_group(item) for item in groups))
+        self.assertNotIn("80 MPa", markdown)
+
+    def test_same_source_duplicate_parameter_is_collapsed_before_display(self) -> None:
+        record = {
+            "product": "柑橘汁",
+            "raw_material": "脐橙",
+            "process_step": "杀菌",
+            "parameter_name": "温度",
+            "unit": "℃",
+            "range": "85–90",
+            "value": "",
+            "conditions": "橙汁杀菌",
+            "scale": "pilot",
+            "process_method": "热处理",
+            "effect_on_quality": "微生物降低。",
+            "source_id": "same-paper",
+            "source_location": "材料与方法，第2页",
+            "confidence": 0.8,
+            "eligible_for_recommendation": True,
+            "evidence_level": DIRECT_EVIDENCE,
+            "unit_missing": False,
+            "title": "橙汁杀菌",
+            "year": "2022",
+        }
+
+        group = aggregate_parameter_evidence([
+            record,
+            {**record, "conditions": "重复片段中的同一橙汁杀菌条件"},
+        ])[0]
+
+        self.assertEqual(group["evidence_count"], 1)
+        self.assertEqual(group["duplicate_count"], 1)
+        self.assertEqual(len(group["alternatives"]), 1)
+        group["evidence_level"] = DIRECT_EVIDENCE
+        self.assertTrue(is_public_parameter_group(group))
 
     def test_equation_line_numbers_and_equipment_models_are_not_parameters(self) -> None:
         intent = analyze_processing_intent("橙汁杀菌", {"variety": "甜橙"})
@@ -255,6 +481,9 @@ class ProcessingKnowledgeTests(unittest.TestCase):
                 "process_method": "热处理",
                 "conflict": False,
                 "source_ids": ["filling-paper"],
+                "unit": "°C",
+                "evidence_level": DIRECT_EVIDENCE,
+                "public_display": True,
             }
         ]
 
@@ -443,9 +672,8 @@ class ProcessingKnowledgeTests(unittest.TestCase):
             section="Materials and Methods",
         )
 
-        records = extract_processing_parameters([chunk], intent)
-        groups = aggregate_parameter_evidence(records)
-        plan = build_parameterized_process_plan(intent, groups, [chunk])
+        annotated, records, groups = verified_parameters([chunk], intent)
+        plan = build_parameterized_process_plan(intent, groups, annotated)
         adjustment_row = next(row for row in plan["rows"] if row["step"] == "糖酸调整")
 
         self.assertIn("糖酸调整", intent["operations"])

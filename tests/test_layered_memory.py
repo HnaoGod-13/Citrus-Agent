@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import sqlite3
 import tempfile
 import unittest
@@ -411,6 +413,452 @@ class LayeredMemoryTests(unittest.TestCase):
         restarted = MemoryManager(self.db_path)
         messages = restarted.restore_session_messages(self.user_id, self.session_id, self.project_id)
         self.assertEqual([item["message_id"] for item in messages], ["msg-user", "msg-assistant"])
+
+    def test_opaque_resume_grant_is_hashed_scoped_expiring_and_revocable(self) -> None:
+        token = self.manager.create_session_access_grant(
+            self.user_id,
+            self.session_id,
+            self.project_id,
+            ttl_hours=2,
+        )
+        self.assertRegex(token, r"^ctx_[A-Za-z0-9_-]{32,96}$")
+        with self.manager._connect() as connection:
+            row = connection.execute(
+                "SELECT token_hash,revoked_at FROM session_access_grants"
+            ).fetchone()
+        self.assertEqual(hashlib.sha256(token.encode("utf-8")).hexdigest(), row["token_hash"])
+        self.assertNotEqual(token, row["token_hash"])
+        self.assertIsNone(row["revoked_at"])
+
+        resolved = self.manager.resolve_session_access_grant(
+            token,
+            project_id=self.project_id,
+        )
+        self.assertEqual(self.user_id, resolved["user_id"])
+        self.assertEqual(self.session_id, resolved["session_id"])
+        self.assertIsNone(
+            self.manager.resolve_session_access_grant(token, project_id="another_project")
+        )
+        self.assertFalse(
+            self.manager.revoke_session_access_grant(
+                token,
+                user_id="another_user",
+                session_id=self.session_id,
+                project_id=self.project_id,
+            )
+        )
+        self.assertTrue(
+            self.manager.revoke_session_access_grant(
+                token,
+                user_id=self.user_id,
+                session_id=self.session_id,
+                project_id=self.project_id,
+            )
+        )
+        self.assertIsNone(
+            self.manager.resolve_session_access_grant(token, project_id=self.project_id)
+        )
+
+        expired = self.manager.create_session_access_grant(
+            self.user_id,
+            self.session_id,
+            self.project_id,
+        )
+        with self.manager._connect() as connection:
+            connection.execute(
+                "UPDATE session_access_grants SET expires_at=? WHERE token_hash=?",
+                (
+                    "2000-01-01T00:00:00+00:00",
+                    hashlib.sha256(expired.encode("utf-8")).hexdigest(),
+                ),
+            )
+        self.assertIsNone(
+            self.manager.resolve_session_access_grant(expired, project_id=self.project_id)
+        )
+        with self.manager._connect() as connection:
+            revoked_at = connection.execute(
+                "SELECT revoked_at FROM session_access_grants WHERE token_hash=?",
+                (hashlib.sha256(expired.encode("utf-8")).hexdigest(),),
+            ).fetchone()[0]
+        self.assertTrue(revoked_at)
+
+    def test_export_is_exactly_scoped_redacted_and_never_contains_grant_hashes(self) -> None:
+        self.manager.record_message(
+            self.user_id,
+            self.session_id,
+            self.project_id,
+            "user",
+            "请使用 api_key=super-secret-value 调试。",
+        )
+        token = self.manager.create_session_access_grant(
+            self.user_id,
+            self.session_id,
+            self.project_id,
+        )
+        token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+        self.manager.log_privacy_event(
+            "data_exported",
+            user_id=self.user_id,
+            project_id=self.project_id,
+            session_id=self.session_id,
+            details={"api_key": "must-not-export"},
+        )
+        self.manager.ensure_session("user_b", "session_b", self.project_id)
+        self.manager.record_message(
+            "user_b",
+            "session_b",
+            self.project_id,
+            "user",
+            "other user's private message",
+        )
+
+        exported = self.manager.export_user_data(
+            user_id=self.user_id,
+            project_id=self.project_id,
+        )
+        payload = json.dumps(exported, ensure_ascii=False)
+        self.assertNotIn("super-secret-value", payload)
+        self.assertNotIn("must-not-export", payload)
+        self.assertNotIn("other user's private message", payload)
+        self.assertNotIn(token, payload)
+        self.assertNotIn(token_hash, payload)
+        self.assertEqual(
+            [self.session_id],
+            [row["session_id"] for row in exported["data"]["sessions"]],
+        )
+        self.assertEqual(
+            "[REDACTED]",
+            exported["data"]["access_records"][0]["details"]["api_key"],
+        )
+
+    def test_export_replaces_nested_server_paths_with_portable_logical_references(self) -> None:
+        working_path = r"C:\Users\service-account\citrus\batch-notes.md"
+        metadata_path = "/srv/citrus/private/uploads/photo.jpg"
+        sample_path = r"\\fileserver\citrus-private\sample.png"
+        run_state_path = "/var/lib/citrus/private/tool-result.json"
+        run_tool_path = r"D:\Citrus Runtime\reports\decision-report.md"
+        self.manager.update_working_memory(
+            self.session_id,
+            {"referenced_files": {"add": [working_path]}},
+            user_id=self.user_id,
+            project_id=self.project_id,
+        )
+        self.manager.record_message(
+            self.user_id,
+            self.session_id,
+            self.project_id,
+            "assistant",
+            "图片已保存。",
+            metadata={"stored_image_path": metadata_path},
+        )
+        self.manager.save_sample(
+            {
+                "user_id": self.user_id,
+                "session_id": self.session_id,
+                "project_id": self.project_id,
+                "variety": "path-export-test",
+                "image_paths": [sample_path],
+                "source": "test",
+            }
+        )
+        self.manager.log_agent_run(
+            {
+                "run_id": "run-portable-export",
+                "user_id": self.user_id,
+                "session_id": self.session_id,
+                "project_id": self.project_id,
+                "original_input": "生成报告",
+                "system_prompt_version": "test-v1",
+                "tool_calls": [{"tool": "report", "result_path": run_tool_path}],
+                "state_updates": {"referenced_files": {"add": [run_state_path]}},
+            }
+        )
+
+        exported = self.manager.export_user_data(
+            user_id=self.user_id,
+            project_id=self.project_id,
+        )
+        payload = json.dumps(exported, ensure_ascii=False)
+        for raw_path in (
+            working_path,
+            metadata_path,
+            sample_path,
+            run_state_path,
+            run_tool_path,
+        ):
+            self.assertNotIn(raw_path, payload)
+
+        working_ref = exported["data"]["working_memory"][0]["state"]["referenced_files"][0]
+        metadata_ref = exported["data"]["conversation_messages"][0]["metadata"][
+            "stored_image_path"
+        ]
+        sample_ref = exported["data"]["citrus_samples"][0]["image_paths"][0]
+        run_record = exported["data"]["agent_runs"][0]
+        state_ref = run_record["state_updates"]["referenced_files"]["add"][0]
+        tool_ref = run_record["tool_calls"][0]["result_path"]
+        for logical_ref, basename in (
+            (working_ref, "batch-notes.md"),
+            (metadata_ref, "photo.jpg"),
+            (sample_ref, "sample.png"),
+            (state_ref, "tool-result.json"),
+            (tool_ref, "decision-report.md"),
+        ):
+            self.assertRegex(logical_ref, r"^stored-file://[0-9a-f]{12}/")
+            self.assertTrue(logical_ref.endswith("/" + basename))
+
+    def test_exact_session_and_user_deletion_preserve_other_scopes(self) -> None:
+        def populate(user_id: str, session_id: str, project_id: str, suffix: str) -> str:
+            self.manager.ensure_session(user_id, session_id, project_id)
+            self.manager.record_message(
+                user_id,
+                session_id,
+                project_id,
+                "user",
+                f"message-{suffix}",
+            )
+            self.manager.save_memory(
+                {
+                    "user_id": user_id,
+                    "session_id": session_id,
+                    "project_id": project_id,
+                    "memory_type": "task_event",
+                    "content": f"memory-{suffix}",
+                    "source": "test",
+                    "source_id": suffix,
+                }
+            )
+            self.manager.save_sample(
+                {
+                    "user_id": user_id,
+                    "session_id": session_id,
+                    "project_id": project_id,
+                    "variety": f"variety-{suffix}",
+                    "source": "test",
+                }
+            )
+            self.manager.log_agent_run(
+                {
+                    "run_id": f"run-{suffix}",
+                    "user_id": user_id,
+                    "session_id": session_id,
+                    "project_id": project_id,
+                    "original_input": f"run-input-{suffix}",
+                    "system_prompt_version": "test-v1",
+                }
+            )
+            return self.manager.create_session_access_grant(
+                user_id,
+                session_id,
+                project_id,
+            )
+
+        session_two = "session_two"
+        other_user_session = "session_other_user"
+        other_project_session = "session_other_project"
+        token_one = populate(self.user_id, self.session_id, self.project_id, "one")
+        token_two = populate(self.user_id, session_two, self.project_id, "two")
+        token_other_user = populate("user_b", other_user_session, self.project_id, "other-user")
+        token_other_project = populate(
+            self.user_id,
+            other_project_session,
+            "project_b",
+            "other-project",
+        )
+
+        with self.assertRaises(MemoryIsolationError):
+            self.manager.delete_session_data(
+                other_user_session,
+                user_id=self.user_id,
+                project_id=self.project_id,
+            )
+
+        deleted = self.manager.delete_session_data(
+            self.session_id,
+            user_id=self.user_id,
+            project_id=self.project_id,
+        )
+        self.assertTrue(deleted["deleted"])
+        self.assertGreater(deleted["counts"]["conversation_messages"], 0)
+        self.assertIsNone(
+            self.manager.resolve_session_access_grant(token_one, project_id=self.project_id)
+        )
+        self.assertIsNotNone(
+            self.manager.resolve_session_access_grant(token_two, project_id=self.project_id)
+        )
+
+        deleted_user = self.manager.delete_user_data(
+            user_id=self.user_id,
+            project_id=self.project_id,
+        )
+        self.assertTrue(deleted_user["deleted"])
+        self.assertIsNone(
+            self.manager.resolve_session_access_grant(token_two, project_id=self.project_id)
+        )
+        self.assertIsNotNone(
+            self.manager.resolve_session_access_grant(
+                token_other_user,
+                project_id=self.project_id,
+            )
+        )
+        self.assertIsNotNone(
+            self.manager.resolve_session_access_grant(
+                token_other_project,
+                project_id="project_b",
+            )
+        )
+        with self.manager._connect() as connection:
+            remaining = {
+                (row["user_id"], row["project_id"], row["session_id"])
+                for row in connection.execute(
+                    "SELECT user_id,project_id,session_id FROM sessions"
+                )
+            }
+        self.assertEqual(
+            {
+                ("user_b", self.project_id, other_user_session),
+                (self.user_id, "project_b", other_project_session),
+            },
+            remaining,
+        )
+
+    def test_deletion_removes_only_known_files_in_the_exact_scope(self) -> None:
+        scope_hash = hashlib.sha256(
+            f"{self.user_id}\0{self.project_id}".encode("utf-8")
+        ).hexdigest()[:24]
+        image_dir = self.db_path.parent / "files" / scope_hash
+        image_dir.mkdir(parents=True)
+        first_image = image_dir / "first.jpg"
+        second_image = image_dir / "second.jpg"
+        first_image.write_bytes(b"first")
+        second_image.write_bytes(b"second")
+        second_session = "session_file_two"
+        self.manager.ensure_session(self.user_id, second_session, self.project_id)
+        self.manager.save_sample(
+            {
+                "user_id": self.user_id,
+                "session_id": self.session_id,
+                "project_id": self.project_id,
+                "variety": "first-file-variety",
+                "image_paths": [str(first_image)],
+                "source": "test",
+            }
+        )
+        self.manager.save_sample(
+            {
+                "user_id": self.user_id,
+                "session_id": second_session,
+                "project_id": self.project_id,
+                "variety": "second-file-variety",
+                "image_paths": [str(second_image)],
+                "source": "test",
+            }
+        )
+
+        deleted_session = self.manager.delete_session_data(
+            self.session_id,
+            user_id=self.user_id,
+            project_id=self.project_id,
+        )
+        self.assertFalse(first_image.exists())
+        self.assertTrue(second_image.exists())
+        self.assertEqual(0, deleted_session["file_cleanup_errors"])
+
+        deleted_user = self.manager.delete_user_data(
+            user_id=self.user_id,
+            project_id=self.project_id,
+        )
+        self.assertFalse(second_image.exists())
+        self.assertFalse(image_dir.exists())
+        self.assertEqual(0, deleted_user["file_cleanup_errors"])
+
+    def test_privacy_event_scope_and_retention_policy_are_explicit(self) -> None:
+        self.manager.log_privacy_event(
+            "session_created",
+            user_id=self.user_id,
+            project_id=self.project_id,
+            session_id=self.session_id,
+            details={"channel": "test"},
+        )
+        self.manager.ensure_session("user_b", "session_b", self.project_id)
+        self.manager.log_privacy_event(
+            "session_created",
+            user_id="user_b",
+            project_id=self.project_id,
+            session_id="session_b",
+        )
+        events = self.manager.list_privacy_events(
+            user_id=self.user_id,
+            project_id=self.project_id,
+        )
+        self.assertEqual(1, len(events))
+        self.assertEqual(self.session_id, events[0]["session_id"])
+        policy = self.manager.retention_policy()
+        self.assertGreater(policy["resume_token_ttl_hours"], 0)
+        self.assertGreater(policy["conversation_retention_days"], 0)
+        self.assertGreater(policy["agent_audit_retention_days"], 0)
+        self.assertGreater(policy["access_log_retention_days"], 0)
+        self.assertFalse(policy["automatic_cleanup_enabled"])
+        self.assertIn("不执行后台批量删除", policy["automatic_cleanup_note"])
+
+    def test_existing_memory_database_is_upgraded_without_rewriting_sessions(self) -> None:
+        legacy_path = Path(self.tempdir.name) / "legacy-memory.db"
+        connection = sqlite3.connect(legacy_path)
+        try:
+            connection.execute(
+                """
+                CREATE TABLE sessions (
+                    session_id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    project_id TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'active',
+                    config_json TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                "INSERT INTO sessions VALUES(?,?,?,?,?,?,?)",
+                (
+                    "legacy_session",
+                    "legacy_user",
+                    "legacy_project",
+                    "active",
+                    "{}",
+                    "2026-01-01T00:00:00+00:00",
+                    "2026-01-01T00:00:00+00:00",
+                ),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        upgraded = MemoryManager(legacy_path)
+        with upgraded._connect() as connection:
+            preserved = connection.execute(
+                "SELECT user_id,project_id FROM sessions WHERE session_id='legacy_session'"
+            ).fetchone()
+            privacy_tables = {
+                row[0]
+                for row in connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                )
+            }
+        self.assertEqual(("legacy_user", "legacy_project"), tuple(preserved))
+        self.assertIn("session_access_grants", privacy_tables)
+        self.assertIn("privacy_events", privacy_tables)
+        token = upgraded.create_session_access_grant(
+            "legacy_user",
+            "legacy_session",
+            "legacy_project",
+        )
+        self.assertEqual(
+            "legacy_session",
+            upgraded.resolve_session_access_grant(
+                token,
+                project_id="legacy_project",
+            )["session_id"],
+        )
 
     def test_database_failure_is_wrapped(self) -> None:
         blocked = Path(self.tempdir.name) / "is-a-directory"

@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from .evidence import DIRECT_EVIDENCE, effective_evidence_level
+
 
 DIRECTION_PEEL = "果皮-陈皮/陈皮茶"
 DIRECTION_SHRED = "果皮-陈皮丝/陈皮粉"
@@ -155,6 +157,10 @@ def _evidence_documents(evidence: list[dict[str, Any]], terms: list[str]) -> int
     documents: set[str] = set()
     lowered_terms = [term.lower() for term in terms]
     for index, item in enumerate(evidence):
+        # Retrieval relevance is not evidence strength. Only fragments that pass
+        # the deterministic direct-evidence policy may increase route scores.
+        if effective_evidence_level(item) != DIRECT_EVIDENCE:
+            continue
         text = " ".join(
             str(item.get(field) or "")
             for field in ["title", "category", "product", "topic", "keywords", "section", "chunk_text"]

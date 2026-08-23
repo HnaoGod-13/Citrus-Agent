@@ -4,6 +4,14 @@ import re
 from datetime import datetime
 from typing import Any
 
+from .evidence import (
+    build_applicability,
+    effective_evidence_level,
+    format_key_conclusions_markdown,
+    normalize_doi,
+    source_url,
+)
+from .process_knowledge import is_public_parameter_group
 from .rules import (
     DIRECTION_BYPRODUCT,
     DIRECTION_CONCENTRATE,
@@ -350,7 +358,11 @@ def parameterized_plan_markdown(
             "现有知识库证据不足，或本轮未识别到明确目标产品；不填入无依据数值。"
         )
     intent = processing_intent or {}
-    groups = parameter_groups or []
+    groups = [
+        group
+        for group in (parameter_groups or [])
+        if is_public_parameter_group(group)
+    ]
     lines = [
         "### 5.4 加工目标与适用性判断",
         "",
@@ -383,7 +395,22 @@ def parameterized_plan_markdown(
         ]
     )
     for row in parameterized_plan.get("rows", []):
-        params = row.get("parameters") or []
+        params = [
+            item
+            for item in (row.get("parameters") or [])
+            if is_public_parameter_group(
+                {
+                    "recommendable": True,
+                    "conflict": item.get("conflict"),
+                    "recommended_range": item.get("recommendation"),
+                    "process_step": row.get("step"),
+                    "parameter_name": item.get("name"),
+                    "unit": item.get("unit"),
+                    "evidence_level": item.get("evidence_level"),
+                    "public_display": item.get("public_display"),
+                }
+            )
+        ]
         if params:
             parameter_text = "；".join(
                 f"{item.get('name')}={item.get('recommendation')}（{item.get('confidence')}）"
@@ -423,10 +450,16 @@ def parameterized_plan_markdown(
             lines.append(
                 f"- **{group.get('process_step')}—{group.get('parameter_name')}**："
                 f"{group.get('recommended_range')}，{group.get('confidence_level')}；"
+                f"证据等级 {group.get('evidence_level') or '证据不足'}；"
                 f"适用条件为 {group.get('applicability')}；{effect_text}"
                 f"{source_note}{conflict_note}。"
             )
-            for alternative in (group.get("alternatives") or [])[:5]:
+            for alternative in [
+                item
+                for item in (group.get("alternatives") or [])
+                if item.get("public_display") is not False
+                and item.get("eligible_for_recommendation") is not False
+            ][:5]:
                 if include_source_metadata:
                     locator_parts = [
                         str(alternative.get("title") or "未命名文献"),
@@ -449,7 +482,7 @@ def parameterized_plan_markdown(
                         "仅用于对照设计，不能直接视为生产参数。"
                     )
     else:
-        lines.append("- 未提取到单位、适用条件和来源均完整的参数，所有数值保持空缺，需补充文献或开展小试。")
+        lines.append("- 暂无可靠参数；所有数值保持空缺，需补充匹配文献或开展小试。")
     lines.extend(["", "### 5.7 设备需求及替代设备", ""])
     for item in parameterized_plan.get("equipment", []):
         lines.append(f"- {item.get('stage')}：{item.get('primary')}；替代方案：{item.get('alternative')}。")
@@ -517,6 +550,7 @@ def generate_report(
     process_parameters: list[dict[str, Any]] | None = None,
     parameter_groups: list[dict[str, Any]] | None = None,
     parameterized_plan: dict[str, Any] | None = None,
+    key_conclusions: list[dict[str, Any]] | None = None,
 ) -> str:
     top = scores[0]
     second = scores[1] if len(scores) > 1 else None
@@ -528,14 +562,24 @@ def generate_report(
         locator = f"第 {page} 页" if page else "页码未标注"
         category = item.get("category") or item.get("product") or "未分类"
         section = item.get("section") or "正文"
-        source = item.get("publication") or item.get("doi") or item.get("source_file") or "本地文献"
+        doi = normalize_doi(item.get("doi"))
+        url = source_url(item)
+        if url:
+            link_label = f"DOI {doi}" if doi else "原文链接"
+            source = f"[{link_label}]({url})"
+        else:
+            source = item.get("publication") or item.get("source_file") or "DOI/链接未收录"
+        evidence_level = effective_evidence_level(item)
+        applicability = item.get("applicability") or build_applicability(item)
         excerpt = re.sub(r"\s+", " ", str(item.get("chunk_text") or "")).strip()
         if len(excerpt) > 760:
             excerpt = excerpt[:760].rstrip() + "…"
         evidence_lines.append(
             f"{index}. **[文献{index}] {item.get('title') or '未命名文献'}**"
             f"（{item.get('year') or '年份未知'}；{category}；{section}；{locator}；{source}）\n"
-            f"   - 可用于本轮复核的证据片段：{excerpt}"
+            f"   - 证据等级：**{evidence_level}**；判定：{item.get('evidence_level_reason') or '按保守规则自动分级'}\n"
+            f"   - 原文片段：{excerpt}\n"
+            f"   - 适用条件：{applicability}"
         )
         for neighbor in item.get("adjacent_chunks", []) or []:
             neighbor_page = neighbor.get("page") or neighbor.get("page_start")
@@ -570,6 +614,12 @@ def generate_report(
         processing_intent,
     )
     risk_lines = _risk_lines(quality_risks)
+    key_conclusion_text = format_key_conclusions_markdown(
+        key_conclusions or [],
+        heading="### 1.1 关键结论证据卡",
+        max_references=2,
+        excerpt_chars=360,
+    )
 
     report = f"""# 柑橘批次智能决策报告
 
@@ -580,6 +630,8 @@ def generate_report(
 当前建议优先考虑：**{top.direction}**，适配等级 **{top.match_level}**；文献支持为 **{top.evidence_support}**；数据置信度为 **{top.data_confidence}**。{alternative}
 
 本报告是 Demo 辅助决策结果，不能替代实验室检测、食品安全放行、标签审核和人工审批。
+
+{key_conclusion_text}
 
 ## 2. 输入信息
 
@@ -620,7 +672,7 @@ def generate_report(
 
 {chr(10).join(evidence_lines)}
 
-应用原则：优先使用与本批次原料部位、目标产品和工艺问题直接对应的结果或结论；涉及具体参数时还要核对研究对象、设备、料液比和评价指标。体外、动物、网络药理及相关性研究仅能作为研究线索，不得直接外推为人体功效或生产放行依据。企业 SOP、检测报告和法规标准仍需单独归档。
+应用原则：“直接证据”须同时具备可核验正文、原文定位、对象/工艺对应和方法、参数或结果信号；“仅供参考”不得写成直接支持；“证据不足”不得补写结论。涉及具体参数时还要核对研究对象、设备、料液比和评价指标。体外、动物、网络药理及相关性研究仅能作为研究线索，不得直接外推为人体功效或生产放行依据。企业 SOP、检测报告和法规标准仍需单独归档。
 
 ## 8. 客户匹配与销售建议
 

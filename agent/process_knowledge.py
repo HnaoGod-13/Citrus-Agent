@@ -7,6 +7,7 @@ import time
 from collections import Counter, defaultdict
 from typing import Any, Callable
 
+from .evidence import DIRECT_EVIDENCE
 from .processing_config import (
     PROCESS_CONTEXT_EVIDENCE_LIMIT,
     PROCESS_CONTEXT_PARAMETER_LIMIT,
@@ -50,6 +51,30 @@ PRODUCT_CATEGORY = {
     "果胶": "果胶",
 }
 
+# Explicit document labels are a hard boundary for numeric process evidence.
+# A pectin/oil/juice paper may still be useful background, but its numbers must
+# not be projected into a Chenpi (or another product) process table.
+EVIDENCE_PRODUCT_ALIASES: dict[str, tuple[str, ...]] = {
+    "陈皮": ("陈皮", "广陈皮", "citri reticulatae pericarpium", "dried tangerine peel"),
+    "柑橘汁": ("橙汁", "柑橘汁", "果汁", "orange juice", "citrus juice"),
+    "浓缩汁": ("浓缩汁", "浓缩果汁", "橙汁", "concentrated juice", "juice concentrate"),
+    "精油": ("精油", "挥发油", "essential oil", "volatile oil"),
+    "果胶": ("果胶", "pectin"),
+    "果酒/果醋": ("果酒", "果醋", "fruit wine", "vinegar"),
+}
+
+RAW_MATERIAL_FAMILIES: dict[str, tuple[str, ...]] = {
+    "chachi": ("茶枝柑", "新会柑", "chachi"),
+    "mandarin": (
+        "茶枝柑", "新会柑", "chachi", "mandarin", "tangerine", "温州蜜柑",
+        "南丰蜜桔", "沃柑", "citrus reticulata",
+    ),
+    "orange": ("orange", "甜橙", "脐橙", "赣南", "citrus sinensis"),
+    "lemon": ("lemon", "柠檬"),
+    "pomelo": ("pomelo", "grapefruit", "柚"),
+    "generic_citrus": ("citrus", "柑橘", "柑", "橘", "橙"),
+}
+
 SCALE_ALIASES = {
     "lab": ("实验室", "实验规模", "小试", "bench scale", "laboratory", "lab-scale"),
     "pilot": ("中试", "放大试验", "pilot", "pilot-scale"),
@@ -59,7 +84,9 @@ SCALE_ALIASES = {
 EQUIPMENT_ALIASES = (
     "清洗机", "榨汁机", "破碎机", "压榨机", "过滤器", "离心机", "均质机", "脱气机",
     "杀菌机", "灌装机", "热风干燥箱", "真空干燥机", "冻干机", "冷库", "蒸发器",
-    "膜设备", "发酵罐", "centrifuge", "homogenizer", "pasteurizer", "evaporator",
+    "膜设备", "发酵罐", "提取罐", "浸提罐", "蒸馏设备", "蒸馏釜", "冷压机",
+    "油水分离机", "centrifuge", "homogenizer", "pasteurizer", "evaporator", "extractor",
+    "distillation unit",
 )
 
 QUALITY_TERMS = (
@@ -89,7 +116,12 @@ STEP_ALIASES: dict[str, tuple[str, ...]] = {
     "原料验收": ("原料验收", "原料筛选", "分选", "挑选", "成熟度", "raw material", "sorting"),
     "清洗消毒": ("清洗", "消毒", "冲洗", "wash", "washing", "sanitize", "disinfection"),
     "去皮/取皮": ("去皮", "取皮", "开皮", "peeling", "peeled"),
-    "破碎/榨汁": ("破碎", "榨汁", "压榨", "打浆", "crushing", "juicing", "pressing", "extraction"),
+    "破碎/预处理": ("破碎", "粉碎", "切碎", "crushing", "grinding", "milling", "size reduction"),
+    "破碎/榨汁": ("榨汁", "压榨", "打浆", "juicing", "pressing"),
+    "提取": (
+        "提取", "萃取", "浸提", "水提", "酸提", "酶提", "冷压", "蒸馏",
+        "extract", "leaching", "maceration", "cold pressing", "distillation",
+    ),
     "护色": ("护色", "抗坏血酸", "褐变", "browning", "ascorbic acid"),
     "酶解": ("酶解", "果胶酶", "纤维素酶", "enzyme", "enzymatic", "pectinase"),
     "澄清": ("澄清", "clarification", "flotation", "fining"),
@@ -104,6 +136,9 @@ STEP_ALIASES: dict[str, tuple[str, ...]] = {
         "brix adjustment", "soluble solids adjustment", "acidity adjustment",
     ),
     "浓缩": ("浓缩", "蒸发", "膜浓缩", "concentration", "evaporation"),
+    "沉淀/分离": ("醇沉", "乙醇沉淀", "沉淀分离", "precipitation", "alcohol precipitation"),
+    "油水分离": ("油水分离", "分液", "油相分离", "oil-water separation", "phase separation", "decantation"),
+    "精制/调配": ("精制", "脱萜", "调配", "purification", "refining", "deterpenation", "de-terpenation"),
     "杀菌": ("杀菌", "巴氏", "灭菌", "pasteur", "steriliz", "thermal treatment", "high pressure processing", "HHP", "thermosonication", "ultrasound", "cold plasma", "electric field"),
     "干燥": ("干燥", "烘干", "晒干", "冻干", "drying", "dehydration", "freeze-drying"),
     "陈化": ("陈化", "陈放", "aging", "ageing", "maturation"),
@@ -113,6 +148,12 @@ STEP_ALIASES: dict[str, tuple[str, ...]] = {
 }
 
 METHOD_TAGS: dict[str, tuple[str, ...]] = {
+    "水提": ("水提", "热水提取", "water extraction", "aqueous extraction"),
+    "酸提": ("酸提", "acid extraction", "acid-assisted extraction"),
+    "酶提": ("酶提", "酶法提取", "enzyme-assisted extraction", "enzymatic extraction"),
+    "冷压": ("冷压", "cold pressing", "cold-pressed"),
+    "蒸馏": ("蒸馏", "distillation", "hydrodistillation"),
+    "超临界": ("超临界", "supercritical"),
     "热风": ("热风", "hot air"),
     "真空": ("真空", "vacuum"),
     "冻干": ("冻干", "freeze-dry", "freeze dry", "lyophil"),
@@ -146,15 +187,102 @@ ANALYTICAL_SENTENCE_TERMS = (
     "测定", "检测方法", "分析方法", "酶活性", "色差仪", "分光光度", "色谱", "质谱",
 )
 
+# Analytical instruments reuse production-looking units (bar, mL/min, min,
+# degrees Celsius). These anchors must win over a broad paper title such as
+# "quality change during storage".
+ANALYTICAL_INSTRUMENT_TERMS = (
+    "hplc", "uhplc", "uplc", "lc-ms", "lc/ms", "gc-ms", "gc/ms",
+    "chromatographic condition", "chromatography condition", "chromatographic analysis",
+    "analytical method", "instrumental analysis", "column temperature", "column oven",
+    "mobile phase", "gradient elution", "elution gradient", "injection volume",
+    "detector wavelength", "measured at", "calibration curve", "mass spectrometer",
+    "色谱条件", "色谱柱", "柱温", "流动相", "洗脱梯度", "进样量", "检测波长", "标准曲线",
+)
+
 ALLOWED_STEPS = {
-    "陈皮": {"原料验收", "清洗消毒", "去皮/取皮", "干燥", "陈化", "包装/灌装", "储藏"},
-    "柑橘汁": {"原料验收", "清洗消毒", "破碎/榨汁", "护色", "酶解", "澄清", "过滤/离心", "糖酸调整", "均质", "脱气", "杀菌", "包装/灌装", "储藏"},
-    "浓缩汁": {"原料验收", "清洗消毒", "破碎/榨汁", "护色", "酶解", "澄清", "过滤/离心", "糖酸调整", "浓缩", "均质", "脱气", "杀菌", "包装/灌装", "储藏"},
+    "陈皮": {"原料验收", "清洗消毒", "去皮/取皮", "破碎/预处理", "干燥", "陈化", "包装/灌装", "储藏"},
+    "柑橘汁": {"原料验收", "清洗消毒", "破碎/预处理", "破碎/榨汁", "护色", "酶解", "澄清", "过滤/离心", "糖酸调整", "均质", "脱气", "杀菌", "包装/灌装", "储藏"},
+    "浓缩汁": {"原料验收", "清洗消毒", "破碎/预处理", "破碎/榨汁", "护色", "酶解", "澄清", "过滤/离心", "糖酸调整", "浓缩", "均质", "脱气", "杀菌", "包装/灌装", "储藏"},
+    "果胶": {"原料验收", "清洗消毒", "去皮/取皮", "破碎/预处理", "提取", "酶解", "过滤/离心", "浓缩", "沉淀/分离", "干燥", "包装/灌装", "储藏"},
+    "精油": {"原料验收", "清洗消毒", "去皮/取皮", "破碎/预处理", "提取", "过滤/离心", "油水分离", "精制/调配", "包装/灌装", "储藏"},
 }
 
 UNIT_PATTERN = r"(?:°\s*C|°C|℃|K|MPa|kPa|Pa|bar|psi|rpm|r/min|mL/min|L/min|kg/h|L/h|h|min|s|d|小时|分钟|秒|天|%|mg/L|g/L|mg/kg|g/kg|U/g|U/mL|IU/mL|°Brix|Brix)"
 NUMBER_PATTERN = r"(?<![A-Za-z0-9])-?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?"
 RANGE_SEPARATOR = r"(?:\s*(?:-|–|—|~|～|至|到)\s*)"
+EXPONENT_TAIL_PREFIX = re.compile(
+    r"(?:[eE]\s*[-+−–—]\s*|(?:[×x*]\s*)?10\s*(?:\^\s*)?[-−–—]\s*)$"
+)
+
+
+STEP_PARAMETER_NAMES: dict[str, set[str]] = {
+    "原料验收": {"pH", "可溶性固形物", "水分", "酸度"},
+    "清洗消毒": {"温度", "时间", "浓度", "添加剂用量"},
+    "去皮/取皮": {"时间"},
+    "破碎/预处理": {"温度", "时间", "转速"},
+    "破碎/榨汁": {"温度", "时间", "压力", "转速", "流量"},
+    "提取": {"温度", "时间", "压力", "转速", "pH", "浓度", "酶用量", "料液比"},
+    "护色": {"温度", "时间", "pH", "浓度", "添加剂用量"},
+    "酶解": {"温度", "时间", "pH", "浓度", "酶用量", "料液比"},
+    "澄清": {"温度", "时间", "pH", "浓度", "酶用量", "转速"},
+    "过滤/离心": {"温度", "时间", "压力", "转速", "流量"},
+    "糖酸调整": {"pH", "可溶性固形物", "酸度", "浓度", "添加剂用量"},
+    "浓缩": {"温度", "时间", "压力", "流量", "可溶性固形物"},
+    "沉淀/分离": {"温度", "时间", "pH", "浓度", "转速"},
+    "油水分离": {"温度", "时间", "转速"},
+    "精制/调配": {"温度", "时间", "压力", "浓度", "流量"},
+    "均质": {"温度", "时间", "压力", "流量"},
+    "脱气": {"温度", "时间", "压力", "流量"},
+    "杀菌": {"温度", "时间", "压力"},
+    "干燥": {"温度", "时间", "压力", "流量", "水分"},
+    "陈化": {"温度", "时间", "水分"},
+    "发酵": {"温度", "时间", "pH", "可溶性固形物", "浓度", "酶用量"},
+    "包装/灌装": {"温度", "时间", "流量"},
+    "储藏": {"温度", "时间", "水分"},
+}
+
+PRESSURE_STEP_TERMS: dict[str, tuple[str, ...]] = {
+    "破碎/榨汁": ("press", "pressing", "压榨", "榨汁"),
+    "提取": ("extract", "extraction", "extractor", "supercritical", "萃取", "提取", "超临界"),
+    "过滤/离心": ("filter", "filtration", "membrane", "膜", "过滤", "压差"),
+    "浓缩": ("vacuum", "evapor", "membrane", "真空", "蒸发", "膜浓缩"),
+    "均质": ("homogen", "hph", "均质"),
+    "脱气": ("vacuum", "deaerat", "真空", "脱气"),
+    "杀菌": ("high pressure", "hpp", "hhp", "高压处理", "超高压", "杀菌"),
+    "干燥": ("vacuum dry", "真空干燥"),
+}
+
+FLOW_PROCESS_EQUIPMENT_TERMS = (
+    "process stream", "feed flow", "permeate flow", "pump", "membrane", "filtration",
+    "homogenizer", "evaporator", "filling line", "工艺流", "进料流量", "泵", "膜",
+    "过滤", "均质机", "蒸发器", "灌装线",
+)
+
+ROTATION_PROCESS_EQUIPMENT_TERMS = (
+    "centrifug", "agitator", "stirrer", "mixing", "离心", "搅拌", "混合",
+)
+
+STEP_METHOD_TAGS: dict[str, set[str]] = {
+    "过滤/离心": {"膜处理"},
+    "浓缩": {"真空", "膜处理"},
+    "均质": {"高压", "超声/热超声"},
+    "脱气": {"真空"},
+    "杀菌": {"高压", "热处理", "超声/热超声", "冷等离子体", "电场处理", "辐照"},
+    "干燥": {"热风", "真空", "冻干", "喷雾"},
+}
+
+STEP_METHOD_EQUIPMENT: dict[tuple[str, str], tuple[str, ...]] = {
+    ("过滤/离心", "膜处理"): ("过滤器", "膜设备"),
+    ("浓缩", "真空"): ("蒸发器", "真空干燥机"),
+    ("浓缩", "膜处理"): ("膜设备",),
+    ("均质", "高压"): ("均质机",),
+    ("脱气", "真空"): ("脱气机", "蒸发器"),
+    ("杀菌", "热处理"): ("杀菌机",),
+    ("杀菌", "高压"): ("杀菌机",),
+    ("干燥", "热风"): ("热风干燥箱",),
+    ("干燥", "真空"): ("真空干燥机",),
+    ("干燥", "冻干"): ("冻干机",),
+}
 
 
 PARAMETER_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
@@ -169,6 +297,36 @@ PARAMETER_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("料液比", re.compile(rf"(?i)(?:料液比|固液比|material.{{0,8}}liquid ratio|solid.{{0,8}}liquid ratio)\s*(?:为|=|:)?\s*(?P<value>{NUMBER_PATTERN})\s*[:∶]\s*(?P<end>{NUMBER_PATTERN})")),
 )
 
+# Raw literature excerpts are useful for qualitative reasoning, but they must
+# never become a second, unvalidated source of process values for batch advice.
+_PROCESS_VALUE_WITH_UNIT_PATTERN = re.compile(
+    rf"{NUMBER_PATTERN}(?:{RANGE_SEPARATOR}{NUMBER_PATTERN})?\s*"
+    r"(?:"
+    r"°\s*[CF]|º\s*[CF]|℃|℉|degrees?\s*(?:C(?:elsius)?|F(?:ahrenheit)?)|K(?![A-Za-z])|"
+    r"MPa|kPa|Pa|bar|psi|rpm|r/min|mL/min|L/min|kg/h|L/h|"
+    r"hours?|hrs?|minutes?|mins?|seconds?|secs?|days?|h|min|s|d|小时|分钟|秒|天|"
+    r"°\s*Brix|Brix|wt\.?\s*%|vol\.?\s*%|%|"
+    r"mg/L|g/L|mg/kg|g/kg|U/g|U/mL|IU/mL|"
+    r"kg|mg|(?:µ|μ|u)g|g|mL|µL|μL|L"
+    r")(?![A-Za-z])",
+    re.I,
+)
+_PROCESS_PH_VALUE_PATTERN = re.compile(
+    rf"\bpH\s*(?:值|of|=|:|：|为|was|is|at)?\s*[<>≤≥]?\s*"
+    rf"{NUMBER_PATTERN}(?:{RANGE_SEPARATOR}{NUMBER_PATTERN})?",
+    re.I,
+)
+_PROCESS_RATIO_VALUE_PATTERN = re.compile(
+    rf"(?:"
+    rf"料液比|固液比|液固比|液料比|"
+    rf"(?:solid|material|liquid)\s*"
+    rf"(?:[-–—]?\s*to\s*[-–—]?|[/–—-]|\s+)\s*"
+    rf"(?:solid|material|liquid)\s+ratio|[SL]\s*/\s*[SL]\s+ratio"
+    rf")\s*(?:为|是|=|:|：|of|was|is|at)?\s*"
+    rf"{NUMBER_PATTERN}\s*[:∶/]\s*{NUMBER_PATTERN}",
+    re.I,
+)
+
 MISSING_UNIT_PATTERN = re.compile(
     rf"(?P<name>酶(?:添加)?量|添加剂(?:添加)?量|浓度|温度|时间|压力|转速|流量|enzyme dosage|concentration|temperature|time|pressure)"
     rf"\s*(?:为|是|=|:|was|of)?\s*(?P<value>{NUMBER_PATTERN})(?!\s*{UNIT_PATTERN})",
@@ -180,6 +338,8 @@ ROUTE_STEPS = {
     "陈皮": ["原料验收", "分选", "清洗", "开皮取皮", "干燥", "回软/整理", "陈化", "分级检测", "包装", "储藏"],
     "柑橘汁": ["原料验收", "分选", "清洗消毒", "破碎/榨汁", "护色", "酶解/澄清", "过滤", "糖酸调整", "均质", "脱气", "杀菌", "灌装包装", "储藏"],
     "浓缩汁": ["原料验收", "清洗分选", "破碎/榨汁", "澄清过滤", "浓缩", "均质脱气", "杀菌灌装", "储藏"],
+    "果胶": ["原料验收", "分选", "清洗消毒", "去皮/取皮", "破碎/预处理", "提取", "过滤/离心", "浓缩", "沉淀/分离", "干燥", "粉碎/标准化", "包装/灌装", "储藏"],
+    "精油": ["原料验收", "分选", "清洗消毒", "去皮/取皮", "破碎/预处理", "提取", "油水分离", "精制/调配", "质量检测", "包装/灌装", "储藏"],
 }
 
 STEP_OPERATIONS = {
@@ -188,12 +348,22 @@ STEP_OPERATIONS = {
     "清洗": "去除泥沙与表面杂质；消毒剂种类和浓度必须按适用法规及企业验证确定。",
     "清洗消毒": "清洗后采用经验证的消毒程序，并控制残留及交叉污染。",
     "开皮取皮": "按目标产品取皮，控制果肉残留、破损和批次混合。",
+    "去皮/取皮": "分离合格果皮并控制果肉、白皮层或异物带入；各批原料单独称量和标识。",
+    "破碎/预处理": "按提取方式控制原料粒径和均匀性，缩短暴露等待时间并记录投料质量。",
     "破碎/榨汁": "采用与原料和设备匹配的破碎或榨汁方式，记录出汁率及苦味物质带入风险。",
+    "提取": "根据目标成分选择水提、酸提、酶提、冷压或蒸馏等适配方法；温度、时间、pH、料液比等参数必须成组验证。",
     "护色": "减少氧暴露并按证据决定是否采用护色剂；没有直接证据时不指定添加量。",
     "酶解/澄清": "依据目标浊度和口感选择酶解或澄清；温度、时间和用量必须成组验证。",
     "过滤": "按目标浊度选择过滤或离心，监控通量、压差和可溶性固形物损失。",
+    "过滤/离心": "分离提取液与固体残渣，记录滤液/油相收率；过滤精度、离心强度和物料损失需验证。",
     "糖酸调整": "先测可溶性固形物、可滴定酸和糖酸比，再按产品标准及配方审批调整。",
     "均质": "依据悬浮稳定性和设备能力确定压力及循环次数，避免过度升温。",
+    "浓缩": "在目标成分稳定性允许范围内浓缩，记录进出料质量、浓缩倍数和热暴露。",
+    "沉淀/分离": "按产品规格选择沉淀和分离方式，回收介质并验证残留；无直接证据时不指定用量。",
+    "油水分离": "及时完成油相、水相和固体杂质分离，减少乳化、氧化及挥发损失。",
+    "精制/调配": "依据目标用途决定是否精制、脱萜或调配，保留批次组成及物料平衡记录。",
+    "粉碎/标准化": "干燥后粉碎、筛分并按规格标准化，避免吸潮和不同批次无记录混合。",
+    "质量检测": "按目标用途检测关键成分、感官、理化、安全和稳定性指标，合格后方可包装。",
     "脱气": "降低溶解氧，减缓氧化和香气损失；真空度和时间需设备验证。",
     "杀菌": "按目标微生物、pH、包装和冷链条件验证杀菌强度，不跨产品套用参数。",
     "干燥": "按干燥方式控制温度、时间、终点水分和外观；不同设备参数不可直接互换。",
@@ -226,12 +396,28 @@ EQUIPMENT_MAP = {
         {"primary": "真空蒸发器或膜浓缩设备", "alternative": "两种路线参数与产品风味影响不可直接互换", "stage": "浓缩"},
         {"primary": "杀菌灌装线", "alternative": "批式设备须完成热穿透和密封验证", "stage": "稳定化包装"},
     ],
+    "果胶": [
+        {"primary": "果皮清洗、切碎/粉碎设备", "alternative": "小试可采用食品级清洗槽和可控粒径粉碎设备", "stage": "原料预处理"},
+        {"primary": "带温控、搅拌和耐腐蚀接液面的提取罐", "alternative": "实验室恒温反应器；酸提或酶提须分别验证材质与控温", "stage": "提取"},
+        {"primary": "过滤器或离心机", "alternative": "板框、膜过滤或批式离心需按黏度和目标纯度选择", "stage": "固液分离"},
+        {"primary": "真空浓缩及沉淀分离设备", "alternative": "小试旋蒸与食品级沉淀罐；介质回收和残留必须验证", "stage": "浓缩与分离"},
+        {"primary": "低温干燥、粉碎和筛分设备", "alternative": "热风、真空、冻干或喷雾路线不可直接互换参数", "stage": "干燥标准化"},
+    ],
+    "精油": [
+        {"primary": "果皮清洗及可控破碎设备", "alternative": "小试采用食品级切碎设备并缩短暴露时间", "stage": "原料预处理"},
+        {"primary": "冷压机或水蒸气蒸馏设备", "alternative": "按目标香气与得油率开展两条路线对照，参数不可互套", "stage": "精油提取"},
+        {"primary": "油水分离机或离心机", "alternative": "小试可使用食品级分液设备，须控制乳化和挥发损失", "stage": "油水分离"},
+        {"primary": "避光调配罐和精密过滤设备", "alternative": "仅在用途和规格要求明确后配置脱萜或精制设备", "stage": "精制调配"},
+        {"primary": "避光、低透氧包装及受控温储藏", "alternative": "包装材料须经相容性和稳定性验证", "stage": "包装储藏"},
+    ],
 }
 
 QUALITY_CHECKS = {
     "陈皮": ["感官与外观分级", "终点水分/水分活度", "挥发性成分或特征成分（按用途）", "霉菌与微生物", "农残与重金属", "虫害和仓储霉变记录"],
     "柑橘汁": ["可溶性固形物（°Brix）", "可滴定酸与糖酸比", "pH", "色泽和浊度/悬浮稳定性", "出汁率", "维生素C或香气保留（按目标）", "菌落总数、霉菌和酵母", "包装密封与储藏稳定性"],
     "浓缩汁": ["可溶性固形物（°Brix）", "可滴定酸和pH", "黏度与色泽", "复水稳定性", "微生物", "包装密封与储藏稳定性"],
+    "果胶": ["提取得率与物料平衡", "半乳糖醛酸含量或纯度", "酯化度与凝胶性能", "水分与灰分", "介质/溶剂残留", "微生物、重金属及目标用途合规性", "包装阻湿与储藏稳定性"],
+    "精油": ["得油率与物料平衡", "色泽、气味和感官", "水分与不溶性杂质", "特征挥发性成分", "氧化稳定性", "溶剂残留及目标用途合规性", "包装相容性与避光储藏稳定性"],
 }
 
 
@@ -239,9 +425,73 @@ def _text(*values: Any) -> str:
     return " ".join(str(value).strip() for value in values if value not in (None, ""))
 
 
+def mask_processing_numeric_values(value: Any) -> str:
+    """Mask raw process values before evidence enters a batch-analysis LLM context.
+
+    Approved values are supplied separately through the structured parameter
+    section. General literature Q&A deliberately does not call this function.
+    """
+    text = str(value or "")
+    text = _PROCESS_RATIO_VALUE_PATTERN.sub("[料液比数值已屏蔽]", text)
+    text = _PROCESS_PH_VALUE_PATTERN.sub("[pH数值已屏蔽]", text)
+    return _PROCESS_VALUE_WITH_UNIT_PATTERN.sub("[工艺数值已屏蔽]", text)
+
+
 def _contains(text: str, terms: tuple[str, ...] | list[str]) -> bool:
     lower = text.lower()
     return any(term.lower() in lower for term in terms)
+
+
+def _known_processing_condition(value: Any) -> str:
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    return "" if text.lower() in {
+        "", "unknown", "none", "null", "n/a", "未明确", "未标明方法",
+    } else text
+
+
+def _format_processing_applicability(raw: Any, scale: Any, method: Any) -> str:
+    values = (
+        ("原料", _known_processing_condition(raw)),
+        ("规模", _known_processing_condition(scale)),
+        ("方法", _known_processing_condition(method)),
+    )
+    parts = [f"{label}：{value}" for label, value in values if value]
+    return "；".join(parts) or "未说明"
+
+
+def _is_exponent_tail(sentence: str, start: int) -> bool:
+    """Reject a numeric match that is the exponent in 10−3 or 3×10−3."""
+    return bool(EXPONENT_TAIL_PREFIX.search(sentence[max(0, start - 18):start]))
+
+
+def _is_analytical_parameter_context(sentence: str, section: str = "") -> bool:
+    """Return true for measurement/instrument settings, not production conditions."""
+    text = _text(section, sentence)
+    return _contains(text, ANALYTICAL_SENTENCE_TERMS) or _contains(
+        text,
+        ANALYTICAL_INSTRUMENT_TERMS,
+    )
+
+
+def _evidence_matches_target_product(item: dict[str, Any], target_product: str) -> bool:
+    """Honor an explicit document product/category before considering its numbers."""
+    aliases = EVIDENCE_PRODUCT_ALIASES.get(target_product)
+    if not aliases:
+        return True
+    metadata = _text(item.get("category"), item.get("product"))
+    if metadata:
+        declared = any(
+            _contains(metadata, candidate_aliases)
+            for candidate_aliases in EVIDENCE_PRODUCT_ALIASES.values()
+        )
+        if declared:
+            return _contains(metadata, aliases)
+    title = str(item.get("title") or "")
+    declared_in_title = any(
+        _contains(title, candidate_aliases)
+        for candidate_aliases in EVIDENCE_PRODUCT_ALIASES.values()
+    )
+    return _contains(title, aliases) if declared_in_title else True
 
 
 def _first_product(text: str) -> str:
@@ -250,6 +500,26 @@ def _first_product(text: str) -> str:
         if any(alias.lower() in lower for alias in aliases):
             return product
     return "柑橘加工品"
+
+
+def _explicit_target_product(text: str) -> str:
+    """Prefer an explicitly named output over a broad raw-material mention."""
+    lower = str(text or "").lower()
+    matches: list[tuple[int, str]] = []
+    patterns = {
+        "浓缩汁": (r"浓缩(?:果|橙|柑橘)?汁", r"\b(?:concentrated juice|juice concentrate)\b"),
+        "果胶": (r"果胶(?!酶)", r"\bpectin\b(?!ase)"),
+        "精油": (r"(?:精油|挥发油)", r"\b(?:essential oil|volatile oil)\b"),
+    }
+    for product, product_patterns in patterns.items():
+        positions = [
+            match.start()
+            for pattern in product_patterns
+            if (match := re.search(pattern, lower, re.I))
+        ]
+        if positions:
+            matches.append((min(positions), product))
+    return min(matches)[1] if matches else ""
 
 
 def _scale(text: str) -> str:
@@ -269,6 +539,9 @@ def analyze_processing_intent(
     batch = batch or {}
     combined = _text(user_text, direction, batch.get("variety"), batch.get("origin"), batch.get("customer_type"))
     targets = [product for product, aliases in PRODUCT_ALIASES.items() if _contains(combined, aliases)]
+    preferred_product = _explicit_target_product(direction) or _explicit_target_product(user_text)
+    if preferred_product:
+        targets = [preferred_product, *(product for product in targets if product != preferred_product)]
     if not targets:
         inferred = _first_product(direction)
         targets = [inferred] if inferred != "柑橘加工品" else []
@@ -348,6 +621,12 @@ def build_processing_subquestions(
         specs.insert(3, {"id": "clarification", "facet": "酶解澄清", "query": f"{raw} 橙汁 果汁 果胶酶 酶解 澄清 温度 时间 用量 filtration clarification pectinase methods", "category": "橙汁"})
         specs.insert(4, {"id": "homogenization", "facet": "均质脱气", "query": f"{raw} 橙汁 NFC 高压均质 脱气 压力 循环 温度 悬浮稳定 homogenization pressure deaeration methods", "category": "橙汁"})
         specs.insert(5, {"id": "stabilization", "facet": "杀菌稳定化", "query": f"{raw} 橙汁 杀菌 温度 时间 微生物 热处理 高压 冷等离子 pasteurization microbial inactivation methods", "category": "橙汁"})
+    elif product == "果胶":
+        specs.insert(3, {"id": "pectin_extraction", "facet": "果胶提取", "query": f"{raw} 柑橘果皮 果胶 水提 酸提 酶提 温度 时间 pH 料液比 pectin extraction methods yield", "category": "果胶"})
+        specs.insert(4, {"id": "pectin_separation", "facet": "分离纯化", "query": f"{raw} 果胶 过滤 浓缩 醇沉 分离 干燥 纯度 酯化度 precipitation filtration drying methods", "category": "果胶"})
+    elif product == "精油":
+        specs.insert(3, {"id": "oil_extraction", "facet": "精油提取", "query": f"{raw} 柑橘果皮 精油 冷压 水蒸气蒸馏 温度 时间 压力 essential oil cold pressing hydrodistillation methods yield", "category": "精油"})
+        specs.insert(4, {"id": "oil_separation", "facet": "油水分离", "query": f"{raw} 柑橘精油 油水分离 离心 精制 脱萜 氧化稳定 oil-water separation purification stability", "category": "精油"})
     if mode == "deep":
         operation_specs = []
         for index, operation in enumerate(intent.get("operations") or []):
@@ -675,6 +954,17 @@ def _sentences(text: str) -> list[str]:
     ]
 
 
+def _semicolon_bounded_context(sentences: list[str], index: int) -> str:
+    """Rejoin clauses split on semicolons so an analytical anchor is not lost."""
+    start = index
+    while start > 0 and sentences[start - 1].rstrip().endswith(("；", ";")):
+        start -= 1
+    end = index + 1
+    while end < len(sentences) and sentences[end - 1].rstrip().endswith(("；", ";")):
+        end += 1
+    return _text(*sentences[start:end])
+
+
 def _infer_step(text: str, position: int | None = None) -> str:
     lower = text.lower()
     matches: list[tuple[int, int, str]] = []
@@ -741,14 +1031,131 @@ def _infer_method(text: str) -> str:
     return "/".join(tag for tag, aliases in METHOD_TAGS.items() if any(alias.lower() in lower for alias in aliases)) or "未标明方法"
 
 
-def _material_compatible(source_raw: str, target_raw: str) -> bool:
+def _raw_material_family(raw_material: str) -> str:
+    lower = str(raw_material or "").lower()
+    # Specific families win over the generic word "citrus/柑橘".
+    for family in ("chachi", "orange", "lemon", "pomelo", "mandarin"):
+        if any(alias.lower() in lower for alias in RAW_MATERIAL_FAMILIES[family]):
+            return family
+    if any(
+        alias.lower() in lower
+        for alias in RAW_MATERIAL_FAMILIES["generic_citrus"]
+    ):
+        return "generic_citrus"
     non_citrus = (
-        "carrot", "apple", "strawberry", "milk", "almond", "pineapple", "grape", "mango", "maqui",
-        "胡萝卜", "苹果", "草莓", "牛奶", "杏仁", "菠萝", "葡萄", "芒果",
+        "carrot", "apple", "strawberry", "milk", "almond", "pineapple",
+        "grape", "mango", "maqui", "胡萝卜", "苹果", "草莓", "牛奶",
+        "杏仁", "菠萝", "葡萄", "芒果",
     )
-    source_lower = source_raw.lower()
-    target_lower = target_raw.lower()
-    return not any(term in source_lower and term not in target_lower for term in non_citrus)
+    return next((term for term in non_citrus if term in lower), "unknown")
+
+
+def _material_compatible(source_raw: str, target_raw: str) -> bool:
+    source = _known_processing_condition(source_raw)
+    target = _known_processing_condition(target_raw)
+    if not source or not target or source.lower() == target.lower():
+        return True
+    source_family = _raw_material_family(source)
+    target_family = _raw_material_family(target)
+    if "unknown" in {source_family, target_family}:
+        return True
+    citrus_families = {
+        "generic_citrus", "chachi", "mandarin", "orange", "lemon", "pomelo",
+    }
+    if "generic_citrus" in {source_family, target_family}:
+        return source_family in citrus_families and target_family in citrus_families
+    # Chachi is a mandarin, but it remains a distinct target when the user asks
+    # specifically for Xinhui/Chachi material.
+    if target_family == "chachi":
+        return source_family == "chachi"
+    return source_family == target_family or {
+        source_family, target_family
+    } == {"chachi", "mandarin"}
+
+
+def _scale_compatible(source_scale: str, target_scale: str) -> bool:
+    source = _known_processing_condition(source_scale)
+    target = _known_processing_condition(target_scale)
+    return not source or not target or source == target
+
+
+def _parameter_step_unit_compatible(
+    step: str,
+    parameter_name: str,
+    unit: str,
+    context: str,
+) -> bool:
+    if parameter_name not in STEP_PARAMETER_NAMES.get(step, set()):
+        return False
+    if not unit and parameter_name != "pH":
+        return False
+    unit_lower = unit.lower()
+    if step == "储藏" and parameter_name == "时间":
+        if unit_lower not in {"d", "day", "days", "天"}:
+            return False
+    if parameter_name == "压力":
+        return _contains(context, PRESSURE_STEP_TERMS.get(step, ()))
+    if parameter_name == "流量":
+        return _contains(context, FLOW_PROCESS_EQUIPMENT_TERMS)
+    if parameter_name == "转速":
+        return _contains(context, ROTATION_PROCESS_EQUIPMENT_TERMS)
+    return True
+
+
+def _method_compatible_with_step(step: str, method: str) -> bool:
+    known_method = _known_processing_condition(method)
+    if not known_method:
+        return True
+    method_tags = {tag for tag in known_method.split("/") if tag}
+    allowed = STEP_METHOD_TAGS.get(step)
+    return allowed is None or method_tags.issubset(allowed)
+
+
+def _equipment_compatible(step: str, method: str, target_equipment: list[str]) -> bool:
+    equipment = {
+        str(item).strip()
+        for item in target_equipment
+        if str(item).strip()
+    }
+    if not equipment:
+        return True
+    requirements = {
+        required
+        for method_tag in str(method or "").split("/")
+        for required in STEP_METHOD_EQUIPMENT.get((step, method_tag), ())
+    }
+    return not requirements or bool(equipment & requirements)
+
+
+def _parameter_scope_issues(
+    *,
+    product: str,
+    source_raw: str,
+    target_raw: str,
+    step: str,
+    step_scope_explicit: bool,
+    parameter_name: str,
+    unit: str,
+    context: str,
+    source_scale: str,
+    target_scale: str,
+    method: str,
+    target_equipment: list[str],
+) -> list[str]:
+    issues: list[str] = []
+    if not step_scope_explicit or not _step_allowed(product, step):
+        issues.append("工序未在参数上下文中明确或不属于目标路线")
+    if not _material_compatible(source_raw, target_raw):
+        issues.append("原料与目标批次不匹配")
+    if not _scale_compatible(source_scale, target_scale):
+        issues.append("文献规模与目标规模不匹配")
+    if not _parameter_step_unit_compatible(step, parameter_name, unit, context):
+        issues.append("参数名称或单位与工序不匹配")
+    if not _method_compatible_with_step(step, method):
+        issues.append("方法与工序不匹配")
+    if not _equipment_compatible(step, method, target_equipment):
+        issues.append("方法所需设备与用户已说明设备不匹配")
+    return issues
 
 
 def _source_location(item: dict[str, Any]) -> str:
@@ -767,7 +1174,7 @@ def _step_allowed(product: str, step: str) -> bool:
 
 def _parameter_id(record: dict[str, Any]) -> str:
     seed = "|".join(str(record.get(key) or "") for key in (
-        "source_id", "source_location", "process_step", "parameter_name", "value", "unit", "conditions"
+        "source_id", "source_location", "process_step", "parameter_name", "value", "range", "unit", "conditions"
     ))
     return "par_" + hashlib.sha1(seed.encode("utf-8")).hexdigest()[:16]
 
@@ -817,6 +1224,8 @@ def extract_processing_parameters(
     seen: set[str] = set()
     product = str(intent.get("primary_product") or "柑橘加工品")
     fallback_raw = str(intent.get("raw_material") or "柑橘原料")
+    target_scale = str(intent.get("scale") or "unknown")
+    target_equipment = [str(item) for item in intent.get("equipment") or []]
 
     def store(record: dict[str, Any]) -> None:
         record["parameter_id"] = _parameter_id(record)
@@ -835,6 +1244,8 @@ def extract_processing_parameters(
     for item in _parameter_evidence_items(evidence):
         if item.get("parameter_scope_eligible") is False:
             continue
+        if not _evidence_matches_target_product(item, product):
+            continue
         title_lower = str(item.get("title") or "").lower()
         if any(term in title_lower for term in ANALYTICAL_TITLE_TERMS):
             continue
@@ -845,11 +1256,16 @@ def extract_processing_parameters(
         for sentence_index, sentence in enumerate(sentences):
             if len(sentence) > 1600:
                 sentence = sentence[:1600]
-            process_signal = _contains(sentence, PROCESS_DATA_TERMS)
+            parameter_context = _semicolon_bounded_context(sentences, sentence_index)
             table_dense = len(re.findall(NUMBER_PATTERN, sentence)) >= 24
+            if table_dense or _is_analytical_parameter_context(parameter_context, section):
+                continue
+            process_signal = _contains(parameter_context, PROCESS_DATA_TERMS)
             for default_name, pattern in PARAMETER_PATTERNS:
                 for match in pattern.finditer(sentence):
                     if not process_signal and default_name not in {"pH", "可溶性固形物", "料液比"}:
+                        continue
+                    if _is_exponent_tail(sentence, match.start()):
                         continue
                     value = match.group("value").replace(",", "")
                     end_raw = match.groupdict().get("end")
@@ -878,10 +1294,8 @@ def extract_processing_parameters(
                             continue
                     step = _infer_step(sentence, match.start())
                     if step == "未明确单元操作":
-                        step = _infer_unique_title_step(str(item.get("title") or ""), product)
-                    analytical_context = table_dense or _contains(
-                        sentence, ANALYTICAL_SENTENCE_TERMS
-                    )
+                        step = _infer_step(parameter_context)
+                    step_scope_explicit = step != "未明确单元操作"
                     confidence = 0.76 if direct_section else 0.62
                     if step == "未明确单元操作":
                         confidence -= 0.16
@@ -889,16 +1303,35 @@ def extract_processing_parameters(
                     method = _infer_method(sentence)
                     if method == "未标明方法":
                         method = _infer_method(str(item.get("title") or ""))
+                    raw_material = _infer_raw_material(
+                        _text(item.get("title"), parameter_context),
+                        fallback_raw,
+                    )
+                    source_scale = _scale(_text(item.get("title"), chunk_text))
+                    scope_issues = _parameter_scope_issues(
+                        product=product,
+                        source_raw=raw_material,
+                        target_raw=fallback_raw,
+                        step=step,
+                        step_scope_explicit=step_scope_explicit,
+                        parameter_name=parameter_name,
+                        unit=unit,
+                        context=parameter_context,
+                        source_scale=source_scale,
+                        target_scale=target_scale,
+                        method=method,
+                        target_equipment=target_equipment,
+                    )
                     record = {
                         "product": product,
-                        "raw_material": _infer_raw_material(_text(item.get("title"), sentence), fallback_raw),
+                        "raw_material": raw_material,
                         "process_step": step,
                         "parameter_name": parameter_name,
                         "value": value if not end else "",
                         "unit": unit,
                         "range": f"{value}–{end}" if end else "",
                         "conditions": conditions,
-                        "scale": _scale(_text(item.get("title"), chunk_text)),
+                        "scale": source_scale,
                         "effect_on_quality": _effect_sentence(sentences, sentence_index),
                         "source_id": str(item.get("document_id") or item.get("source_file") or item.get("chunk_id") or ""),
                         "source_chunk_id": str(item.get("chunk_id") or ""),
@@ -908,10 +1341,17 @@ def extract_processing_parameters(
                         "year": str(item.get("year") or "年份未知"),
                         "process_method": method,
                         "evidence_type": "文献直接报告",
+                        "evidence_level": str(item.get("evidence_level") or ""),
                         "unit_missing": False,
-                        "eligible_for_recommendation": _step_allowed(product, step) and parameter_name != "得率" and not analytical_context,
-                        "analytical_context": analytical_context,
+                        "eligible_for_recommendation": not scope_issues and parameter_name != "得率",
+                        "analytical_context": False,
                         "adjacent_context_used": bool(item.get("context_only")),
+                        "step_scope_explicit": step_scope_explicit,
+                        "scope_issues": scope_issues,
+                        "target_raw_material": fallback_raw,
+                        "target_scale": target_scale,
+                        "target_equipment": target_equipment,
+                        "document_product_scope": str(item.get("product") or item.get("category") or ""),
                     }
                     store(record)
             for match in MISSING_UNIT_PATTERN.finditer(sentence):
@@ -923,17 +1363,39 @@ def extract_processing_parameters(
                 parameter_name = "酶用量" if "酶" in name or "enzyme" in name.lower() else name
                 step = _infer_step(sentence, match.start())
                 if step == "未明确单元操作":
-                    step = _infer_unique_title_step(str(item.get("title") or ""), product)
+                    step = _infer_step(parameter_context)
+                raw_material = _infer_raw_material(
+                    _text(item.get("title"), parameter_context),
+                    fallback_raw,
+                )
+                source_scale = _scale(_text(item.get("title"), chunk_text))
+                method = _infer_method(sentence)
+                if method == "未标明方法":
+                    method = _infer_method(str(item.get("title") or ""))
+                scope_issues = _parameter_scope_issues(
+                    product=product,
+                    source_raw=raw_material,
+                    target_raw=fallback_raw,
+                    step=step,
+                    step_scope_explicit=step != "未明确单元操作",
+                    parameter_name=parameter_name,
+                    unit="",
+                    context=parameter_context,
+                    source_scale=source_scale,
+                    target_scale=target_scale,
+                    method=method,
+                    target_equipment=target_equipment,
+                )
                 record = {
                     "product": product,
-                    "raw_material": _infer_raw_material(_text(item.get("title"), sentence), fallback_raw),
+                    "raw_material": raw_material,
                     "process_step": step,
                     "parameter_name": parameter_name,
                     "value": match.group("value"),
                     "unit": "",
                     "range": "",
                     "conditions": sentence[:520],
-                    "scale": _scale(_text(item.get("title"), chunk_text)),
+                    "scale": source_scale,
                     "effect_on_quality": "单位缺失，不能据此形成生产建议。",
                     "source_id": str(item.get("document_id") or item.get("source_file") or item.get("chunk_id") or ""),
                     "source_chunk_id": str(item.get("chunk_id") or ""),
@@ -941,11 +1403,18 @@ def extract_processing_parameters(
                     "confidence": 0.2,
                     "title": str(item.get("title") or "未命名文献"),
                     "year": str(item.get("year") or "年份未知"),
-                    "process_method": _infer_method(sentence),
+                    "process_method": method,
                     "evidence_type": "文献直接报告（单位缺失）",
+                    "evidence_level": str(item.get("evidence_level") or ""),
                     "unit_missing": True,
                     "eligible_for_recommendation": False,
                     "adjacent_context_used": bool(item.get("context_only")),
+                    "step_scope_explicit": step != "未明确单元操作",
+                    "scope_issues": list(dict.fromkeys(["单位缺失", *scope_issues])),
+                    "target_raw_material": fallback_raw,
+                    "target_scale": target_scale,
+                    "target_equipment": target_equipment,
+                    "document_product_scope": str(item.get("product") or item.get("category") or ""),
                 }
                 store(record)
     # Useful, traceable parameters own the public cap. Unresolved diagnostics
@@ -975,17 +1444,52 @@ def _ranges_consistent(intervals: list[tuple[float, float]]) -> bool:
     high = min(item[1] for item in intervals)
     if low <= high:
         return True
-    overall_low = min(item[0] for item in intervals)
-    overall_high = max(item[1] for item in intervals)
-    span = max(overall_high - overall_low, abs(overall_high) * 0.05, 1e-9)
-    smallest_gap = min(abs(a[0] - b[1]) for a in intervals for b in intervals if a is not b)
-    return smallest_gap / span <= 0.18
+    ordered = sorted(intervals)
+    positive_gaps = [
+        ordered[index + 1][0] - ordered[index][1]
+        for index in range(len(ordered) - 1)
+        if ordered[index + 1][0] > ordered[index][1]
+    ]
+    if not positive_gaps:
+        return True
+    endpoints = [abs(value) for interval in intervals for value in interval if value]
+    widths = [interval[1] - interval[0] for interval in intervals]
+    local_scale = max(min(endpoints) if endpoints else 0, max(widths, default=0), 1e-9)
+    return min(positive_gaps) / local_scale <= 0.18
 
 
 def aggregate_parameter_evidence(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Cross-check records without mixing product, material, method or scale."""
     grouped: defaultdict[tuple[str, ...], list[dict[str, Any]]] = defaultdict(list)
+    unique_records: list[dict[str, Any]] = []
+    duplicate_lookup: dict[tuple[str, ...], dict[str, Any]] = {}
     for record in records:
+        source_identity = str(
+            record.get("source_id")
+            or record.get("title")
+            or record.get("source_location")
+            or "unknown-source"
+        )
+        duplicate_key = (
+            source_identity,
+            str(record.get("product") or ""),
+            str(record.get("raw_material") or ""),
+            str(record.get("process_step") or ""),
+            str(record.get("parameter_name") or ""),
+            str(record.get("range") or record.get("value") or ""),
+            str(record.get("unit") or ""),
+            str(record.get("scale") or "unknown"),
+            str(record.get("process_method") or "未标明方法"),
+        )
+        if duplicate_key in duplicate_lookup:
+            existing = duplicate_lookup[duplicate_key]
+            existing["duplicate_count"] = int(existing.get("duplicate_count") or 0) + 1
+            continue
+        normalized_record = dict(record)
+        normalized_record["duplicate_count"] = int(record.get("duplicate_count") or 0)
+        duplicate_lookup[duplicate_key] = normalized_record
+        unique_records.append(normalized_record)
+    for record in unique_records:
         key = (
             str(record.get("product") or ""),
             str(record.get("raw_material") or ""),
@@ -999,7 +1503,23 @@ def aggregate_parameter_evidence(records: list[dict[str, Any]]) -> list[dict[str
     aggregates: list[dict[str, Any]] = []
     for key, items in grouped.items():
         product, raw, step, name, unit, scale, method = key
-        source_ids = list(dict.fromkeys(str(item.get("source_id") or "") for item in items if item.get("source_id")))
+        eligible = [
+            item
+            for item in items
+            if item.get("eligible_for_recommendation")
+            and item.get("evidence_level") == DIRECT_EVIDENCE
+            and not item.get("unit_missing")
+            and not item.get("analytical_context")
+            and not item.get("scope_issues")
+        ]
+        basis_items = eligible or items
+        source_ids = list(
+            dict.fromkeys(
+                str(item.get("source_id") or "")
+                for item in basis_items
+                if item.get("source_id")
+            )
+        )
         source_refs = list(
             dict.fromkeys(
                 "；".join(
@@ -1011,20 +1531,19 @@ def aggregate_parameter_evidence(records: list[dict[str, Any]]) -> list[dict[str
                     )
                     if part
                 )
-                for item in items
+                for item in basis_items
                 if item.get("source_id") or item.get("source_chunk_id")
             )
         )
-        eligible = [item for item in items if item.get("eligible_for_recommendation") and not item.get("unit_missing")]
         intervals = [interval for item in eligible if (interval := _numeric_interval(item)) is not None]
         consistent = _ranges_consistent(intervals)
         conflict = len(intervals) >= 2 and not consistent
         if not unit and name != "pH":
             trust = "低可信度"
-            recommendation = "单位缺失，不形成推荐参数"
+            recommendation = "暂无可靠参数（单位缺失）"
         elif conflict:
             trust = "低可信度"
-            recommendation = "文献参数冲突，保留各方案并按条件开展对照小试"
+            recommendation = "暂无可靠参数（证据条件冲突）"
         elif len(source_ids) >= 2 and len(eligible) >= 2:
             trust = "高可信度"
             recommendation = f"{min(item[0] for item in intervals):g}–{max(item[1] for item in intervals):g} {unit}" if intervals else "多篇文献一致支持"
@@ -1035,7 +1554,8 @@ def aggregate_parameter_evidence(records: list[dict[str, Any]]) -> list[dict[str
             recommendation = f"{reported} {unit}".strip() + "（单篇文献直接报告，需小试验证）"
         else:
             trust = "低可信度"
-            recommendation = "现有知识库证据不足"
+            recommendation = "暂无可靠参数（工序、原料、方法/设备、单位或规模不匹配）"
+        public_display = bool(eligible) and not conflict
         alternatives = [
             {
                 "reported": f"{item.get('range') or item.get('value')} {item.get('unit') or '[单位缺失]'}".strip(),
@@ -1046,6 +1566,16 @@ def aggregate_parameter_evidence(records: list[dict[str, Any]]) -> list[dict[str
                 "source_location": item.get("source_location"),
                 "title": item.get("title"),
                 "year": item.get("year"),
+                "evidence_level": item.get("evidence_level"),
+                "eligible_for_recommendation": bool(
+                    item.get("eligible_for_recommendation")
+                    and item.get("evidence_level") == DIRECT_EVIDENCE
+                    and not item.get("unit_missing")
+                    and not item.get("analytical_context")
+                    and not item.get("scope_issues")
+                ),
+                "public_display": public_display and item in eligible,
+                "scope_issues": list(item.get("scope_issues") or []),
             }
             for item in items
         ]
@@ -1059,19 +1589,29 @@ def aggregate_parameter_evidence(records: list[dict[str, Any]]) -> list[dict[str
             "process_method": method,
             "recommended_range": recommendation,
             "confidence_level": trust,
-            "confidence": round(sum(float(item.get("confidence") or 0) for item in items) / max(len(items), 1), 2),
+            "confidence": round(sum(float(item.get("confidence") or 0) for item in basis_items) / max(len(basis_items), 1), 2),
             "source_ids": source_ids,
             "source_refs": source_refs,
-            "evidence_count": len(items),
+            "evidence_count": len(basis_items),
+            "diagnostic_evidence_count": len(items),
+            "duplicate_count": sum(int(item.get("duplicate_count") or 0) for item in items),
             "conflict": conflict,
             "alternatives": alternatives,
             "basis_type": "多文献归纳" if len(source_ids) >= 2 and not conflict else "文献直接报告",
-            "applicability": f"原料：{raw}；规模：{scale}；方法：{method}",
-            "recommendable": bool(eligible),
+            "applicability": _format_processing_applicability(raw, scale, method),
+            "recommendable": public_display,
+            "public_display": public_display,
+            "scope_issues": list(
+                dict.fromkeys(
+                    issue
+                    for item in basis_items
+                    for issue in item.get("scope_issues") or []
+                )
+            ),
             "effect_summary": next(
                 (
                     str(item.get("effect_on_quality"))
-                    for item in items
+                    for item in basis_items
                     if item.get("effect_on_quality")
                     and "未明确报告" not in str(item.get("effect_on_quality"))
                 ),
@@ -1081,6 +1621,49 @@ def aggregate_parameter_evidence(records: list[dict[str, Any]]) -> list[dict[str
     trust_order = {"高可信度": 0, "中可信度": 1, "低可信度": 2}
     aggregates.sort(key=lambda row: (trust_order.get(str(row["confidence_level"]), 3), str(row["process_step"]), str(row["parameter_name"])))
     return aggregates
+
+
+def is_public_parameter_group(group: dict[str, Any]) -> bool:
+    """Single public-display gate shared by planning, reports, UI and LLM context."""
+    explicit = group.get("public_display")
+    if explicit is False:
+        return False
+    if group.get("evidence_level") != DIRECT_EVIDENCE:
+        return False
+    if group.get("unit_missing") or group.get("analytical_context") or group.get("scope_issues"):
+        return False
+    step = str(group.get("process_step") or "")
+    parameter_name = str(group.get("parameter_name") or "")
+    recommendation = str(group.get("recommended_range") or "")
+    unit = str(group.get("unit") or "")
+    if not unit and (unit_match := re.search(UNIT_PATTERN, recommendation, re.I)):
+        unit = unit_match.group(0)
+    alternative_context = _text(
+        *(
+            alternative.get("conditions")
+            for alternative in group.get("alternatives") or []
+            if isinstance(alternative, dict)
+        )
+    )
+    if alternative_context and _is_analytical_parameter_context(alternative_context):
+        return False
+    if step in STEP_PARAMETER_NAMES and not _parameter_step_unit_compatible(
+        step,
+        parameter_name,
+        unit,
+        alternative_context,
+    ):
+        return False
+    blocked_markers = (
+        "暂无可靠参数",
+        "现有知识库证据不足",
+        "单位缺失",
+        "不形成推荐参数",
+    )
+    authorized = bool(explicit) if explicit is not None else bool(group.get("recommendable"))
+    return authorized and not group.get("conflict") and not any(
+        marker in recommendation for marker in blocked_markers
+    )
 
 
 ROUTE_STEP_EQUIVALENTS: dict[str, set[str]] = {
@@ -1093,6 +1676,7 @@ ROUTE_STEP_EQUIVALENTS: dict[str, set[str]] = {
     "澄清过滤": {"澄清", "过滤/离心"},
     "均质脱气": {"均质", "脱气"},
     "杀菌灌装": {"杀菌", "包装/灌装"},
+    "提取": {"酶解"},
 }
 
 
@@ -1120,16 +1704,28 @@ def build_parameterized_process_plan(
 ) -> dict[str, Any]:
     product = str(intent.get("primary_product") or "柑橘加工品")
     target_raw = str(intent.get("raw_material") or "")
+    target_scale = str(intent.get("scale") or "unknown")
+    target_equipment = [str(item) for item in intent.get("equipment") or []]
     flow = ROUTE_STEPS.get(product, ["原料验收", "分选", "清洗", "前处理", "核心加工", "稳定化", "包装", "储藏"])
     rows: list[dict[str, Any]] = []
     for step in flow:
         matching = [
             group
             for group in parameter_groups
-            if group.get("recommendable")
-            and not group.get("conflict")
+            if is_public_parameter_group(group)
             and group.get("confidence_level") in {"高可信度", "中可信度"}
+            and (not group.get("product") or str(group.get("product")) == product)
             and _material_compatible(str(group.get("raw_material") or ""), target_raw)
+            and _scale_compatible(str(group.get("scale") or "unknown"), target_scale)
+            and _method_compatible_with_step(
+                str(group.get("process_step") or ""),
+                str(group.get("process_method") or "未标明方法"),
+            )
+            and _equipment_compatible(
+                str(group.get("process_step") or ""),
+                str(group.get("process_method") or "未标明方法"),
+                target_equipment,
+            )
             and _step_matches(step, str(group.get("process_step") or ""))
         ]
         sources = list(dict.fromkeys(source for group in matching for source in group.get("source_ids", [])))
@@ -1152,10 +1748,17 @@ def build_parameterized_process_plan(
                     "method": group["process_method"],
                     "raw_material": group["raw_material"],
                     "conflict": group["conflict"],
+                    "unit": group.get("unit"),
+                    "evidence_level": group.get("evidence_level"),
+                    "public_display": group.get("public_display"),
                 }
                 for group in matching[:6]
             ],
-            "parameter_status": "有文献参数，仍需核对适用条件" if matching else "现有知识库证据不足，不填入数值",
+            "parameter_status": (
+                "有文献参数，仍需核对适用条件"
+                if matching
+                else "暂无可靠参数（现有知识库证据不足，不填入数值）"
+            ),
             "key_control": "不得跨品种、设备、工艺方法或生产规模直接套用参数；关键偏差须记录并复核。",
             "source_ids": sources,
             "source_refs": source_refs,
@@ -1172,10 +1775,13 @@ def build_parameterized_process_plan(
         "unresolved_steps": [row["step"] for row in rows if not row["parameters"]],
         "equipment": EQUIPMENT_MAP.get(product, []),
         "quality_checks": QUALITY_CHECKS.get(product, ["感官", "理化指标", "微生物", "食品安全项目", "包装和储藏稳定性"]),
-        "byproduct_guidance": (
-            "果肉可另行评估果汁或发酵利用；籽、残余果皮和清洗废水分流记录，未经安全评价不得直接进入食品链。"
-            if product == "陈皮"
-            else "果皮、籽和果渣应分流称量，可另行检索精油、果胶、膳食纤维或饲料/堆肥路线；不合格霉变原料不得混入副产物食品路线。"
+        "byproduct_guidance": {
+            "陈皮": "果肉可另行评估果汁或发酵利用；籽、残余果皮和清洗废水分流记录，未经安全评价不得直接进入食品链。",
+            "果胶": "提取残渣、滤渣、沉淀母液和清洗废水须分流计量；含酸、酶或醇的物流经回收或合规处理后方可确定去向。",
+            "精油": "脱油果皮、蒸馏水相和清洗废水须分流计量；可继续评估果胶等利用路线，但不得把已受污染或不合格物流转入食品链。",
+        }.get(
+            product,
+            "果皮、籽和果渣应分流称量，可另行检索精油、果胶、膳食纤维或饲料/堆肥路线；不合格霉变原料不得混入副产物食品路线。",
         ),
     }
 
@@ -1188,6 +1794,7 @@ def format_processing_context(
     """Token-bounded, source-preserving context for the existing answer model."""
     lines: list[str] = []
     used_tokens = 0
+    public_groups = [group for group in parameter_groups if is_public_parameter_group(group)]
 
     def add(line: str, *, required: bool = False) -> bool:
         nonlocal used_tokens
@@ -1204,22 +1811,45 @@ def format_processing_context(
         required=True,
     )
     add("【结构化参数证据】", required=True)
-    for index, group in enumerate(parameter_groups[:PROCESS_CONTEXT_PARAMETER_LIMIT], 1):
+    add(
+        "数字使用边界：只有本节列出的参数可作为候选工艺数值；分析仪器条件、单位缺失或适用性不匹配的数字不得写入工艺建议。",
+        required=True,
+    )
+    for index, group in enumerate(public_groups[:PROCESS_CONTEXT_PARAMETER_LIMIT], 1):
         source_text = "｜".join(group.get("source_refs") or group.get("source_ids") or []) or "无"
         if not add(
             f"[参数{index}] {group.get('process_step')}/{group.get('parameter_name')}：{group.get('recommended_range')}；"
-            f"{group.get('confidence_level')}；{group.get('applicability')}；证据ID：{source_text}；"
+            f"{group.get('confidence_level')}；证据等级：{group.get('evidence_level') or '证据不足'}；"
+            f"{group.get('applicability')}；证据ID：{source_text}；"
             f"证据性质：{group.get('basis_type')}；冲突：{'是' if group.get('conflict') else '否'}"
         ):
             break
-    if not parameter_groups:
-        add("未提取到含完整单位、条件和来源的可靠工艺参数；不得自行补数值。", required=True)
+    if not public_groups:
+        add("暂无可靠参数；不得从后续文献片段自行摘取或补写数值。", required=True)
     add("【参数证据片段】")
     for index, item in enumerate(evidence[:PROCESS_CONTEXT_EVIDENCE_LIMIT], 1):
         source_id = str(item.get("document_id") or item.get("source_file") or item.get("chunk_id") or "")
         location = _source_location(item)
-        excerpt = re.sub(r"\s+", " ", str(item.get("chunk_text") or "")).strip()[:560]
-        if not add(f"[加工文献{index}] ID={source_id}；{item.get('title') or '未命名'}；{item.get('year') or '年份未知'}；{location}；片段：{excerpt}"):
+        safe_title = mask_processing_numeric_values(item.get("title") or "未命名")
+        chunk_sentences = _sentences(str(item.get("chunk_text") or ""))
+        safe_sentences = [
+            sentence
+            for sentence_index, sentence in enumerate(chunk_sentences)
+            if not _is_analytical_parameter_context(
+                _semicolon_bounded_context(chunk_sentences, sentence_index),
+                str(item.get("section") or ""),
+            )
+        ]
+        excerpt = mask_processing_numeric_values(
+            re.sub(r"\s+", " ", _text(*safe_sentences)).strip()
+        )[:560]
+        if not excerpt:
+            continue
+        if not add(
+            f"[加工文献{index}] ID={source_id}；{safe_title}；"
+            f"{item.get('year') or '年份未知'}；证据等级={item.get('evidence_level') or '证据不足'}；"
+            f"{location}；片段：{excerpt}"
+        ):
             break
         numeric_neighbors = sorted(
             (
@@ -1232,9 +1862,20 @@ def format_processing_context(
         )
         if numeric_neighbors and _parameter_signal(str(numeric_neighbors[0].get("chunk_text") or "")) > 0:
             neighbor = numeric_neighbors[0]
-            neighbor_excerpt = re.sub(
-                r"\s+", " ", str(neighbor.get("chunk_text") or "")
-            ).strip()[:420]
+            neighbor_sentences = _sentences(str(neighbor.get("chunk_text") or ""))
+            safe_neighbor_sentences = [
+                sentence
+                for neighbor_index, sentence in enumerate(neighbor_sentences)
+                if not _is_analytical_parameter_context(
+                    _semicolon_bounded_context(neighbor_sentences, neighbor_index),
+                    str(neighbor.get("section") or ""),
+                )
+            ]
+            neighbor_excerpt = mask_processing_numeric_values(
+                re.sub(r"\s+", " ", _text(*safe_neighbor_sentences)).strip()
+            )[:420]
+            if not neighbor_excerpt:
+                continue
             add(
                 f"[加工文献{index}相邻方法/结果] 同属ID={source_id}；"
                 f"{_source_location(neighbor)}；片段：{neighbor_excerpt}"

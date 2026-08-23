@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from .evidence import DIRECT_EVIDENCE, effective_evidence_level
+
 
 REQUIRED_TOOL_KEYS = [
     "product_classifier",
@@ -30,6 +32,8 @@ def check_result_boundaries(
     issues: list[str] = []
     if not evidence:
         issues.append("未检索到文献证据，报告只能作为低置信度草稿。")
+    elif not any(effective_evidence_level(item) == DIRECT_EVIDENCE for item in evidence):
+        issues.append("本轮仅有参考性或不足证据，关键结论不得表述为文献直接支持。")
     if not scores:
         issues.append("未获得加工路线分级结果，不能给出推荐方向。")
     if compliance_issues:

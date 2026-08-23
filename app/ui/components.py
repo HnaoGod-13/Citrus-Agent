@@ -115,19 +115,21 @@ def render_light_table(
     )
 
 
-def _view_url(view: str, uid: str, sid: str) -> str:
+def _view_url(
+    view: str,
+    context_token: str = "",
+    *,
+    include_context: bool = True,
+) -> str:
     values = {"view": view}
-    if uid:
-        values["uid"] = uid
-    if sid:
-        values["sid"] = sid
+    if include_context and context_token:
+        values["ctx"] = context_token
     return "?" + urlencode(values)
 
 
 def render_primary_navigation(
     active_view: str,
-    uid: str = "",
-    sid: str = "",
+    context_token: str = "",
     *,
     on_view_change: Callable[[str], None] | None = None,
 ) -> None:
@@ -138,7 +140,7 @@ def render_primary_navigation(
     for view, icon, zh_label, en_label in NAV_ITEMS:
         active = " is-active" if view == active_view else ""
         current = ' aria-current="page"' if view == active_view else ""
-        href = html.escape(_view_url(view, uid, sid), quote=True)
+        href = html.escape(_view_url(view, context_token), quote=True)
         item_icon = icon_svg(icon, 24)
         items.append(
             f'<a class="primary-nav-item{active}" href="{href}"{current}{passive_link}>'
@@ -151,8 +153,8 @@ def render_primary_navigation(
             f'{item_icon}<span>{html.escape(zh_label)}</span></a>'
         )
 
-    chat_href = html.escape(_view_url("chat", uid, sid), quote=True)
-    settings_href = html.escape(_view_url("settings", uid, sid), quote=True)
+    chat_href = html.escape(_view_url("chat", context_token), quote=True)
+    settings_href = html.escape(_view_url("settings", context_token), quote=True)
     st.markdown(
         f"""
         <nav class="citrus-primary-rail" aria-label="产品导航">
@@ -203,14 +205,16 @@ def render_primary_navigation(
 
 def render_top_actions(
     active_view: str,
-    uid: str = "",
-    sid: str = "",
+    context_token: str = "",
     *,
     on_view_change: Callable[[str], None] | None = None,
 ) -> None:
-    settings_href = html.escape(_view_url("settings", uid, sid), quote=True)
+    settings_href = html.escape(_view_url("settings", context_token), quote=True)
     passive_link = ' tabindex="-1" aria-hidden="true"' if on_view_change else ""
-    current_path = _view_url(active_view, uid, sid)
+    # The top-level share link intentionally carries no resume credential. It
+    # opens the same product view as a fresh anonymous context and therefore
+    # cannot grant access to this browser's conversation or memory.
+    current_path = _view_url(active_view, include_context=False)
     current_url = str(getattr(st.context, "url", "") or "")
     share_href = (
         current_url.split("?", 1)[0] + current_path if current_url else current_path
@@ -225,8 +229,9 @@ def render_top_actions(
                 {icon_svg("sun", 20)}
             </a>
             <a class="top-share-action" href="{html.escape(share_href, quote=True)}"
-               target="_blank" rel="noopener noreferrer" aria-label="在新标签页打开分享链接">
-                {icon_svg("share", 20)}<span>Share</span>
+               target="_blank" rel="noopener noreferrer"
+               aria-label="打开不包含会话数据的新链接" title="不包含当前会话或用户数据">
+                {icon_svg("share", 20)}<span>无数据链接</span>
             </a>
         </div>
         """,

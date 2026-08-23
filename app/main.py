@@ -25,10 +25,12 @@ sys.path.insert(0, str(ROOT))
 
 from agent import (
     background_tasks as agent_background,
+    evidence as agent_evidence,
     llm_client,
     memory as agent_memory,
     memory_config,
     orchestrator,
+    process_knowledge as agent_process_knowledge,
     rag as agent_rag,
     report as agent_report,
     tools as agent_tools,
@@ -1090,8 +1092,30 @@ def _set_query_value(name: str, value: str) -> None:
         pass
 
 
-def _valid_identity_token(value: str, prefix: str) -> bool:
-    return bool(re.fullmatch(rf"{prefix}_[A-Za-z0-9_-]{{12,80}}", value or ""))
+def _delete_query_value(name: str) -> None:
+    try:
+        if name in st.query_params:
+            del st.query_params[name]
+    except Exception:
+        pass
+
+
+def _valid_context_token(value: str) -> bool:
+    return bool(re.fullmatch(r"ctx_[A-Za-z0-9_-]{32,96}", value or ""))
+
+
+def _memory_identity_matches_authentication(
+    user_id: str,
+    authenticated_user_id: str,
+) -> bool:
+    """Keep anonymous and authenticated memory scopes from crossing."""
+    normalized_user_id = str(user_id or "")
+    normalized_authenticated_id = str(authenticated_user_id or "")
+    if not normalized_user_id:
+        return False
+    if normalized_user_id.startswith("anon_"):
+        return not normalized_authenticated_id
+    return bool(normalized_authenticated_id) and normalized_user_id == normalized_authenticated_id
 
 
 PRODUCT_VIEWS = {"chat", "workspace", "knowledge", "analytics", "settings"}
@@ -1182,31 +1206,90 @@ def initialize_memory_identity() -> None:
         }.items()
         if value
     }
+    manager = get_memory_manager()
     authenticated = _authenticated_identity()
-    raw_user_token = _query_value("uid")
-    if authenticated:
-        user_id = "user_" + hashlib.sha256(authenticated.encode("utf-8")).hexdigest()[:24]
-    else:
-        if not _valid_identity_token(raw_user_token, "u"):
-            raw_user_token = f"u_{uuid4().hex}"
-            _set_query_value("uid", raw_user_token)
-        user_id = "anon_" + hashlib.sha256(raw_user_token.encode("utf-8")).hexdigest()[:24]
+    authenticated_user_id = (
+        "user_" + hashlib.sha256(authenticated.encode("utf-8")).hexdigest()[:24]
+        if authenticated
+        else ""
+    )
 
     previous_identity = (
         str(st.session_state.get("memory_user_id") or ""),
         str(st.session_state.get("memory_project_id") or ""),
         str(st.session_state.get("memory_session_id") or ""),
     )
-    query_session_id = _query_value("sid")
-    state_session_id = previous_identity[2]
-    if _valid_identity_token(query_session_id, "s"):
-        session_id = query_session_id
-    elif _valid_identity_token(state_session_id, "s"):
-        session_id = state_session_id
-        _set_query_value("sid", session_id)
+    query_context_token = _query_value("ctx")
+    state_context_token = str(st.session_state.get("memory_context_token") or "")
+    resolved: dict[str, str] | None = None
+    resumed = False
+
+    # Legacy uid/sid values exposed long-lived internal identity credentials in
+    # copied URLs. They are ignored and removed; URL restoration now accepts
+    # only a short-lived opaque grant whose digest is stored server-side.
+    _delete_query_value("uid")
+    _delete_query_value("sid")
+
+    if _valid_context_token(query_context_token):
+        resolved = manager.resolve_session_access_grant(
+            query_context_token,
+            project_id=project_id,
+        )
+        if resolved and not _memory_identity_matches_authentication(
+            str(resolved.get("user_id") or ""),
+            authenticated_user_id,
+        ):
+            resolved = None
+    elif query_context_token:
+        # A malformed or expired credential creates a new isolated context. It
+        # must never fall back to other identifiers supplied by the same URL.
+        resolved = None
+    elif previous_identity[0] and previous_identity[1] == project_id and previous_identity[2]:
+        # A live Streamlit browser session may rerun before its query state is
+        # synchronized. Reuse only a token resolving to the exact live scope.
+        if _valid_context_token(state_context_token):
+            live_grant = manager.resolve_session_access_grant(
+                state_context_token,
+                project_id=project_id,
+            )
+            if (
+                live_grant
+                and _memory_identity_matches_authentication(
+                    str(live_grant.get("user_id") or ""),
+                    authenticated_user_id,
+                )
+                and (
+                    live_grant.get("user_id"),
+                    live_grant.get("project_id"),
+                    live_grant.get("session_id"),
+                ) == previous_identity
+            ):
+                resolved = live_grant
+                query_context_token = state_context_token
+
+    if resolved:
+        user_id = str(resolved["user_id"])
+        session_id = str(resolved["session_id"])
+        context_token = query_context_token
+        resumed = True
+    elif (
+        not query_context_token
+        and previous_identity[0]
+        and previous_identity[1] == project_id
+        and _memory_identity_matches_authentication(
+            previous_identity[0],
+            authenticated_user_id,
+        )
+    ):
+        # Preserve an already-authorized live browser scope, then issue a fresh
+        # opaque grant rather than putting the internal IDs back in the URL.
+        user_id = authenticated_user_id or previous_identity[0]
+        session_id = previous_identity[2] or f"s_{uuid4().hex}"
+        context_token = ""
     else:
+        user_id = authenticated_user_id or f"anon_{uuid4().hex}"
         session_id = f"s_{uuid4().hex}"
-        _set_query_value("sid", session_id)
+        context_token = ""
 
     identity_changed = bool(any(previous_identity)) and previous_identity != (
         user_id,
@@ -1220,7 +1303,6 @@ def initialize_memory_identity() -> None:
     st.session_state.memory_user_id = user_id
     st.session_state.memory_project_id = project_id
     st.session_state.memory_session_id = session_id
-    manager = get_memory_manager()
     try:
         manager.ensure_session(
             user_id,
@@ -1234,13 +1316,38 @@ def initialize_memory_identity() -> None:
         identity_changed = True
         st.session_state.reset_main_scroll_position = True
         st.session_state.memory_session_id = session_id
-        _set_query_value("sid", session_id)
+        context_token = ""
         manager.ensure_session(
             user_id,
             session_id,
             project_id,
             config=session_config or None,
         )
+
+    if not context_token:
+        context_token = manager.create_session_access_grant(
+            user_id,
+            session_id,
+            project_id,
+        )
+        resumed = False
+    st.session_state.memory_context_token = context_token
+    _set_query_value("ctx", context_token)
+
+    privacy_event_type = "session_resumed" if resumed else "session_created"
+    privacy_marker = f"{privacy_event_type}:{user_id}:{project_id}:{session_id}:{context_token[-10:]}"
+    if st.session_state.get("memory_privacy_event_marker") != privacy_marker:
+        try:
+            manager.log_privacy_event(
+                privacy_event_type,
+                user_id=user_id,
+                project_id=project_id,
+                session_id=session_id,
+                details={"channel": "opaque_context_token"},
+            )
+        except agent_memory.MemoryManagerError:
+            pass
+        st.session_state.memory_privacy_event_marker = privacy_marker
 
     if st.session_state.get("memory_restored_session") != session_id:
         if identity_changed or not st.session_state.agent_messages:
@@ -1288,18 +1395,57 @@ def clear_active_conversation_state(*, clear_sidebar: bool = False) -> None:
 
 
 def start_new_conversation() -> None:
+    manager = get_memory_manager()
+    user_id = str(st.session_state.get("memory_user_id") or "") or f"anon_{uuid4().hex}"
+    project_id = str(st.session_state.get("memory_project_id") or "citrus-agent")
+    old_session_id = str(st.session_state.get("memory_session_id") or "")
+    old_context_token = str(st.session_state.get("memory_context_token") or "")
+    if _valid_context_token(old_context_token) and old_session_id:
+        try:
+            manager.revoke_session_access_grant(
+                old_context_token,
+                user_id=user_id,
+                session_id=old_session_id,
+                project_id=project_id,
+            )
+        except agent_memory.MemoryManagerError:
+            pass
+
     session_id = f"s_{uuid4().hex}"
     clear_active_conversation_state(clear_sidebar=True)
     st.session_state.active_agent_job_id = ""
     st.session_state.active_agent_progress_revealed = False
     st.session_state.active_agent_retrieval_mode = ""
+    st.session_state.memory_user_id = user_id
+    st.session_state.memory_project_id = project_id
     st.session_state.memory_session_id = session_id
     st.session_state.memory_restored_session = session_id
-    _set_query_value("sid", session_id)
-    get_memory_manager().ensure_session(
-        st.session_state.get("memory_user_id", "anonymous"),
+    manager.ensure_session(
+        user_id,
         session_id,
-        st.session_state.get("memory_project_id", "citrus-agent"),
+        project_id,
+    )
+    context_token = manager.create_session_access_grant(
+        user_id,
+        session_id,
+        project_id,
+    )
+    st.session_state.memory_context_token = context_token
+    _set_query_value("ctx", context_token)
+    _delete_query_value("uid")
+    _delete_query_value("sid")
+    try:
+        manager.log_privacy_event(
+            "session_created",
+            user_id=user_id,
+            project_id=project_id,
+            session_id=session_id,
+            details={"channel": "new_conversation"},
+        )
+    except agent_memory.MemoryManagerError:
+        pass
+    st.session_state.memory_privacy_event_marker = (
+        f"session_created:{user_id}:{project_id}:{session_id}:{context_token[-10:]}"
     )
     st.session_state.product_view = "chat"
     st.session_state.mobile_secondary_open = False
@@ -1320,6 +1466,8 @@ def init_state() -> None:
     st.session_state.setdefault("active_agent_progress_revealed", False)
     st.session_state.setdefault("active_agent_retrieval_mode", "")
     st.session_state.setdefault("pending_agent_persistence", {})
+    st.session_state.setdefault("memory_context_token", "")
+    st.session_state.setdefault("memory_privacy_event_marker", "")
     st.session_state.setdefault("retrieval_mode", "quick")
     st.session_state.retrieval_mode = normalize_retrieval_mode(
         st.session_state.retrieval_mode
@@ -2420,6 +2568,66 @@ def parameter_source_location(item: Mapping[str, Any]) -> str:
     return "｜".join(str(source) for source in sources if str(source).strip())
 
 
+def render_key_conclusion_evidence(conclusions: list[Mapping[str, Any]]) -> None:
+    """Render an explicit conclusion-to-source mapping produced by the backend."""
+    if not conclusions:
+        st.info("本轮没有形成可展示的关键结论证据卡。")
+        return
+    for index, item in enumerate(conclusions, 1):
+        if not isinstance(item, Mapping):
+            continue
+        conclusion = html.escape(str(item.get("conclusion") or "待核验结论"))
+        conclusion_type = html.escape(str(item.get("conclusion_type") or "关键结论"))
+        level = str(item.get("evidence_level") or agent_evidence.INSUFFICIENT_EVIDENCE)
+        reason = html.escape(str(item.get("evidence_level_reason") or "未完成证据判定"))
+        applicability = html.escape(str(item.get("applicability") or "适用条件待确认"))
+        references: list[str] = []
+        for ref in list(item.get("evidence") or [])[:3]:
+            if not isinstance(ref, Mapping):
+                continue
+            title = html.escape(str(ref.get("title") or "未命名文献"))
+            year = html.escape(str(ref.get("year") or "年份未知"))
+            doi = agent_evidence.normalize_doi(ref.get("doi"))
+            url = agent_evidence.source_url(ref) or str(ref.get("url") or "")
+            if url.startswith(("http://", "https://")):
+                label = f"DOI {doi}" if doi else "原文链接"
+                link_html = (
+                    f'<a href="{html.escape(url, quote=True)}" target="_blank" '
+                    f'rel="noopener noreferrer">{html.escape(label)}</a>'
+                )
+            else:
+                link_html = "DOI/链接未收录"
+            excerpt = html.escape(str(ref.get("excerpt") or "未提供可核验原文片段"))
+            ref_applicability = html.escape(
+                str(ref.get("applicability") or "需回查原文确认研究对象和试验条件")
+            )
+            references.append(
+                '<div class="key-conclusion-reference">'
+                f'<div><strong>{title}</strong>（{year}；{link_html}）</div>'
+                f'<div><strong>原文片段：</strong>{excerpt}</div>'
+                f'<div><strong>文献适用条件：</strong>{ref_applicability}</div>'
+                "</div>"
+            )
+        if not references:
+            references.append(
+                '<div class="key-conclusion-reference-empty">'
+                "未绑定可核验文献；该结论不得包装为文献直接结论。"
+                "</div>"
+            )
+        st.markdown(
+            '<article class="key-conclusion-evidence-card">'
+            f'<div class="key-conclusion-type">{conclusion_type} {index:02d}</div>'
+            f'<div class="key-conclusion-text">{conclusion}</div>'
+            f'<div class="key-conclusion-level" data-evidence-level="{html.escape(level, quote=True)}">'
+            f'<strong>证据等级：</strong>{html.escape(level)}</div>'
+            f'<div><strong>判定说明：</strong>{reason}</div>'
+            f'<div><strong>适用条件：</strong>{applicability}</div>'
+            + "".join(references)
+            + "</article>",
+            unsafe_allow_html=True,
+        )
+
+
 def render_reference_evidence(
     evidence: list[Mapping[str, Any]],
     *,
@@ -2435,7 +2643,13 @@ def render_reference_evidence(
         year = html.escape(str(item.get("year") or "年份未知"))
         source = html.escape(_evidence_source_label(item))
         topic = item.get("topic") or item.get("category") or item.get("product")
-        doi = item.get("doi")
+        doi = agent_evidence.normalize_doi(item.get("doi"))
+        url = agent_evidence.source_url(item)
+        level = str(item.get("evidence_level") or agent_evidence.effective_evidence_level(item))
+        level_reason = html.escape(str(item.get("evidence_level_reason") or "按保守规则自动分级"))
+        applicability = html.escape(
+            str(item.get("applicability") or agent_evidence.build_applicability(item))
+        )
         match_score = item.get("match_score")
         labels = evidence_location_labels(item) or ["定位信息未标注"]
         locator_html = "".join(
@@ -2444,10 +2658,16 @@ def render_reference_evidence(
         source_parts = [f"来源：{source}"]
         if topic not in (None, ""):
             source_parts.append(f"主题：{html.escape(str(topic))}")
-        if doi not in (None, ""):
-            source_parts.append(f"DOI：{html.escape(str(doi))}")
+        if url:
+            link_label = f"DOI {doi}" if doi else "原文链接"
+            source_parts.append(
+                f'<a href="{html.escape(url, quote=True)}" target="_blank" '
+                f'rel="noopener noreferrer">{html.escape(link_label)}</a>'
+            )
+        elif doi:
+            source_parts.append(f"DOI：{html.escape(doi)}")
         score_html = (
-            f'<span class="reference-evidence-score">匹配度 {html.escape(str(match_score))}</span>'
+            f'<span class="reference-evidence-score" title="检索匹配度不等于证据强度">检索匹配度 {html.escape(str(match_score))}</span>'
             if match_score not in (None, "")
             else ""
         )
@@ -2466,12 +2686,15 @@ def render_reference_evidence(
             f'<div class="reference-evidence-index">文献 {index:02d}</div>'
             '<div class="reference-evidence-title-row">'
             f'<div class="reference-evidence-title">{title}</div>'
-            f'<span class="reference-evidence-year">{year}</span>{score_html}'
+            f'<span class="reference-evidence-year">{year}</span>'
+            f'<span class="reference-evidence-level">{html.escape(level)}</span>{score_html}'
             "</div></header>"
             + f'<div class="reference-evidence-locator">{locator_html}</div>'
             + '<div class="reference-evidence-source">'
             + "<span> · </span>".join(source_parts)
             + "</div>"
+            f'<div class="reference-evidence-level-reason"><strong>分级说明：</strong>{level_reason}</div>'
+            f'<div class="reference-evidence-applicability"><strong>适用条件：</strong>{applicability}</div>'
             '<div class="reference-evidence-focus-label">关键信息</div>'
             f'<div class="reference-evidence-excerpt">{excerpt_html}</div>'
             '<details class="reference-evidence-full">'
@@ -2535,7 +2758,9 @@ def render_analysis_payload(payload: dict[str, Any]) -> None:
             st.markdown(parameterized_text)
 
     narrative_answer = _compact_analysis_narrative(
-        orchestrator.strip_primary_processing_flow(answer)
+        orchestrator.strip_primary_processing_flow(
+            orchestrator.strip_key_conclusion_evidence(answer)
+        )
     )
     if narrative_answer:
         st.markdown(narrative_answer)
@@ -2571,7 +2796,11 @@ def render_analysis_payload(payload: dict[str, Any]) -> None:
                 unsafe_allow_html=True,
             )
 
-    with st.expander("参考依据", expanded=False):
+    with st.expander("关键结论证据", expanded=True):
+        render_key_conclusion_evidence(result.get("key_conclusions") or [])
+        st.caption("证据等级由后端确定性规则生成；检索匹配度仅用于排序，不能把弱相关材料升级为直接证据。")
+
+    with st.expander("参考依据（全部文献）", expanded=False):
         render_deep_retrieval_stats(
             result.get("deep_retrieval_stats")
             or payload.get("deep_retrieval_stats")
@@ -2579,7 +2808,11 @@ def render_analysis_payload(payload: dict[str, Any]) -> None:
         render_reference_evidence(evidence, include_adjacent=True)
 
     with st.expander("工艺参数证据", expanded=False):
-        parameter_groups = result.get("parameter_groups") or []
+        parameter_groups = [
+            item
+            for item in (result.get("parameter_groups") or [])
+            if agent_process_knowledge.is_public_parameter_group(item)
+        ]
         if parameter_groups:
             rows = []
             for item in parameter_groups:
@@ -2589,6 +2822,7 @@ def render_analysis_payload(payload: dict[str, Any]) -> None:
                         "参数": item.get("parameter_name"),
                         "推荐/报告值": item.get("recommended_range"),
                         "可信度": item.get("confidence_level"),
+                        "证据等级": item.get("evidence_level") or "证据不足",
                         "原料/对象": item.get("raw_material"),
                         "规模": item.get("scale"),
                         "方法": item.get("process_method"),
@@ -2604,7 +2838,7 @@ def render_analysis_payload(payload: dict[str, Any]) -> None:
             )
             st.caption("单篇文献值不等于通用生产参数；请展开报告核对适用条件、页码和原文片段。")
         else:
-            st.info("未提取到单位、适用条件和来源均完整的可靠工艺参数；系统不会自动补写数值。")
+            st.info("暂无可靠参数；系统不会展示或自动补写不匹配、缺单位或分析仪器条件中的数值。")
 
     with st.expander("报告草稿", expanded=False):
         st.markdown('<span class="report-anchor"></span>', unsafe_allow_html=True)
@@ -2800,7 +3034,12 @@ def build_conversation_history(messages: list[dict[str, Any]]) -> list[dict[str,
                 payload.get("answer") or payload.get("llm_answer") or payload.get("summary") or ""
             ).strip()
             if content:
-                history.append({"role": "assistant", "content": content})
+                history.append(
+                    {
+                        "role": "assistant",
+                        "content": orchestrator.strip_key_conclusion_evidence(content),
+                    }
+                )
             continue
         content = str(item.get("content") or "").strip()
         if role in {"user", "assistant"} and content:
@@ -2829,10 +3068,11 @@ def run_general_turn(
     else:
         evidence = list(retrieval_result or [])
         deep_retrieval_stats = {}
+    trace_evidence = list(evidence)
     trace: dict[str, Any] = {
         "literature_ids": [
             str(item.get("chunk_id") or item.get("document_id") or item.get("source_file") or "")
-            for item in evidence
+            for item in trace_evidence
             if item.get("chunk_id") or item.get("document_id") or item.get("source_file")
         ],
         "model_name": DEEPSEEK_MODEL if api_key else "local-evidence-fallback",
@@ -2866,7 +3106,7 @@ def run_general_turn(
                 )
                 if item.get(key) not in (None, "")
             }
-            for item in evidence
+            for item in trace_evidence
             if isinstance(item, dict)
         ],
     }
@@ -4257,19 +4497,19 @@ def main() -> None:
     if restore_scroll_position or reset_scroll_position:
         scroll_command_id += 1
         st.session_state.scroll_manager_command_id = scroll_command_id
-    uid = _query_value("uid")
-    sid = _query_value("sid")
+    context_token = (
+        _query_value("ctx")
+        or str(st.session_state.get("memory_context_token") or "")
+    )
     with st.container(key="product_shell_overlays"):
         ui_components.render_primary_navigation(
             active_view,
-            uid,
-            sid,
+            context_token,
             on_view_change=select_product_view,
         )
         ui_components.render_top_actions(
             active_view,
-            uid,
-            sid,
+            context_token,
             on_view_change=select_product_view,
         )
         ui_components.render_mobile_panel_toggle(

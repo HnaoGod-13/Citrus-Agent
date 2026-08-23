@@ -7,7 +7,7 @@ from pathlib import Path
 import sqlite3
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, call, patch
 
 from streamlit.testing.v1 import AppTest
 
@@ -341,6 +341,112 @@ with (
     def test_product_page_dispatch_leaves_chat_and_unknown_views_unhandled(self) -> None:
         self.assertFalse(product_pages.render_product_page("chat"))
         self.assertFalse(product_pages.render_product_page("unknown"))
+
+    def test_privacy_delete_requires_exact_phrase_and_blocks_active_jobs(self) -> None:
+        self.assertTrue(
+            product_pages._privacy_delete_disabled(
+                "",
+                "删除本次会话",
+                active_job_running=False,
+            )
+        )
+        self.assertTrue(
+            product_pages._privacy_delete_disabled(
+                "删除会话",
+                "删除本次会话",
+                active_job_running=False,
+            )
+        )
+        self.assertFalse(
+            product_pages._privacy_delete_disabled(
+                " 删除本次会话 ",
+                "删除本次会话",
+                active_job_running=False,
+            )
+        )
+        self.assertTrue(
+            product_pages._privacy_delete_disabled(
+                "删除本次会话",
+                "删除本次会话",
+                active_job_running=True,
+            )
+        )
+
+    def test_privacy_export_logs_accurate_success_and_failure_outcomes(self) -> None:
+        scope = product_pages._Scope("user_alpha", "project_one", "session_alpha")
+        success_manager = Mock()
+        success_manager.export_user_data.return_value = {"data": {"sessions": []}}
+
+        exported = product_pages._prepare_privacy_export(success_manager, scope)
+
+        self.assertEqual({"data": {"sessions": []}}, exported)
+        self.assertEqual(
+            [
+                call.export_user_data(user_id="user_alpha", project_id="project_one"),
+                call.log_privacy_event(
+                    "data_exported",
+                    user_id="user_alpha",
+                    project_id="project_one",
+                    session_id="session_alpha",
+                    details={"format": "json", "action": "prepared"},
+                ),
+            ],
+            success_manager.mock_calls,
+        )
+
+        failed_manager = Mock()
+        failed_manager.export_user_data.side_effect = product_pages.agent_memory.MemoryStorageError(
+            "temporary export failure"
+        )
+        with self.assertRaises(product_pages.agent_memory.MemoryStorageError):
+            product_pages._prepare_privacy_export(failed_manager, scope)
+        failed_manager.log_privacy_event.assert_called_once_with(
+            "data_exported",
+            user_id="user_alpha",
+            project_id="project_one",
+            session_id="session_alpha",
+            outcome="failed",
+            details={"format": "json"},
+        )
+
+    def test_privacy_deletion_notice_reports_file_cleanup_failures(self) -> None:
+        success = product_pages._privacy_deletion_notice(
+            delete_all=False,
+            file_cleanup_errors=0,
+        )
+        warning = product_pages._privacy_deletion_notice(
+            delete_all=True,
+            file_cleanup_errors=2,
+        )
+        self.assertEqual("success", success["level"])
+        self.assertIn("新的隔离会话", success["message"])
+        self.assertEqual("warning", warning["level"])
+        self.assertIn("2 个已知文件清理失败", warning["message"])
+
+    def test_privacy_reset_keeps_one_time_notice_but_clears_credentials(self) -> None:
+        notice = {"level": "success", "message": "deleted"}
+        state = {
+            "memory_user_id": "user_alpha",
+            "memory_project_id": "project_one",
+            "memory_session_id": "session_alpha",
+            "memory_context_token": "ctx_secret",
+            "active_agent_job_id": "job_active",
+            "privacy_deletion_notice": notice,
+        }
+        query = {"ctx": "ctx_secret", "uid": "legacy", "sid": "legacy", "view": "settings"}
+        with (
+            patch.object(product_pages.st, "session_state", state),
+            patch.object(product_pages.st, "query_params", query),
+        ):
+            product_pages._reset_after_privacy_deletion(delete_all=True)
+
+        self.assertEqual(notice, state["privacy_deletion_notice"])
+        self.assertNotIn("memory_user_id", state)
+        self.assertNotIn("memory_project_id", state)
+        self.assertNotIn("memory_session_id", state)
+        self.assertNotIn("memory_context_token", state)
+        self.assertNotIn("active_agent_job_id", state)
+        self.assertEqual({"view": "settings"}, query)
 
     def test_readonly_database_enables_query_only_and_rejects_writes(self) -> None:
         with product_pages._readonly_database(self.memory_db) as connection:

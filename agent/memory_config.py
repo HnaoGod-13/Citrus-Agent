@@ -34,6 +34,16 @@ MEMORY_TOOL_RESULT_CHARS = _env_int("CITRUS_MEMORY_TOOL_RESULT_CHARS", 1400, 200
 MEMORY_MAX_CONTENT_CHARS = _env_int("CITRUS_MEMORY_MAX_CONTENT_CHARS", 12000, 1000)
 MEMORY_PROMPT_VERSION = os.getenv("CITRUS_MEMORY_PROMPT_VERSION", "citrus-memory-v1").strip()
 
+# Privacy lifecycle.  The resume token is intentionally much shorter-lived than
+# the underlying conversation data, and only its SHA-256 digest is persisted.
+ANONYMOUS_ACCESS_TTL_HOURS = min(
+    _env_int("CITRUS_ANONYMOUS_ACCESS_TTL_HOURS", 24, 1),
+    168,
+)
+MEMORY_RETENTION_DAYS = _env_int("CITRUS_MEMORY_RETENTION_DAYS", 30, 1)
+AUDIT_RETENTION_DAYS = _env_int("CITRUS_AUDIT_RETENTION_DAYS", 90, 1)
+ACCESS_LOG_RETENTION_DAYS = _env_int("CITRUS_ACCESS_LOG_RETENTION_DAYS", 90, 1)
+
 CONTEXT_TOKEN_BUDGETS = {
     "system": _env_int("CITRUS_CONTEXT_SYSTEM_TOKENS", 1600, 256),
     "profile": _env_int("CITRUS_CONTEXT_PROFILE_TOKENS", 500, 128),

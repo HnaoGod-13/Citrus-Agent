@@ -4,17 +4,22 @@ import hashlib
 import json
 import math
 import re
+import secrets
+import shutil
 import sqlite3
 import threading
 import time
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable
 from uuid import uuid4
 
 from .memory_config import (
+    ACCESS_LOG_RETENTION_DAYS,
     ALLOWED_MEMORY_TYPES,
+    ANONYMOUS_ACCESS_TTL_HOURS,
+    AUDIT_RETENTION_DAYS,
     CONTEXT_TOKEN_BUDGETS,
     MEMORY_DB_PATH,
     MEMORY_LONG_TERM_TOP_K,
@@ -25,6 +30,7 @@ from .memory_config import (
     MEMORY_SUMMARY_TOKEN_LIMIT,
     MEMORY_SUMMARY_TRIGGER_TOKENS,
     MEMORY_TOOL_RESULT_CHARS,
+    MEMORY_RETENTION_DAYS,
 )
 from .rag import LITERATURE_DB_PATH, database_stats
 
@@ -76,6 +82,15 @@ SECRET_VALUE_PATTERNS = [
     re.compile(r"(?i)(api[_-]?key|token|password)\s*[:=]\s*[^\s,;]{6,}"),
 ]
 GREETING_PATTERN = re.compile(r"^(你好|您好|谢谢|多谢|辛苦了|好的|收到|再见)[！!。,.，\s]*$")
+CONTEXT_TOKEN_PATTERN = re.compile(r"^ctx_[A-Za-z0-9_-]{32,96}$")
+WINDOWS_ABSOLUTE_PATH_PATTERN = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\)")
+PRIVACY_EVENT_TYPES = {
+    "session_created",
+    "session_resumed",
+    "data_exported",
+    "session_deleted",
+    "retention_cleanup",
+}
 
 
 class MemoryManagerError(RuntimeError):
@@ -123,6 +138,22 @@ def _is_transient_sqlite_write_error(error: BaseException) -> bool:
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _utc_after(*, hours: int = 0, days: int = 0) -> str:
+    return (datetime.now(timezone.utc) + timedelta(hours=hours, days=days)).isoformat(
+        timespec="seconds"
+    )
+
+
+def _parse_utc(value: Any) -> datetime | None:
+    try:
+        parsed = datetime.fromisoformat(str(value or "").replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 def estimate_tokens(value: Any) -> int:
@@ -522,6 +553,34 @@ class MemoryManager:
         );
         CREATE INDEX IF NOT EXISTS idx_runs_scope
             ON agent_runs(user_id, project_id, session_id, created_at);
+
+        CREATE TABLE IF NOT EXISTS session_access_grants (
+            grant_id TEXT PRIMARY KEY,
+            token_hash TEXT NOT NULL UNIQUE,
+            user_id TEXT NOT NULL,
+            session_id TEXT NOT NULL,
+            project_id TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            last_accessed_at TEXT,
+            revoked_at TEXT,
+            FOREIGN KEY(session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_access_grants_scope
+            ON session_access_grants(user_id, project_id, session_id, expires_at);
+
+        CREATE TABLE IF NOT EXISTS privacy_events (
+            event_id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            project_id TEXT NOT NULL,
+            session_id TEXT,
+            event_type TEXT NOT NULL,
+            outcome TEXT NOT NULL DEFAULT 'success',
+            details_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_privacy_events_scope
+            ON privacy_events(user_id, project_id, created_at);
         """
         try:
             with self._connect() as connection:
@@ -658,6 +717,230 @@ class MemoryManager:
                 """,
                 (session_id, user_id, project_id, "", 0, 0, now),
             )
+
+    @staticmethod
+    def retention_policy() -> dict[str, Any]:
+        """Return the effective privacy lifecycle without implying hidden cleanup."""
+        return {
+            "resume_token_ttl_hours": ANONYMOUS_ACCESS_TTL_HOURS,
+            "conversation_retention_days": MEMORY_RETENTION_DAYS,
+            "agent_audit_retention_days": AUDIT_RETENTION_DAYS,
+            "access_log_retention_days": ACCESS_LOG_RETENTION_DAYS,
+            # Automatic bulk deletion is deliberately not performed by this demo,
+            # so a configured target cannot be mistaken for an enforced job.
+            "automatic_cleanup_enabled": False,
+            "automatic_cleanup_note": (
+                "当前演示版不执行后台批量删除；恢复令牌到期立即失效，"
+                "会话数据由用户在设置页主动删除。"
+            ),
+        }
+
+    @staticmethod
+    def _context_token_hash(token: str) -> str:
+        normalized = str(token or "").strip()
+        if not CONTEXT_TOKEN_PATTERN.fullmatch(normalized):
+            raise MemoryValidationError("会话恢复令牌格式无效。")
+        return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+    def create_session_access_grant(
+        self,
+        user_id: str,
+        session_id: str,
+        project_id: str,
+        *,
+        ttl_hours: int | None = None,
+    ) -> str:
+        """Issue an opaque resume token; only its digest is stored server-side."""
+        user_id, project_id = self._scope(user_id, project_id)
+        session_id = _normalize_text(session_id, 160)
+        self.ensure_session(user_id, session_id, project_id)
+        hours = min(max(int(ttl_hours or ANONYMOUS_ACCESS_TTL_HOURS), 1), 168)
+        token = "ctx_" + secrets.token_urlsafe(32)
+        token_hash = self._context_token_hash(token)
+        now = utc_now()
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO session_access_grants(
+                    grant_id,token_hash,user_id,session_id,project_id,
+                    created_at,expires_at,last_accessed_at,revoked_at
+                ) VALUES(?,?,?,?,?,?,?,?,NULL)
+                """,
+                (
+                    f"grant_{uuid4().hex}",
+                    token_hash,
+                    user_id,
+                    session_id,
+                    project_id,
+                    now,
+                    _utc_after(hours=hours),
+                    now,
+                ),
+            )
+        return token
+
+    def resolve_session_access_grant(
+        self,
+        token: str,
+        *,
+        project_id: str,
+    ) -> dict[str, str] | None:
+        """Resolve a live opaque token without accepting internal IDs from the URL."""
+        normalized_project = _normalize_text(project_id, 160)
+        if not normalized_project:
+            raise MemoryIsolationError("恢复会话必须提供 project_id。")
+        try:
+            token_hash = self._context_token_hash(token)
+        except MemoryValidationError:
+            return None
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT grant_id,user_id,session_id,project_id,expires_at
+                FROM session_access_grants
+                WHERE token_hash=? AND project_id=? AND revoked_at IS NULL
+                """,
+                (token_hash, normalized_project),
+            ).fetchone()
+            if row is None:
+                return None
+            expires_at = _parse_utc(row["expires_at"])
+            if expires_at is None or expires_at <= datetime.now(timezone.utc):
+                connection.execute(
+                    "UPDATE session_access_grants SET revoked_at=? WHERE grant_id=?",
+                    (utc_now(), row["grant_id"]),
+                )
+                return None
+            owner = connection.execute(
+                """
+                SELECT 1 FROM sessions
+                WHERE session_id=? AND user_id=? AND project_id=?
+                """,
+                (row["session_id"], row["user_id"], row["project_id"]),
+            ).fetchone()
+            if owner is None:
+                connection.execute(
+                    "UPDATE session_access_grants SET revoked_at=? WHERE grant_id=?",
+                    (utc_now(), row["grant_id"]),
+                )
+                return None
+            touched = connection.execute(
+                """
+                UPDATE session_access_grants SET last_accessed_at=?
+                WHERE grant_id=? AND revoked_at IS NULL
+                """,
+                (utc_now(), row["grant_id"]),
+            )
+            if touched.rowcount != 1:
+                return None
+        return {
+            "user_id": str(row["user_id"]),
+            "session_id": str(row["session_id"]),
+            "project_id": str(row["project_id"]),
+            "expires_at": str(row["expires_at"]),
+        }
+
+    def revoke_session_access_grant(
+        self,
+        token: str,
+        *,
+        user_id: str,
+        session_id: str,
+        project_id: str,
+    ) -> bool:
+        user_id, project_id = self._scope(user_id, project_id)
+        session_id = _normalize_text(session_id, 160)
+        try:
+            token_hash = self._context_token_hash(token)
+        except MemoryValidationError:
+            return False
+        with self._lock, self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE session_access_grants SET revoked_at=?
+                WHERE token_hash=? AND user_id=? AND session_id=? AND project_id=?
+                  AND revoked_at IS NULL
+                """,
+                (utc_now(), token_hash, user_id, session_id, project_id),
+            )
+        return cursor.rowcount > 0
+
+    def log_privacy_event(
+        self,
+        event_type: str,
+        *,
+        user_id: str,
+        project_id: str,
+        session_id: str = "",
+        outcome: str = "success",
+        details: dict[str, Any] | None = None,
+    ) -> str:
+        user_id, project_id = self._scope(user_id, project_id)
+        normalized_type = _normalize_text(event_type, 80)
+        if normalized_type not in PRIVACY_EVENT_TYPES:
+            raise MemoryValidationError("不支持的隐私访问记录类型。")
+        normalized_session = _normalize_text(session_id, 160)
+        if normalized_session:
+            with self._connect() as connection:
+                owner = connection.execute(
+                    """
+                    SELECT 1 FROM sessions
+                    WHERE session_id=? AND user_id=? AND project_id=?
+                    """,
+                    (normalized_session, user_id, project_id),
+                ).fetchone()
+            if owner is None:
+                raise MemoryIsolationError("拒绝记录其他用户或项目的会话事件。")
+        event_id = f"privacy_{uuid4().hex}"
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO privacy_events(
+                    event_id,user_id,project_id,session_id,event_type,outcome,details_json,created_at
+                ) VALUES(?,?,?,?,?,?,?,?)
+                """,
+                (
+                    event_id,
+                    user_id,
+                    project_id,
+                    normalized_session or None,
+                    normalized_type,
+                    _normalize_text(outcome, 40) or "success",
+                    _safe_json(details or {}),
+                    utc_now(),
+                ),
+            )
+        return event_id
+
+    def list_privacy_events(
+        self,
+        *,
+        user_id: str,
+        project_id: str,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        user_id, project_id = self._scope(user_id, project_id)
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT event_id,session_id,event_type,outcome,details_json,created_at
+                FROM privacy_events
+                WHERE user_id=? AND project_id=?
+                ORDER BY created_at DESC, rowid DESC LIMIT ?
+                """,
+                (user_id, project_id, max(1, min(int(limit), 100))),
+            ).fetchall()
+        return [
+            {
+                "event_id": row["event_id"],
+                "session_id": row["session_id"] or "",
+                "event_type": row["event_type"],
+                "outcome": row["outcome"],
+                "details": _load_json(row["details_json"], {}),
+                "created_at": row["created_at"],
+            }
+            for row in rows
+        ]
 
     def record_message(
         self,
@@ -1721,6 +2004,406 @@ class MemoryManager:
         ]:
             result[key.removesuffix("_json")] = _load_json(result.pop(key), {})
         return result
+
+    @staticmethod
+    def _portable_export_path(value: str) -> str:
+        """Hide host filesystem topology while preserving a stable file reference."""
+        text = str(value or "").strip()
+        if not text or "\n" in text or "\r" in text or len(text) > 2048:
+            return value
+        lowered = text.lower()
+        is_windows_absolute = bool(WINDOWS_ABSOLUTE_PATH_PATTERN.match(text))
+        is_file_uri = lowered.startswith("file://")
+        is_home_path = text.startswith(("~/", "~\\"))
+        is_posix_absolute = text.startswith("/") and (
+            text.count("/") >= 2 or bool(re.search(r"\.[A-Za-z0-9]{1,12}$", text))
+        )
+        if not (is_windows_absolute or is_file_uri or is_home_path or is_posix_absolute):
+            return value
+        normalized = text.replace("\\", "/").rstrip("/")
+        basename = normalized.rsplit("/", 1)[-1] or "file"
+        basename = re.sub(r"[\x00-\x1f?#]", "_", basename).strip()[:180] or "file"
+        fingerprint = hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
+        return f"stored-file://{fingerprint}/{basename}"
+
+    @classmethod
+    def _portable_export_value(cls, value: Any) -> Any:
+        if isinstance(value, dict):
+            return {str(key): cls._portable_export_value(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [cls._portable_export_value(item) for item in value]
+        if isinstance(value, tuple):
+            return [cls._portable_export_value(item) for item in value]
+        if isinstance(value, str):
+            return cls._portable_export_path(value)
+        return value
+
+    @staticmethod
+    def _export_rows(
+        rows: Iterable[sqlite3.Row],
+        *,
+        json_fields: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
+        exported: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            for field, default in (json_fields or {}).items():
+                if field in item:
+                    item[field.removesuffix("_json")] = _load_json(item.pop(field), default)
+            exported.append(MemoryManager._portable_export_value(redact_sensitive(item)))
+        return exported
+
+    def export_user_data(
+        self,
+        *,
+        user_id: str,
+        project_id: str,
+    ) -> dict[str, Any]:
+        """Export one exact user/project scope; access-token digests are excluded."""
+        user_id, project_id = self._scope(user_id, project_id)
+        with self._connect() as connection:
+            sessions = self._export_rows(
+                connection.execute(
+                    "SELECT * FROM sessions WHERE user_id=? AND project_id=? ORDER BY created_at",
+                    (user_id, project_id),
+                ).fetchall(),
+                json_fields={"config_json": {}},
+            )
+            messages = self._export_rows(
+                connection.execute(
+                    """
+                    SELECT message_id,session_id,role,content,token_count,message_type,
+                           tool_name,tool_result_id,metadata_json,created_at
+                    FROM conversation_messages
+                    WHERE user_id=? AND project_id=? ORDER BY id
+                    """,
+                    (user_id, project_id),
+                ).fetchall(),
+                json_fields={"metadata_json": {}},
+            )
+            working = self._export_rows(
+                connection.execute(
+                    """
+                    SELECT session_id,state_json,version,updated_at FROM working_memory
+                    WHERE user_id=? AND project_id=? ORDER BY updated_at
+                    """,
+                    (user_id, project_id),
+                ).fetchall(),
+                json_fields={"state_json": {}},
+            )
+            summaries = self._export_rows(
+                connection.execute(
+                    """
+                    SELECT session_id,summary,summarized_through_id,token_count,updated_at
+                    FROM conversation_summaries
+                    WHERE user_id=? AND project_id=? ORDER BY updated_at
+                    """,
+                    (user_id, project_id),
+                ).fetchall()
+            )
+            memories = self._export_rows(
+                connection.execute(
+                    "SELECT * FROM memories WHERE user_id=? AND project_id=? ORDER BY created_at",
+                    (user_id, project_id),
+                ).fetchall(),
+                json_fields={"keywords_json": [], "metadata_json": {}},
+            )
+            samples = self._export_rows(
+                connection.execute(
+                    "SELECT * FROM citrus_samples WHERE user_id=? AND project_id=? ORDER BY created_at",
+                    (user_id, project_id),
+                ).fetchall(),
+                json_fields={
+                    "image_paths_json": [],
+                    "metrics_json": {},
+                    "keywords_json": [],
+                },
+            )
+            runs = self._export_rows(
+                connection.execute(
+                    "SELECT * FROM agent_runs WHERE user_id=? AND project_id=? ORDER BY created_at",
+                    (user_id, project_id),
+                ).fetchall(),
+                json_fields={
+                    "context_manifest_json": {},
+                    "retrieved_memory_ids_json": [],
+                    "retrieved_literature_ids_json": [],
+                    "retrieved_sample_ids_json": [],
+                    "tool_calls_json": [],
+                    "state_updates_json": {},
+                },
+            )
+            events = self._export_rows(
+                connection.execute(
+                    """
+                    SELECT event_id,session_id,event_type,outcome,details_json,created_at
+                    FROM privacy_events WHERE user_id=? AND project_id=? ORDER BY created_at
+                    """,
+                    (user_id, project_id),
+                ).fetchall(),
+                json_fields={"details_json": {}},
+            )
+        return {
+            "export_schema_version": 1,
+            "generated_at": utc_now(),
+            "scope": {"user_id": user_id, "project_id": project_id},
+            "retention_policy": self.retention_policy(),
+            "data": {
+                "sessions": sessions,
+                "conversation_messages": messages,
+                "working_memory": working,
+                "conversation_summaries": summaries,
+                "memories": memories,
+                "citrus_samples": samples,
+                "agent_runs": runs,
+                "access_records": events,
+            },
+        }
+
+    @staticmethod
+    def _walk_text_values(value: Any) -> Iterable[str]:
+        if isinstance(value, dict):
+            for item in value.values():
+                yield from MemoryManager._walk_text_values(item)
+        elif isinstance(value, (list, tuple)):
+            for item in value:
+                yield from MemoryManager._walk_text_values(item)
+        elif isinstance(value, str) and value.strip():
+            yield value.strip()
+
+    def _collect_known_files(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        user_id: str,
+        project_id: str,
+        session_id: str | None = None,
+    ) -> set[Path]:
+        suffix = " AND session_id=?" if session_id else ""
+        parameters: tuple[str, ...] = (
+            (user_id, project_id, session_id)
+            if session_id
+            else (user_id, project_id)
+        )
+        values: list[Any] = []
+        for table, columns in [
+            ("working_memory", ["state_json"]),
+            ("conversation_messages", ["metadata_json"]),
+            ("citrus_samples", ["image_paths_json"]),
+            ("agent_runs", ["tool_calls_json", "state_updates_json"]),
+        ]:
+            rows = connection.execute(
+                f"SELECT {','.join(columns)} FROM {table} "
+                f"WHERE user_id=? AND project_id=?{suffix}",
+                parameters,
+            ).fetchall()
+            for row in rows:
+                for column in columns:
+                    values.append(_load_json(row[column], {}))
+
+        image_root = (self.db_path.parent / "files").resolve()
+        scope_hash = hashlib.sha256(f"{user_id}\0{project_id}".encode("utf-8")).hexdigest()[:24]
+        scoped_image_root = (image_root / scope_hash).resolve()
+        report_root = (ROOT / "outputs" / "reports").resolve()
+        known_files: set[Path] = set()
+        for value in values:
+            for raw in self._walk_text_values(value):
+                candidate = Path(raw).expanduser()
+                if not candidate.is_absolute():
+                    candidate = ROOT / candidate
+                try:
+                    candidate = candidate.resolve()
+                except OSError:
+                    continue
+                in_scoped_images = (
+                    candidate != scoped_image_root and scoped_image_root in candidate.parents
+                )
+                in_reports = candidate.parent == report_root
+                if (in_scoped_images or in_reports) and candidate.is_file():
+                    known_files.add(candidate)
+        return known_files
+
+    @staticmethod
+    def _path_still_referenced(connection: sqlite3.Connection, path: Path) -> bool:
+        needles = {str(path), path.as_posix()}
+        for table, columns in [
+            ("working_memory", ["state_json"]),
+            ("conversation_messages", ["metadata_json"]),
+            ("citrus_samples", ["image_paths_json"]),
+            ("agent_runs", ["tool_calls_json", "state_updates_json"]),
+        ]:
+            for row in connection.execute(f"SELECT {','.join(columns)} FROM {table}"):
+                if any(needle in str(row[column] or "") for column in columns for needle in needles):
+                    return True
+        return False
+
+    def _remove_unreferenced_files(self, candidates: Iterable[Path]) -> tuple[int, int]:
+        removed = 0
+        failed = 0
+        with self._connect() as connection:
+            for candidate in candidates:
+                if self._path_still_referenced(connection, candidate):
+                    continue
+                try:
+                    candidate.unlink(missing_ok=True)
+                    removed += 1
+                except OSError:
+                    failed += 1
+        return removed, failed
+
+    def delete_session_data(
+        self,
+        session_id: str,
+        *,
+        user_id: str,
+        project_id: str,
+    ) -> dict[str, Any]:
+        """Hard-delete one exactly owned session and revoke all of its grants."""
+        user_id, project_id = self._scope(user_id, project_id)
+        session_id = _normalize_text(session_id, 160)
+        if not session_id:
+            raise MemoryValidationError("删除会话必须提供 session_id。")
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                "SELECT user_id,project_id FROM sessions WHERE session_id=?",
+                (session_id,),
+            ).fetchone()
+            if row is None:
+                return {"deleted": False, "counts": {}, "files_removed": 0}
+            if row["user_id"] != user_id or row["project_id"] != project_id:
+                raise MemoryIsolationError("拒绝删除其他用户或项目的会话。")
+            candidates = self._collect_known_files(
+                connection,
+                user_id=user_id,
+                project_id=project_id,
+                session_id=session_id,
+            )
+            counts = {
+                table: int(
+                    connection.execute(
+                        f"SELECT COUNT(*) FROM {table} "
+                        "WHERE user_id=? AND project_id=? AND session_id=?",
+                        (user_id, project_id, session_id),
+                    ).fetchone()[0]
+                )
+                for table in [
+                    "conversation_messages",
+                    "working_memory",
+                    "conversation_summaries",
+                    "memories",
+                    "citrus_samples",
+                    "agent_runs",
+                    "session_access_grants",
+                ]
+            }
+            connection.execute(
+                "UPDATE privacy_events SET session_id=NULL "
+                "WHERE user_id=? AND project_id=? AND session_id=?",
+                (user_id, project_id, session_id),
+            )
+            for table in [
+                "session_access_grants",
+                "agent_runs",
+                "memories",
+                "citrus_samples",
+                "conversation_messages",
+                "conversation_summaries",
+                "working_memory",
+            ]:
+                connection.execute(
+                    f"DELETE FROM {table} WHERE user_id=? AND project_id=? AND session_id=?",
+                    (user_id, project_id, session_id),
+                )
+            connection.execute(
+                "DELETE FROM sessions WHERE user_id=? AND project_id=? AND session_id=?",
+                (user_id, project_id, session_id),
+            )
+            connection.execute(
+                """
+                INSERT INTO privacy_events(
+                    event_id,user_id,project_id,session_id,event_type,outcome,details_json,created_at
+                ) VALUES(?,?,?,?,?,?,?,?)
+                """,
+                (
+                    f"privacy_{uuid4().hex}",
+                    user_id,
+                    project_id,
+                    None,
+                    "session_deleted",
+                    "success",
+                    _safe_json(
+                        {
+                            "deleted_session_fingerprint": hashlib.sha256(
+                                session_id.encode("utf-8")
+                            ).hexdigest()[:12]
+                        }
+                    ),
+                    utc_now(),
+                ),
+            )
+        files_removed, file_cleanup_errors = self._remove_unreferenced_files(candidates)
+        return {
+            "deleted": True,
+            "counts": counts,
+            "files_removed": files_removed,
+            "file_cleanup_errors": file_cleanup_errors,
+        }
+
+    def delete_user_data(
+        self,
+        *,
+        user_id: str,
+        project_id: str,
+    ) -> dict[str, Any]:
+        """Hard-delete every row in one exact user/project scope."""
+        user_id, project_id = self._scope(user_id, project_id)
+        with self._lock, self._connect() as connection:
+            candidates = self._collect_known_files(
+                connection,
+                user_id=user_id,
+                project_id=project_id,
+            )
+            scoped_tables = [
+                "conversation_messages",
+                "working_memory",
+                "conversation_summaries",
+                "memories",
+                "citrus_samples",
+                "agent_runs",
+                "session_access_grants",
+                "privacy_events",
+                "sessions",
+            ]
+            counts = {
+                table: int(
+                    connection.execute(
+                        f"SELECT COUNT(*) FROM {table} WHERE user_id=? AND project_id=?",
+                        (user_id, project_id),
+                    ).fetchone()[0]
+                )
+                for table in scoped_tables
+            }
+            for table in scoped_tables:
+                connection.execute(
+                    f"DELETE FROM {table} WHERE user_id=? AND project_id=?",
+                    (user_id, project_id),
+                )
+        files_removed, file_cleanup_errors = self._remove_unreferenced_files(candidates)
+        scope_hash = hashlib.sha256(f"{user_id}\0{project_id}".encode("utf-8")).hexdigest()[:24]
+        scoped_image_root = (self.db_path.parent / "files" / scope_hash).resolve()
+        image_root = (self.db_path.parent / "files").resolve()
+        if scoped_image_root != image_root and image_root in scoped_image_root.parents:
+            try:
+                if scoped_image_root.is_dir():
+                    shutil.rmtree(scoped_image_root)
+            except OSError:
+                file_cleanup_errors += 1
+        return {
+            "deleted": True,
+            "counts": counts,
+            "files_removed": files_removed,
+            "file_cleanup_errors": file_cleanup_errors,
+        }
 
     def delete_memory(
         self,
