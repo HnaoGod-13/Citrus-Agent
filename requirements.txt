@@ -14,3 +14,4 @@ zstandard>=0.23.0
 # Concise answer and sidebar full-redeploy marker (2026-08-20).
 # Restore complete answers while keeping only deduplication and source cleanup (2026-08-20).
 # Evidence, workflow and privacy full-redeploy marker (2026-08-23).
+# Explicit-target processing alignment full-redeploy marker (2026-08-23).
