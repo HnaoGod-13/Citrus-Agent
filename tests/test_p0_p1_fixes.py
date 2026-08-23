@@ -104,6 +104,8 @@ class EvidenceAwareRankingTests(unittest.TestCase):
         self.assertLess(scores[0].score, next(item.score for item in scores if item.direction == DIRECTION_JUICE))
         self.assertEqual(plan["direction"], DIRECTION_PEEL_PECTIN)
         self.assertIn("酸提或酶提", plan["flow"])
+        self.assertIn("包装", plan["flow"])
+        self.assertEqual(plan["flow"][-1], "储藏")
         self.assertNotIn("榨汁", plan["flow"])
 
     def test_comparison_does_not_force_the_first_named_product_to_the_top(self) -> None:
