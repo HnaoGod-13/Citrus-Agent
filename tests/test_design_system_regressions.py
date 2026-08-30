@@ -9,6 +9,8 @@ COMPONENTS_PATH = ROOT / "app" / "ui" / "components.py"
 MAIN_PATH = ROOT / "app" / "main.py"
 CONFIG_PATH = ROOT / ".streamlit" / "config.toml"
 MISANS_SEMIBOLD_PATH = ROOT / "app" / "static" / "fonts" / "MiSans-Semibold.ttf"
+ROBOTO_PATH = ROOT / "app" / "static" / "fonts" / "RobotoVariable-Latin.woff2"
+NOTO_SANS_SC_PATH = ROOT / "app" / "static" / "fonts" / "NotoSansSC-VF.ttf"
 MISANS_SEMIBOLD_SHA256 = (
     "77c23f31ae124867778344970155a0c8d34a89897dedaab81aeee82ff00a4ce6"
 )
@@ -128,41 +130,64 @@ class DesignSystemRegressionTests(unittest.TestCase):
         css = CSS_PATH.read_text(encoding="utf-8-sig")
         config = CONFIG_PATH.read_text(encoding="utf-8-sig")
         self.assertIn(
-            '--font-ui: "CitrusMiSansSemibold", "MiSans Semibold", sans-serif;',
+            '--font-ui: "CitrusRoboto", "CitrusNotoSansSC", "CitrusMiSansSemibold", sans-serif;',
             css,
         )
         self.assertIn(
-            '--font-mono: "CitrusMiSansSemibold", "MiSans Semibold", sans-serif;',
+            '--font-mono: "CitrusRoboto", "CitrusNotoSansSC", monospace;',
             css,
         )
         self.assertIn('family = "CitrusMiSansSemibold"', config)
         self.assertIn('url = "app/static/fonts/MiSans-Semibold.ttf"', config)
         self.assertIn('weight = "520"', config)
+        self.assertIn('family = "CitrusRoboto"', config)
+        self.assertIn('url = "app/static/fonts/RobotoVariable-Latin.woff2"', config)
         self.assertIn(
-            'font = "CitrusMiSansSemibold, sans-serif"',
+            'unicodeRange = "U+0000-024F, U+1E00-1EFF, U+2000-206F, U+20A0-20CF, U+2100-214F, U+2190-21FF, U+2200-22FF, U+FB00-FB4F"',
             config,
         )
-        self.assertIn('headingFont = "CitrusMiSansSemibold, sans-serif"', config)
-        self.assertIn('codeFont = "CitrusMiSansSemibold, sans-serif"', config)
+        self.assertIn('family = "CitrusNotoSansSC"', config)
+        self.assertIn('url = "app/static/fonts/NotoSansSC-VF.ttf"', config)
+        self.assertIn(
+            'unicodeRange = "U+2E80-2FFF, U+3000-303F, U+3040-30FF, U+3100-312F, U+31A0-31BF, U+3400-4DBF, U+4E00-9FFF, U+F900-FAFF, U+FE30-FE4F, U+FF00-FFEF, U+20000-2FA1F"',
+            config,
+        )
+        self.assertIn('weight = "100 900"', config)
+        self.assertIn(
+            'font = "CitrusRoboto, CitrusNotoSansSC, CitrusMiSansSemibold, sans-serif"',
+            config,
+        )
+        self.assertIn(
+            'headingFont = "CitrusRoboto, CitrusNotoSansSC, CitrusMiSansSemibold, sans-serif"',
+            config,
+        )
+        self.assertIn(
+            'codeFont = "CitrusRoboto, CitrusNotoSansSC, CitrusMiSansSemibold, sans-serif"',
+            config,
+        )
         self.assertTrue(MISANS_SEMIBOLD_PATH.is_file())
+        self.assertTrue(ROBOTO_PATH.is_file())
+        self.assertTrue(NOTO_SANS_SC_PATH.is_file())
         self.assertGreater(MISANS_SEMIBOLD_PATH.stat().st_size, 8_000_000)
+        self.assertGreater(ROBOTO_PATH.stat().st_size, 30_000)
+        self.assertGreater(NOTO_SANS_SC_PATH.stat().st_size, 10_000_000)
         self.assertEqual(
             hashlib.sha256(MISANS_SEMIBOLD_PATH.read_bytes()).hexdigest(),
             MISANS_SEMIBOLD_SHA256,
         )
-        self.assertIn("--weight-regular: 520;", css)
-        self.assertIn("--weight-medium: 520;", css)
-        self.assertIn("--weight-semibold: 520;", css)
-        self.assertIn("baseFontWeight = 500", config)
-        self.assertIn("headingFontWeights = 500", config)
-        self.assertIn("codeFontWeight = 500", config)
+        self.assertIn("--weight-regular: 400;", css)
+        self.assertIn("--weight-medium: 500;", css)
+        self.assertIn("--weight-semibold: 600;", css)
+        self.assertIn("baseFontWeight = 400", config)
+        self.assertIn("headingFontWeights = 600", config)
+        self.assertIn("codeFontWeight = 400", config)
         self.assertIn("metricValueFontWeight = 500", config)
         self.assertNotIn("cdn-font.hyperos.mi.com", css)
-        self.assertNotIn("CitrusRoboto", config)
-        self.assertNotIn("MiSans VF", config)
+        self.assertNotIn("CitrusInter", css)
+        self.assertNotIn("InterVariable", config)
         self.assertNotIn('"PingFang SC"', css)
 
-    def test_all_visible_text_surfaces_use_misans_semibold(self) -> None:
+    def test_all_visible_text_surfaces_use_bundled_font_stack(self) -> None:
         css = CSS_PATH.read_text(encoding="utf-8-sig")
 
         for selector in (
@@ -188,6 +213,12 @@ class DesignSystemRegressionTests(unittest.TestCase):
 
         self.assertIn("font-family: var(--font-ui) !important;", css)
         self.assertIn("font-weight: var(--weight-regular) !important;", css)
+        heading_start = css.index("h1,\nh2,\nh3,\nh4,\nh5,\nh6 {")
+        heading_rule = css[heading_start : css.index("}", heading_start) + 1]
+        self.assertIn("font-weight: var(--weight-semibold) !important;", heading_rule)
+        self.assertIn("font-synthesis: none;", css)
+        self.assertIn("font-kerning: normal;", css)
+        self.assertIn('font-feature-settings: "kern" 1, "liga" 1;', css)
         self.assertNotIn("SFMono-Regular", css)
         self.assertNotIn("Consolas", css)
 

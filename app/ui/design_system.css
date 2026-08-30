@@ -6,6 +6,32 @@
     font-display: swap;
 }
 
+/*
+ * Keep glyph selection deterministic across operating systems. Roboto owns
+ * Latin text and Noto Sans SC owns CJK text; both are bundled with the app so
+ * Windows and macOS do not silently fall back to different system fonts.
+ */
+@font-face {
+    font-family: "CitrusRoboto";
+    src: url("app/static/fonts/RobotoVariable-Latin.woff2") format("woff2");
+    font-style: normal;
+    font-weight: 100 900;
+    font-display: swap;
+    unicode-range: U+0000-024F, U+1E00-1EFF, U+2000-206F, U+20A0-20CF,
+        U+2100-214F, U+2190-21FF, U+2200-22FF, U+FB00-FB4F;
+}
+
+@font-face {
+    font-family: "CitrusNotoSansSC";
+    src: url("app/static/fonts/NotoSansSC-VF.ttf") format("truetype");
+    font-style: normal;
+    font-weight: 100 900;
+    font-display: swap;
+    unicode-range: U+2E80-2FFF, U+3000-303F, U+3040-30FF, U+3100-312F,
+        U+31A0-31BF, U+3400-4DBF, U+4E00-9FFF, U+F900-FAFF,
+        U+FE30-FE4F, U+FF00-FFEF, U+20000-2FA1F;
+}
+
 :root {
     color-scheme: light;
 
@@ -52,8 +78,8 @@
     --agent-accent-soft: var(--active);
 
     /* Typography */
-    --font-ui: "CitrusMiSansSemibold", "MiSans Semibold", sans-serif;
-    --font-mono: "CitrusMiSansSemibold", "MiSans Semibold", sans-serif;
+    --font-ui: "CitrusRoboto", "CitrusNotoSansSC", "CitrusMiSansSemibold", sans-serif;
+    --font-mono: "CitrusRoboto", "CitrusNotoSansSC", monospace;
     --font-display: 44px;
     --font-page-title: 30px;
     --font-section-title: 18px;
@@ -61,9 +87,9 @@
     --font-body: 15px;
     --font-secondary: 13px;
     --font-caption: 11px;
-    --weight-regular: 520;
-    --weight-medium: 520;
-    --weight-semibold: 520;
+    --weight-regular: 400;
+    --weight-medium: 500;
+    --weight-semibold: 600;
     --leading-tight: 1.2;
     --leading-snug: 1.45;
     --leading-body: 1.65;
@@ -157,18 +183,16 @@ td,
 summary,
 small,
 strong,
-em,
-h1,
-h2,
-h3,
-h4,
-h5,
-h6 {
+em {
     font-family: var(--font-ui) !important;
     font-weight: var(--weight-regular) !important;
     font-optical-sizing: auto;
     font-synthesis: none;
     font-kerning: normal;
+    font-style: normal !important;
+    font-stretch: normal !important;
+    font-variant-ligatures: common-ligatures;
+    font-feature-settings: "kern" 1, "liga" 1;
     letter-spacing: 0 !important;
 }
 
@@ -229,6 +253,7 @@ h4,
 h5,
 h6 {
     padding: 0 !important;
+    font-weight: var(--weight-semibold) !important;
     text-wrap: balance;
 }
 
@@ -249,6 +274,8 @@ body,
 .stApp {
     background: var(--background) !important;
     color: var(--text-primary) !important;
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
 }
 
 body {
@@ -257,6 +284,7 @@ body {
     letter-spacing: 0;
     line-height: var(--leading-body);
     -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
 }
 
