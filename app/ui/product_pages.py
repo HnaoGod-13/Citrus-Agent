@@ -26,6 +26,7 @@ import streamlit as st
 from agent import memory as agent_memory
 from app import knowledge_catalog as catalog_index
 from app.ui import components as ui_components
+from app.ui import industry_pages as ui_industry_pages
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -676,6 +677,11 @@ def render_workspace_page() -> None:
         "工作台",
         "查看当前账户最近的会话、分析运行与批次样本。",
         "Recent conversations, analysis runs and saved batch records",
+    )
+    ui_industry_pages.render_industry_workspace()
+    st.markdown(
+        '<div class="industry-existing-data-heading"><span>Agent 数据记录</span><small>Agent activity records</small></div>',
+        unsafe_allow_html=True,
     )
     scope = _current_scope()
     if scope is None:

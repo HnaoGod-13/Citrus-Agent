@@ -1483,8 +1483,8 @@ def render_product_secondary_panel(view: str) -> None:
         "workspace": {
             "eyebrow": "CITRUS AI · WORKSPACE",
             "title": "工作台",
-            "description": "集中查看最近任务、历史分析与保存方案。",
-            "items": (("最近任务", "Recent tasks"), ("历史分析", "Analysis history"), ("批次与方案", "Batches & plans")),
+            "description": "集中查看产业批次、供需匹配与 Agent 分析记录。",
+            "items": (("批次采集", "Batch intake"), ("供需匹配", "Supply & demand"), ("报告与看板", "Reports & analytics")),
         },
         "knowledge": {
             "eyebrow": "CITRUS AI · KNOWLEDGE",
