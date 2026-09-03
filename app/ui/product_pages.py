@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 import hashlib
 import html
+import importlib
 import json
 from pathlib import Path
 import re
@@ -729,7 +730,13 @@ def render_workspace_page() -> None:
 
 def current_industry_view() -> str:
     """Expose the workspace section selected by the original sidebar."""
-    return ui_industry_pages.current_industry_view()
+    global ui_industry_pages
+    resolver = getattr(ui_industry_pages, "current_industry_view", None)
+    if not callable(resolver):
+        importlib.invalidate_caches()
+        ui_industry_pages = importlib.reload(ui_industry_pages)
+        resolver = ui_industry_pages.current_industry_view
+    return resolver()
 
 
 def _query_knowledge_facets(path: Path) -> dict[str, Any]:
