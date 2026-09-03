@@ -1000,7 +1000,7 @@ class ProductRouteStateTests(unittest.TestCase):
 
         invalidate_caches.assert_called_once_with()
         self.assertEqual(
-            [call(app_main.ui_components), call(app_main.ui_product_pages)],
+            [call(app_main.ui_components), call(app_main.ui_industry_pages), call(app_main.ui_product_pages)],
             reload_module.call_args_list,
         )
         self.assertNotIn("from app.ui.product_pages import render_product_page", source)

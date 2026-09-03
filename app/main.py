@@ -38,6 +38,7 @@ from agent import (
     workflow,
 )
 from app.ui import components as ui_components
+from app.ui import industry_pages as ui_industry_pages
 from app.ui import product_pages as ui_product_pages
 
 
@@ -45,6 +46,7 @@ def refresh_ui_modules() -> None:
     """Refresh lightweight UI code after a Streamlit Cloud hot deployment."""
     importlib.invalidate_caches()
     importlib.reload(ui_components)
+    importlib.reload(ui_industry_pages)
     importlib.reload(ui_product_pages)
 
 DEEPSEEK_MODEL = llm_client.DEEPSEEK_MODEL
