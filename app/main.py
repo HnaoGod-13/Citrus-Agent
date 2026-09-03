@@ -1177,6 +1177,16 @@ def select_product_view(view: str) -> None:
     _set_query_value("view", normalized)
 
 
+def select_industry_view(view: str) -> None:
+    normalized = str(view or "").strip().lower()
+    if normalized not in {"production", "supply", "demand", "match"}:
+        return
+    st.session_state.industry_workspace_view = normalized
+    st.session_state.reset_main_scroll_position = True
+    _set_query_value("view", "workspace")
+    _set_query_value("industry", normalized)
+
+
 def toggle_mobile_secondary_panel() -> None:
     st.session_state.mobile_secondary_open = not bool(
         st.session_state.get("mobile_secondary_open", False)
@@ -1516,20 +1526,42 @@ def render_product_secondary_panel(view: str) -> None:
         on_click=start_new_conversation,
         key=f"new_conversation_from_{view}",
     )
-    rows = "".join(
-        '<div class="secondary-nav-row">'
-        f'<span>{html.escape(zh)}</span><small>{html.escape(en)}</small>'
-        "</div>"
-        for zh, en in panel_content["items"]
+    if view == "workspace":
+        industry_items = (
+            ("production", "加工能力与生产记录", "Processing records"),
+            ("supply", "供应中心", "Supply center"),
+            ("demand", "需求中心", "Demand center"),
+            ("match", "匹配结果", "Match results"),
+        )
+        active_industry = ui_product_pages.current_industry_view()
+        st.markdown('<div class="secondary-section-label">页面结构</div>', unsafe_allow_html=True)
+        with st.container(key="workspace_industry_nav"):
+            for key, zh, en in industry_items:
+                st.button(
+                    f"{zh}\n{en}",
+                    key=f"industry_nav_{key}",
+                    type="primary" if key == active_industry else "secondary",
+                    width="stretch",
+                    on_click=select_industry_view,
+                    args=(key,),
+                )
+    else:
+        rows = "".join(
+            '<div class="secondary-nav-row">'
+            f'<span>{html.escape(zh)}</span><small>{html.escape(en)}</small>'
+            "</div>"
+            for zh, en in panel_content["items"]
+        )
+        st.markdown(
+            f'<div class="secondary-section-label">页面结构</div><div class="secondary-nav-stack">{rows}</div>',
+            unsafe_allow_html=True,
+        )
+    panel_note = (
+        "当前为产业工作台演示数据；保存和对接操作仅保留在本次会话中。"
+        if view == "workspace"
+        else "页面数据为只读视图。Agent、模型配置与知识库内容不会在这里被静默修改。"
     )
-    st.markdown(
-        f'<div class="secondary-section-label">页面结构</div><div class="secondary-nav-stack">{rows}</div>',
-        unsafe_allow_html=True,
-    )
-    st.markdown(
-        '<div class="secondary-note">页面数据为只读视图。Agent、模型配置与知识库内容不会在这里被静默修改。</div>',
-        unsafe_allow_html=True,
-    )
+    st.markdown(f'<div class="secondary-note">{panel_note}</div>', unsafe_allow_html=True)
 
 
 def render_sidebar(view: str = "chat") -> tuple[str, bool, bytes | None, str, str]:

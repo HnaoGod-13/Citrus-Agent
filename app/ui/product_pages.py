@@ -727,6 +727,11 @@ def render_workspace_page() -> None:
         )
 
 
+def current_industry_view() -> str:
+    """Expose the workspace section selected by the original sidebar."""
+    return ui_industry_pages.current_industry_view()
+
+
 def _query_knowledge_facets(path: Path) -> dict[str, Any]:
     with _readonly_database(path) as connection:
         if _is_knowledge_catalog(connection):
@@ -2083,6 +2088,7 @@ def render_product_page(view: str) -> bool:
 
 
 __all__ = [
+    "current_industry_view",
     "render_analytics_page",
     "render_knowledge_page",
     "render_product_page",
