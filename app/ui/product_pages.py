@@ -673,13 +673,12 @@ def _load_workspace(path: Path, scope: _Scope) -> dict[str, Any]:
 
 
 def render_workspace_page() -> None:
-    _render_page_header(
-        "CITRUS AI · WORKSPACE",
-        "工作台",
-        "查看当前账户最近的会话、分析运行与批次样本。",
-        "Recent conversations, analysis runs and saved batch records",
-    )
     ui_industry_pages.render_industry_workspace()
+    with st.expander("Agent 数据记录 · 最近会话、分析运行与批次样本", expanded=False):
+        _render_workspace_activity()
+
+
+def _render_workspace_activity() -> None:
     st.markdown(
         '<div class="industry-existing-data-heading"><span>Agent 数据记录</span><small>Agent activity records</small></div>',
         unsafe_allow_html=True,

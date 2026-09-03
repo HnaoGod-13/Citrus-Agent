@@ -4627,11 +4627,14 @@ div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label)
 }
 
 [class*="st-key-workspace_industry_nav"] [data-testid="stButton"] > button {
-    display: block;
+    display: flex !important;
+    justify-content: flex-start !important;
+    align-items: flex-start !important;
+    width: 100% !important;
     min-height: 59px;
     padding: 10px 10px !important;
     color: var(--text-tertiary) !important;
-    text-align: left;
+    text-align: left !important;
     background: transparent !important;
     border: 0 !important;
     border-radius: var(--radius-sm) !important;
@@ -4647,13 +4650,38 @@ div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label)
 }
 
 [class*="st-key-workspace_industry_nav"] [data-testid="stButton"] > button p {
+    width: 100% !important;
     margin: 0 !important;
     color: var(--text-tertiary) !important;
     font-size: 12px !important;
     font-weight: var(--weight-regular) !important;
     line-height: 1.45 !important;
-    text-align: left;
+    text-align: left !important;
     white-space: pre-line;
+}
+
+[class*="st-key-workspace_industry_nav"] [data-testid="stButton"] > button > div,
+[class*="st-key-workspace_industry_nav"] [data-testid="stButton"] > button > div > span,
+[class*="st-key-workspace_industry_nav"] [data-testid="stMarkdownContainer"] {
+    display: block !important;
+    flex: 1 1 100% !important;
+    width: 100% !important;
+    text-align: left !important;
+}
+
+/* The business canvas replaces only the workspace content, never the rails. */
+[class*="st-key-product_page_shell"]:has([class*="st-key-industry_workspace_canvas"]) {
+    --page-content-max: 1400px;
+}
+
+.block-container:has([class*="st-key-industry_workspace_canvas"]) {
+    padding-top: 20px;
+}
+
+@media (max-width: 899px) {
+    .block-container:has([class*="st-key-industry_workspace_canvas"]) {
+        padding-top: 64px;
+    }
 }
 
 [class*="st-key-workspace_industry_nav"] [data-testid="stButton"] > button p::first-line {
