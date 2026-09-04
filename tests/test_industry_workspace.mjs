@@ -3,7 +3,7 @@ import test from 'node:test';
 import {readFile} from 'node:fs/promises';
 
 const source=await readFile(new URL('../app/ui/industry_workspace/workspace.js',import.meta.url),'utf8');
-const {esc,quantityRange,evaluateCandidate,bindWorkspaceEvents}=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
+const {esc,quantityRange,evaluateCandidate,bindWorkspaceEvents,cleanIntake,buildReportDocument}=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
 const request={material:'沃柑鲜果',region:'广西及周边',quantity:'15—25',brix:'12.0',delivery:'2026-09-10',report:true,preferences:['完整投入品记录','可寄样','稳定供货']};
 const candidate={quantity:20,brix:12.8,arrival:'2026-09-08',report:true,preferences:['完整投入品记录','可寄样']};
 
@@ -44,4 +44,25 @@ test('rerenders replace listeners so one submit saves one record',()=>{
   root._cleanup();
   root.dispatchEvent(new Event('submit'));
   assert.equal(saves,1);
+});
+test('industry intake cleaning normalizes useful records and blocks unusable ones',()=>{
+  const complete={organization:'示例企业',processingProduct:'NFC果汁',material:'沃柑鲜果',plannedQuantity:'20',batch:' b-0903-001 ',origin:'广西南宁',harvestDate:'2026-09-02',brix:'12.84',supplier:'示例果园',line:'榨汁线',sop:'SOP v2.1',operator:'操作员'};
+  const valid=cleanIntake(complete);
+  assert.equal(valid.valid,true);
+  assert.equal(valid.standardized.batch,'B-0903-001');
+  assert.equal(valid.standardized.brix,12.8);
+  const kilograms=cleanIntake({...complete,plannedQuantity:'20000',unit:'千克'});
+  assert.equal(kilograms.standardized.plannedQuantity,20);
+  assert.equal(kilograms.standardized.unit,'吨');
+  const invalid=cleanIntake({...complete,plannedQuantity:'无',brix:'52',origin:''});
+  assert.equal(invalid.valid,false);
+  assert.ok(invalid.missing.length>0);
+  assert.ok(invalid.issues.length>=2);
+});
+test('generated report escapes organization text and keeps chart and review caveat',()=>{
+  const report=buildReportDocument({agency:'<img onerror=alert(1)>',title:'产业报告',region:'广西',period:'2026'});
+  assert.doesNotMatch(report,/<img onerror/);
+  assert.match(report,/&lt;img onerror=alert\(1\)&gt;/);
+  assert.match(report,/bars/);
+  assert.match(report,/正式报送前须由主管单位复核/);
 });

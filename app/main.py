@@ -1181,9 +1181,18 @@ def select_product_view(view: str) -> None:
 
 def select_industry_view(view: str) -> None:
     normalized = str(view or "").strip().lower()
-    if normalized not in {"production", "supply", "demand", "match"}:
+    if normalized not in {
+        "data",
+        "production",
+        "supply",
+        "demand",
+        "match",
+        "visuals",
+        "reports",
+    }:
         return
     st.session_state.industry_workspace_view = normalized
+    st.session_state.mobile_secondary_open = False
     st.session_state.reset_main_scroll_position = True
     _set_query_value("view", "workspace")
     _set_query_value("industry", normalized)
@@ -1530,10 +1539,13 @@ def render_product_secondary_panel(view: str) -> None:
     )
     if view == "workspace":
         industry_items = (
+            ("data", "产业数据采集", "Data intake"),
             ("production", "加工能力与生产记录", "Processing records"),
             ("supply", "供应中心", "Supply center"),
             ("demand", "需求中心", "Demand center"),
-            ("match", "匹配结果", "Match results"),
+            ("match", "商业对接", "Connections"),
+            ("visuals", "产业可视化", "Visual analytics"),
+            ("reports", "报告中心", "Report center"),
         )
         active_industry = ui_product_pages.current_industry_view()
         st.markdown('<div class="secondary-section-label">页面结构</div>', unsafe_allow_html=True)

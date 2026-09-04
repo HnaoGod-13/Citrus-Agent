@@ -13,7 +13,7 @@ _ASSETS = Path(__file__).parent / "industry_workspace"
 
 
 def current_industry_view() -> str:
-    allowed = {"production", "supply", "demand", "match"}
+    allowed = {"data", "production", "supply", "demand", "match", "visuals", "reports"}
     query = st.query_params.get("industry", "")
     if isinstance(query, list):
         query = query[0] if query else ""

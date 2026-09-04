@@ -3,7 +3,7 @@ from streamlit.testing.v1 import AppTest
 
 
 def test_every_industry_route_registers_in_a_fresh_runtime():
-    for route in ('production', 'supply', 'demand', 'match'):
+    for route in ('data', 'production', 'supply', 'demand', 'match', 'visuals', 'reports'):
         app = AppTest.from_string(f'''
 import streamlit as st
 from app.ui import industry_pages
@@ -26,3 +26,24 @@ def test_sidebar_alignment_rules_cover_button_and_nested_label():
 def test_reference_photos_are_bundled_for_cloud_static_serving():
     asset = Path(__file__).parents[1] / 'app/static/industry/supply-reference.png'
     assert asset.read_bytes().startswith(b'\x89PNG\r\n\x1a\n')
+
+
+def test_industry_navigation_contains_the_meeting_modules_without_ai_guidance_copy():
+    root = Path(__file__).parents[1]
+    main = (root / 'app/main.py').read_text(encoding='utf-8')
+    workspace = (root / 'app/ui/industry_workspace/workspace.js').read_text(encoding='utf-8')
+    for label in ('产业数据采集', '商业对接', '产业可视化', '报告中心'):
+        assert label in main
+    assert 'AI引导' not in main + workspace
+    for standard in ('GB 14881—2013', 'GB 2760—2024', 'GB 2762—2025', 'GB 2763—2021'):
+        assert standard in workspace
+
+
+def test_industry_navigation_callback_accepts_every_visible_workspace_route():
+    source = (Path(__file__).parents[1] / 'app/main.py').read_text(encoding='utf-8')
+    callback = source.split('def select_industry_view', 1)[1].split(
+        'def toggle_mobile_secondary_panel', 1
+    )[0]
+    for route in ('data', 'production', 'supply', 'demand', 'match', 'visuals', 'reports'):
+        assert f'"{route}"' in callback
+    assert 'st.session_state.mobile_secondary_open = False' in callback
