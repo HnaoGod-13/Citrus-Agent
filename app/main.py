@@ -1594,7 +1594,6 @@ def render_sidebar(view: str = "chat") -> tuple[str, bool, bytes | None, str, st
             f"""
             <div class="sidebar-brand">
                 <div>
-                    <div class="brand-subtitle">CITRUS AI · DECISION LAB</div>
                     <div class="brand-title">Citrus Assistant</div>
                 </div>
             </div>

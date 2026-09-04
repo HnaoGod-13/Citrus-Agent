@@ -255,6 +255,7 @@ class DesignSystemRegressionTests(unittest.TestCase):
 
     def test_desktop_sidebar_brand_aligns_with_the_primary_brand(self) -> None:
         css = CSS_PATH.read_text(encoding="utf-8-sig")
+        main = MAIN_PATH.read_text(encoding="utf-8-sig")
         content_selector = '[data-testid="stSidebarContent"] {'
         content_start = css.index(content_selector)
         content_rule = css[content_start : css.index("}", content_start) + 1]
@@ -266,10 +267,12 @@ class DesignSystemRegressionTests(unittest.TestCase):
         self.assertIn("height: 0 !important;", header_rule)
         self.assertIn("min-height: 0 !important;", header_rule)
         self.assertIn("overflow: hidden !important;", header_rule)
+        self.assertNotIn("CITRUS AI · DECISION LAB", main)
+        title_start = css.index(".brand-title {")
+        title_rule = css[title_start : css.index("}", title_start) + 1]
+        self.assertIn("margin: 0;", title_rule)
         compact_start = css.index('@media (min-width: 900px) and (max-height: 900px) {')
         compact_rule = css[compact_start : css.index('@media (min-width: 900px) {', compact_start)]
-        self.assertIn('.sidebar-brand .brand-subtitle {', compact_rule)
-        self.assertIn('display: none;', compact_rule)
         self.assertIn('gap: 8px;', compact_rule)
 
     def test_bilingual_product_headers_keep_close_readable_secondary_copy(self) -> None:
