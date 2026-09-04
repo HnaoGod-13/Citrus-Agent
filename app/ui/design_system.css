@@ -651,7 +651,7 @@ header[data-testid="stHeader"] {
 [data-testid="stSidebar"] > div,
 [data-testid="stSidebarContent"] {
     box-sizing: border-box;
-    padding: 29px 22px 28px !important;
+    padding: 21px 22px 28px !important;
 }
 
 [data-testid="stSidebar"] [data-testid="stSidebarHeader"] {
@@ -679,6 +679,13 @@ header[data-testid="stHeader"] {
 @media (min-width: 900px) {
     [data-testid="stSidebar"] {
         transform: translateX(0) !important;
+    }
+
+    [data-testid="stSidebar"] > div,
+    [data-testid="stSidebarContent"] {
+        overflow-y: hidden !important;
+        overscroll-behavior-y: none;
+        scrollbar-width: none;
     }
 
     body:has([data-testid="stSidebar"][aria-expanded="false"]) [data-testid="stMain"] {
@@ -3864,7 +3871,7 @@ div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label)
 
     [data-testid="stSidebar"] > div,
     [data-testid="stSidebarContent"] {
-        padding: 29px 22px 24px !important;
+        padding: 21px 22px 24px !important;
     }
 
     .citrus-top-actions a span {

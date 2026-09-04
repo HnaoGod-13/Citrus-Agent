@@ -263,7 +263,7 @@ class DesignSystemRegressionTests(unittest.TestCase):
         header_start = css.index(header_selector)
         header_rule = css[header_start : css.index("}", header_start) + 1]
 
-        self.assertIn("padding: 29px 22px 28px !important;", content_rule)
+        self.assertIn("padding: 21px 22px 28px !important;", content_rule)
         self.assertIn("height: 0 !important;", header_rule)
         self.assertIn("min-height: 0 !important;", header_rule)
         self.assertIn("overflow: hidden !important;", header_rule)
@@ -274,6 +274,10 @@ class DesignSystemRegressionTests(unittest.TestCase):
         compact_start = css.index('@media (min-width: 900px) and (max-height: 900px) {')
         compact_rule = css[compact_start : css.index('@media (min-width: 900px) {', compact_start)]
         self.assertIn('gap: 8px;', compact_rule)
+        desktop_start = css.index('@media (min-width: 900px) {')
+        desktop_rule = css[desktop_start : css.index('[data-testid="stMain"] {', desktop_start)]
+        self.assertIn('overflow-y: hidden !important;', desktop_rule)
+        self.assertIn('overscroll-behavior-y: none;', desktop_rule)
 
     def test_bilingual_product_headers_keep_close_readable_secondary_copy(self) -> None:
         css = CSS_PATH.read_text(encoding="utf-8-sig")
@@ -397,7 +401,7 @@ class DesignSystemRegressionTests(unittest.TestCase):
         self.assertIn('.model-pair {', css)
         self.assertNotIn('class="status-row"', main_source)
         self.assertIn('图片会在本轮分析中自动调用视觉模型识别', main_source)
-        self.assertIn('padding: 29px 22px 28px !important;', desktop_sidebar)
+        self.assertIn('padding: 21px 22px 28px !important;', desktop_sidebar)
         self.assertIn('gap: 12px;', desktop_sidebar)
         self.assertNotIn('stSidebarUserContent', desktop_sidebar)
         self.assertIn('stSidebarHeader', desktop_sidebar)
