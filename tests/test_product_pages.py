@@ -1000,24 +1000,13 @@ with (
             product_pages._workspace_sample_row(workspace["samples"][0]),
         )
 
-    def test_workspace_page_hides_internal_identifiers_and_tool_metadata(self) -> None:
+    def test_workspace_page_omits_the_legacy_agent_activity_section(self) -> None:
         app = self._render_page("workspace")
         rendered = "\n".join(element.value for element in app.markdown)
 
-        self.assertIn("workspace-table", rendered)
-        self.assertIn('data-label="主题"', rendered)
-
-        for heading in (
-            "主题",
-            "最新结论",
-            "分析任务",
-            "主要结果",
-            "批次概况",
-            "关键指标",
-            "建议方向",
-            "质控状态",
-        ):
-            self.assertIn(heading, rendered)
+        self.assertFalse(app.exception)
+        self.assertNotIn("workspace-table", rendered)
+        self.assertNotIn("Agent 数据记录", rendered)
         for internal_value in (
             "session_alpha",
             "run_alpha",

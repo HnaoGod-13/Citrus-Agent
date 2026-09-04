@@ -674,57 +674,6 @@ def _load_workspace(path: Path, scope: _Scope) -> dict[str, Any]:
 
 def render_workspace_page() -> None:
     ui_industry_pages.render_industry_workspace()
-    with st.expander("Agent 数据记录 · 最近会话、分析运行与批次样本", expanded=False):
-        _render_workspace_activity()
-
-
-def _render_workspace_activity() -> None:
-    st.markdown(
-        '<div class="industry-existing-data-heading"><span>Agent 数据记录</span><small>Agent activity records</small></div>',
-        unsafe_allow_html=True,
-    )
-    scope = _current_scope()
-    if scope is None:
-        _render_scope_empty()
-        return
-
-    try:
-        data = _load_workspace(_memory_db_path(), scope)
-    except (FileNotFoundError, OSError, sqlite3.Error, ValueError):
-        _render_data_unavailable("工作台数据")
-        return
-
-    counts = data["counts"]
-    metric_columns = st.columns(4)
-    metric_columns[0].metric("近期会话", int(counts.get("sessions") or 0))
-    metric_columns[1].metric("已完成分析", int(counts.get("completed_runs") or 0))
-    metric_columns[2].metric("待复核批次", int(counts.get("review_samples") or 0))
-    metric_columns[3].metric("异常运行", int(counts.get("failed_runs") or 0))
-
-    sessions_tab, runs_tab, samples_tab = st.tabs(["最近会话", "分析运行", "批次样本"])
-    with sessions_tab:
-        session_rows = [_workspace_session_row(row) for row in data["sessions"]]
-        _render_table(
-            session_rows,
-            "当前账户还没有有内容的会话。",
-            variant="workspace",
-        )
-
-    with runs_tab:
-        run_rows = [_workspace_run_row(row) for row in data["runs"]]
-        _render_table(
-            run_rows,
-            "当前账户还没有分析运行记录。",
-            variant="workspace",
-        )
-
-    with samples_tab:
-        sample_rows = [_workspace_sample_row(row) for row in data["samples"]]
-        _render_table(
-            sample_rows,
-            "当前账户还没有保存的批次样本。",
-            variant="workspace",
-        )
 
 
 def current_industry_view() -> str:

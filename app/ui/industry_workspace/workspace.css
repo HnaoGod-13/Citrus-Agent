@@ -24,7 +24,7 @@
 .iw .btn:hover:not(:disabled) { background:#f2f2f4; }
 .iw .btn.primary { background:#080808; color:white; border-color:#080808; }
 .iw .btn.primary:hover:not(:disabled) { background:#2c2c2c; }
-.iw .btn.flat { border:0; padding:8px 0; justify-content:flex-start; }
+.iw .btn.flat { width:fit-content; border:0; padding:8px 12px; justify-content:flex-start; }
 .iw .btn.full { width:100%; }
 .iw .stats { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:18px; margin-bottom:18px; }
 .iw .stat { min-height:88px; display:flex; align-items:center; gap:22px; border:1px solid var(--line); border-radius:8px; padding:15px 23px; background:white; }
