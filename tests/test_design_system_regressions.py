@@ -253,6 +253,25 @@ class DesignSystemRegressionTests(unittest.TestCase):
         self.assertIn("--main-pad-start: 36px;", css)
         self.assertIn("--main-pad-end: 36px;", css)
 
+    def test_desktop_sidebar_brand_aligns_with_the_primary_brand(self) -> None:
+        css = CSS_PATH.read_text(encoding="utf-8-sig")
+        content_selector = '[data-testid="stSidebarContent"] {'
+        content_start = css.index(content_selector)
+        content_rule = css[content_start : css.index("}", content_start) + 1]
+        header_selector = '[data-testid="stSidebar"] [data-testid="stSidebarHeader"] {'
+        header_start = css.index(header_selector)
+        header_rule = css[header_start : css.index("}", header_start) + 1]
+
+        self.assertIn("padding: 29px 22px 28px !important;", content_rule)
+        self.assertIn("height: 0 !important;", header_rule)
+        self.assertIn("min-height: 0 !important;", header_rule)
+        self.assertIn("overflow: hidden !important;", header_rule)
+        compact_start = css.index('@media (min-width: 900px) and (max-height: 900px) {')
+        compact_rule = css[compact_start : css.index('@media (min-width: 900px) {', compact_start)]
+        self.assertIn('.sidebar-brand .brand-subtitle {', compact_rule)
+        self.assertIn('display: none;', compact_rule)
+        self.assertIn('gap: 8px;', compact_rule)
+
     def test_bilingual_product_headers_keep_close_readable_secondary_copy(self) -> None:
         css = CSS_PATH.read_text(encoding="utf-8-sig")
         selector = ".product-page-header .product-page-subtitle-en {"
@@ -375,10 +394,10 @@ class DesignSystemRegressionTests(unittest.TestCase):
         self.assertIn('.model-pair {', css)
         self.assertNotIn('class="status-row"', main_source)
         self.assertIn('图片会在本轮分析中自动调用视觉模型识别', main_source)
-        self.assertIn('padding: 16px 22px 28px !important;', desktop_sidebar)
+        self.assertIn('padding: 29px 22px 28px !important;', desktop_sidebar)
         self.assertIn('gap: 12px;', desktop_sidebar)
         self.assertNotIn('stSidebarUserContent', desktop_sidebar)
-        self.assertNotIn('stSidebarHeader', desktop_sidebar)
+        self.assertIn('stSidebarHeader', desktop_sidebar)
         self.assertIn('padding: 0 0 4px;', secondary_panel)
         self.assertIn('margin: 15px 0 0;', secondary_panel)
         self.assertIn('margin: 24px 0 12px;', secondary_panel)

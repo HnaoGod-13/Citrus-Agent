@@ -651,7 +651,15 @@ header[data-testid="stHeader"] {
 [data-testid="stSidebar"] > div,
 [data-testid="stSidebarContent"] {
     box-sizing: border-box;
-    padding: 16px 22px 28px !important;
+    padding: 29px 22px 28px !important;
+}
+
+[data-testid="stSidebar"] [data-testid="stSidebarHeader"] {
+    height: 0 !important;
+    min-height: 0 !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+    pointer-events: none !important;
 }
 
 [data-testid="stSidebar"] [data-testid="stVerticalBlock"] {
@@ -660,6 +668,20 @@ header[data-testid="stHeader"] {
 
 [data-testid="stSidebar"] [data-testid="stSidebarCollapseButton"] {
     display: none !important;
+}
+
+@media (min-width: 900px) and (max-height: 900px) {
+    .sidebar-brand .brand-subtitle {
+        display: none;
+    }
+
+    .sidebar-brand .brand-title {
+        margin-top: 0;
+    }
+
+    [data-testid="stSidebar"] [data-testid="stVerticalBlock"] {
+        gap: 8px;
+    }
 }
 
 @media (min-width: 900px) {
@@ -3843,7 +3865,7 @@ div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label)
 
     [data-testid="stSidebar"] > div,
     [data-testid="stSidebarContent"] {
-        padding: 16px 22px 24px !important;
+        padding: 29px 22px 24px !important;
     }
 
     .citrus-top-actions a span {
