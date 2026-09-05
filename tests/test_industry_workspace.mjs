@@ -66,3 +66,29 @@ test('generated report escapes organization text and keeps chart and review cave
   assert.match(report,/bars/);
   assert.match(report,/正式报送前须由主管单位复核/);
 });
+test('business report carries unit template metadata and completed work summary',()=>{
+  const report=buildReportDocument({
+    agency:'某县农业农村局',
+    department:'产业发展科',
+    preparedBy:'张三',
+    title:'柑橘产业工作报告',
+    reportType:'业务工作报告',
+    templateFile:'单位模板.docx',
+    period:'2026年9月',
+    region:'重庆',
+  },{
+    batch:'B-0905-001',
+    material:'脐橙 · 重庆奉节',
+    quantity:'30 吨',
+    processing:'NFC 柑橘汁 · 榨汁线 A · SOP v3.0',
+    demand:'NFC 果汁原料采购',
+    matches:'2 个',
+    connections:'1 个',
+    dataScore:'96/100',
+    issues:['检测报告待复核']
+  });
+  assert.match(report,/单位模板：单位模板\.docx/);
+  assert.match(report,/B-0905-001/);
+  assert.match(report,/NFC 柑橘汁 · 榨汁线 A · SOP v3\.0/);
+  assert.match(report,/检测报告待复核/);
+});

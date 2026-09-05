@@ -1571,7 +1571,7 @@ def render_product_secondary_panel(view: str) -> None:
             unsafe_allow_html=True,
         )
     panel_note = (
-        "当前为产业工作台演示数据；保存和对接操作仅保留在本次会话中。"
+        "当前为产业工作台预览；保存和对接操作仅保留在本次会话中。"
         if view == "workspace"
         else "页面数据为只读视图。Agent、模型配置与知识库内容不会在这里被静默修改。"
     )

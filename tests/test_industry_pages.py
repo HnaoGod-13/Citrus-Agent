@@ -46,6 +46,7 @@ def test_industry_navigation_contains_the_meeting_modules_without_ai_guidance_co
     for label in ('产业数据采集', '商业对接', '产业可视化', '报告中心'):
         assert label in main
     assert 'AI引导' not in main + workspace
+    assert '设计示例 · 演示数据' not in workspace
     for standard in ('GB 14881—2013', 'GB 2760—2024', 'GB 2762—2025', 'GB 2763—2021'):
         assert standard in workspace
 

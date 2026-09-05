@@ -46,7 +46,7 @@ export function bindWorkspaceEvents(root, handlers) {
 const defaultRequest={name:'NFC 果汁加工原料采购',material:'沃柑鲜果',use:'榨汁加工',region:'广西及周边',quantity:'15—25',brix:'12.0',delivery:'2026-09-10',destination:'南宁 · 示例工厂',budget:'面议',report:true,checklist:'',preferences:['完整投入品记录','可寄样','稳定供货'],published:false};
 const requiredIntake=['organization','processingProduct','material','plannedQuantity','batch','origin','harvestDate','brix','supplier','line','sop','operator'];
 const defaultIntake={organization:'广西示例果汁企业',license:'SC45••••••••',processingProduct:'NFC 柑橘汁',material:'沃柑鲜果',plannedQuantity:'20',unit:'吨',arrivalDate:'2026-09-10',batch:'B-0903-001',origin:'广西南宁武鸣',harvestDate:'2026-09-02',brix:'12.8',supplier:'武鸣示例果园',inspectionReport:'农残检测报告待上传',fertilizerSupplier:'示例农资公司',fertilizerBrand:'柑橘专用肥 A',line:'榨汁线 B',sop:'企业 SOP v2.1',processStart:'2026-09-10T08:30',washWater:'生产用水检测合格',temperature:'4',additive:'未使用',operator:'生产员 D'};
-const defaultReport={agency:'广西某农业农村局',title:'柑橘产业运行与加工提升分析报告',region:'广西',period:'2026 年度',generated:false};
+const defaultReport={agency:'广西某农业农村局',department:'产业发展科',preparedBy:'业务经办人',title:'柑橘产业业务工作报告',region:'广西',period:'2026 年度',reportType:'业务工作报告',template:'通用业务工作报告模板',templateFile:'',purpose:'汇总本次 Agent 辅助完成的业务工作，形成可复核、可流转的工作成果。',generated:false,generatedAt:''};
 const tradeCandidates=[
   {id:'SD-01',seller:'山东临沂示例合作社',origin:'山东临沂',material:'柑橘鲜果',quantity:90,brix:12.4,arrival:'11.12',docs:'完整',score:91,label:'优先推荐'},
   {id:'JX-02',seller:'江西赣州示例果业',origin:'江西赣州',material:'脐橙鲜果',quantity:120,brix:12.2,arrival:'11.14',docs:'完整',score:88,label:'备选'},
@@ -67,9 +67,13 @@ export function cleanIntake(value) {
   const standardized={...data,batch:normalizedBatch,plannedQuantity:quantityInTons,unit:'吨',brix:Number.isFinite(brix)?Number(brix.toFixed(1)):null};
   return {missing,issues,standardized,valid:missing.length===0&&issues.length===0,score:Math.max(0,Math.round(100-missing.length*7-issues.length*10))};
 }
-export function buildReportDocument(value) {
+export function buildReportDocument(value, work={}) {
   const report={...defaultReport,...value};
-  return '<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>'+esc(report.title)+'</title><style>body{font:16px/1.8 sans-serif;max-width:900px;margin:48px auto;color:#111}h1{text-align:center}small{color:#666}.bars{display:flex;align-items:end;height:180px;gap:36px;border-bottom:1px solid #999}.bar{width:80px;background:#222;color:#fff;text-align:center;padding-top:8px}</style><body><h1>'+esc(report.title)+'</h1><p style="text-align:center">'+esc(report.agency)+' · '+esc(report.period)+'</p><h2>一、产业运行概况</h2><p>'+esc(report.region)+'柑橘产业示例数据表明，鲜果供应、加工转化和跨区域采购可通过统一批次字段衔接。本报告中的数值为演示数据，正式报送前须由主管单位复核。</p><h2>二、示例产量图</h2><div class="bars"><div class="bar" style="height:58%">2022<br>86</div><div class="bar" style="height:68%">2023<br>101</div><div class="bar" style="height:74%">2024<br>110</div><div class="bar" style="height:82%">2025<br>122</div><div class="bar" style="height:88%">2026<br>131</div></div><small>单位：万吨；以上为界面演示数据，不作为统计发布依据。</small><h2>三、加工与供需分析</h2><p>建议优先完善原料批次、检测证据、加工参数与产销需求的标准化采集，建立缺失数据不参与推荐、异常数据进入复核的治理规则。</p><h2>四、工作建议</h2><ol><li>建立柑橘批次统一编码和追溯字段。</li><li>形成加工企业原料需求与跨区域供应清单。</li><li>按季度更新产量、加工率与成交转化指标。</li></ol><p><small>生成时间：'+new Date().toLocaleString('zh-CN')+'</small></p></body></html>';
+  const summary={batch:'待补充',material:'待补充',quantity:'待补充',quality:'待核验',processing:'待补充',demand:'待补充',matches:'0 个',connections:'0 个',dataScore:'待评估',issues:['正式使用前请复核事实、检测原件、审批意见与责任人。'],...work};
+  const template=report.templateFile?`单位模板：${report.templateFile}`:report.template;
+  const issues=(summary.issues?.length?summary.issues:['当前未识别到待补事项。']).map(item=>`<li>${esc(item)}</li>`).join('');
+  const generatedAt=report.generatedAt||new Date().toLocaleString('zh-CN');
+  return '<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>'+esc(report.title)+'</title><style>@page{margin:24mm}body{font:16px/1.85 "Microsoft YaHei",sans-serif;max-width:900px;margin:48px auto;color:#161616}h1{text-align:center;font-size:30px;margin:72px 0 18px}h2{margin-top:32px;padding-bottom:8px;border-bottom:1px solid #bbb;font-size:20px}h3{font-size:17px;margin:22px 0 8px}p{margin:8px 0}.meta{text-align:center;color:#555}.summary{width:100%;border-collapse:collapse;margin:16px 0}.summary th,.summary td{padding:10px 12px;border:1px solid #bbb;text-align:left}.summary th{width:22%;background:#f4f4f4}.sign{margin-top:48px;text-align:right}.note{color:#555;font-size:13px}.workflow{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:16px 0}.workflow span{padding:12px;border:1px solid #bbb;text-align:center;background:#fafafa}.bars{display:flex;align-items:end;height:180px;gap:24px;border-bottom:1px solid #999;margin:16px 0}.bar{width:76px;background:#333;color:#fff;text-align:center;padding-top:8px}</style><body><h1>'+esc(report.title)+'</h1><p class="meta">'+esc(report.agency)+' · '+esc(report.department)+'<br>'+esc(report.period)+' · '+esc(report.region)+'</p><h2>一、报告说明</h2><table class="summary"><tr><th>报告类型</th><td>'+esc(report.reportType)+'</td></tr><tr><th>采用模板</th><td>'+esc(template)+'</td></tr><tr><th>经办人员</th><td>'+esc(report.preparedBy)+'</td></tr><tr><th>工作目的</th><td>'+esc(report.purpose)+'</td></tr></table><p class="note">本报告由系统依据本次工作过程形成初稿。事实数据、检测结论、合同条件和审批意见须由使用单位复核后定稿。</p><h2>二、本次工作完成情况</h2><div class="workflow"><span>数据采集与清洗</span><span>加工过程记录</span><span>供需匹配分析</span><span>成果汇总成文</span></div><table class="summary"><tr><th>原料批次</th><td>'+esc(summary.batch)+'</td></tr><tr><th>原料与数量</th><td>'+esc(summary.material)+' · '+esc(summary.quantity)+'</td></tr><tr><th>质量信息</th><td>'+esc(summary.quality)+'</td></tr><tr><th>加工任务</th><td>'+esc(summary.processing)+'</td></tr><tr><th>采购需求</th><td>'+esc(summary.demand)+'</td></tr><tr><th>数据质量</th><td>'+esc(summary.dataScore)+'</td></tr></table><h2>三、业务分析结果</h2><h3>（一）原料与批次情况</h3><p>本次工作围绕批次 '+esc(summary.batch)+' 开展，原料信息为 '+esc(summary.material)+'，计划处理数量为 '+esc(summary.quantity)+'。现有质量信息：'+esc(summary.quality)+'。</p><h3>（二）加工与过程管理</h3><p>'+esc(summary.processing)+'。生产参数、SOP 版本及放行结论应以单位批准记录为准。</p><h3>（三）供需匹配与对接</h3><p>当前需求为“'+esc(summary.demand)+'”，系统筛得 '+esc(summary.matches)+' 候选，已形成 '+esc(summary.connections)+' 对接申请或草稿。匹配结果仅用于业务筛选，价格、运费、验收及合同条款须由双方确认。</p><h2>四、图表与业务趋势</h2><div class="bars"><div class="bar" style="height:45%">采集<br>16</div><div class="bar" style="height:58%">加工<br>3</div><div class="bar" style="height:72%">匹配<br>'+esc(summary.matches)+'</div><div class="bar" style="height:86%">报告<br>1</div></div><p class="note">图表用于说明本次工作成果结构；正式报送前须由主管单位复核统计口径。</p><h2>五、风险与待补事项</h2><ul>'+issues+'</ul><h2>六、工作成效</h2><ol><li>形成一套可追溯的原料批次与加工任务底稿。</li><li>将供应、需求和匹配条件统一到可核验字段。</li><li>形成可供内部流转、会议汇报或后续报送使用的业务报告初稿。</li></ol><h2>七、下一步工作计划</h2><ol><li>补齐缺失字段、检测原件、审批意见和责任人签字。</li><li>由业务部门复核关键结论，必要时调整单位自有模板和章节。</li><li>经审核后形成正式版本，并将行动项纳入后续跟踪。</li></ol><p class="sign">经办人：'+esc(report.preparedBy)+'<br>生成时间：'+esc(generatedAt)+'</p></body></html>';
 }
 const candidates=[
   {id:'A',place:'广西南宁',batch:'B-0903-001',quantity:20,brix:12.8,arrival:'2026-09-08',report:true,preferences:['完整投入品记录','可寄样']},
@@ -99,7 +103,7 @@ const button=(label,action,primary=false,icon='',extra='')=>`<button type="butto
 const pill=(text,tone='')=>`<span class="pill ${tone}">${esc(text)}</span>`;
 const field=(name,value,label,type='text',extra='')=>`<input name="${name}" aria-label="${esc(label)}" type="${type}" value="${esc(value)}" ${extra}>`;
 const select=(name,value,label,options)=>`<select name="${name}" aria-label="${esc(label)}">${options.map(o=>`<option${value===o?' selected':''}>${esc(o)}</option>`).join('')}</select>`;
-const header=(code,title,desc)=>`<header class="page-head"><div class="eyebrow">CITRUS AI · ${code}</div><h1>${title}</h1><p class="subtitle">${desc}</p><span class="demo-badge">设计示例 · 演示数据</span></header>`;
+const header=(code,title,desc)=>`<header class="page-head"><div class="eyebrow">CITRUS AI · ${code}</div><h1>${title}</h1><p class="subtitle">${desc}</p></header>`;
 const notice=(title,text)=>`<aside class="notice">${svg('info',19)}<div><strong>${title}</strong>${text?`<p>${text}</p>`:''}</div></aside>`;
 const tabs=(items,current)=>`<div class="tabs" role="tablist">${items.map((t,i)=>`<button type="button" role="tab" class="tab${current===i?' active':''}" aria-selected="${current===i}" data-tab="${i}">${t}</button>`).join('')}</div>`;
 const stats=items=>`<div class="stats">${items.map(([icon,label,value])=>`<div class="stat">${svg(icon,34)}<div><span>${label}</span><strong>${value}</strong></div></div>`).join('')}</div>`;
@@ -207,15 +211,40 @@ export default function(component) {
     return header('CONNECTIONS','商业对接','连接跨区域原料供应与加工需求，先筛条件再谈交易')+`<div class="toolbar">${tabs(['当前需求匹配','跨区域商机','对接记录'],tab)}</div>`+(tab===0?current:tab===1?trade:records)+(tab===0?notice('匹配建议不等于检测放行；原件与联系人需双方授权后查看。',''):'')+'<p class="footnote">规则版本 v1.1 · 演示数据 · 2026.09</p>';
   }
 
+  function reportWorkSummary() {
+    const intake=model.intake||defaultIntake;
+    const audit=model.intakeAudit||cleanIntake(intake);
+    const request=model.request||defaultRequest;
+    const fitCount=candidates.filter(c=>evaluateCandidate(c,request).fit).length;
+    const tradeCount=tradeCandidates.filter(c=>c.score).length;
+    const issues=[...audit.missing.map(key=>`缺少必填字段：${key}`),...audit.issues];
+    if(!String(intake.inspectionReport||'').trim()||String(intake.inspectionReport).includes('待上传'))issues.push('检测报告尚未完成原件核验。');
+    return {
+      batch:intake.batch||'待补充',
+      material:`${intake.material||'待补充'} · ${intake.origin||'产地待补充'}`,
+      quantity:intake.plannedQuantity?`${intake.plannedQuantity} ${intake.unit||'吨'}`:'待补充',
+      quality:intake.brix?`${intake.brix} °Brix · ${intake.inspectionReport||'检测待补充'}`:'待补充',
+      processing:intake.processingProduct?`${intake.processingProduct} · ${intake.line||'产线待补充'} · ${intake.sop||'SOP 待补充'}`:'待补充',
+      demand:request.name||'尚未填写采购需求',
+      matches:`${fitCount+tradeCount} 个`,
+      connections:`${(model.connections||[]).length+(model.tradeConnections||[]).length} 个`,
+      dataScore:`${audit.score}/100`,
+      issues
+    };
+  }
+
   function reportPreview() {
     const r=model.report;
-    return `<div class="report-paper"><div class="report-cover"><span>${esc(r.agency)}</span><h2>${esc(r.title)}</h2><p>${esc(r.period)} · ${esc(r.region)}</p></div><div class="report-body"><h3>核心结论</h3><p>以标准化批次数据连接原料供应、加工能力与采购需求，形成可追溯的产业决策底座。</p><h3>示例产量趋势</h3><div class="mini-bars" role="img" aria-label="2022年至2026年柑橘示例产量逐年增长"><i style="height:52%"><b>86</b><span>2022</span></i><i style="height:62%"><b>101</b><span>2023</span></i><i style="height:70%"><b>110</b><span>2024</span></i><i style="height:80%"><b>122</b><span>2025</span></i><i style="height:88%"><b>131</b><span>2026</span></i></div><small>单位：万吨 · 界面演示数据，正式报送前须复核</small><h3>报告结构</h3><ol><li>产业运行概况与数据说明</li><li>原料供应、加工能力与需求分析</li><li>区域流向、问题诊断与风险提示</li><li>政策建议、企业行动清单与附录</li></ol></div></div>`;
+    const s=reportWorkSummary();
+    return `<div class="report-paper"><div class="report-cover"><span>${esc(r.agency)} · ${esc(r.department||'')}</span><h2>${esc(r.title)}</h2><p>${esc(r.period)} · ${esc(r.region)} · ${esc(r.reportType||'业务工作报告')}</p>${r.generated?'<b class="report-generated-mark">已生成工作报告初稿</b>':''}</div><div class="report-body"><h3>报告摘要</h3><p>本报告汇总本次 Agent 工作过程中形成的原料批次、加工过程、供需需求、匹配结果及图表成果，供单位内部复核、会议汇报和后续流转使用。</p><h3>本次工作完成情况</h3><div class="report-summary-list"><div><span>批次</span><b>${esc(s.batch)}</b></div><div><span>原料与数量</span><b>${esc(s.material)} · ${esc(s.quantity)}</b></div><div><span>加工任务</span><b>${esc(s.processing)}</b></div><div><span>供需匹配</span><b>${esc(s.matches)} · 对接草稿 ${esc(s.connections)}</b></div></div><h3>报告结构</h3><ol><li>报告说明与工作范围</li><li>本次工作完成情况与数据底稿</li><li>业务分析结果与图表</li><li>风险待办、行动计划与附录</li></ol><small>正式定稿前须由使用单位复核事实、检测原件、统计口径和审批意见。</small></div></div>`;
   }
   function reports() {
     const r=model.report;
-    const editor=`<div class="report-layout"><form id="report-form" class="panel report-editor"><div class="section-heading"><h2>报告配置</h2><small>面向农业农村局、产业协会和加工企业</small></div><label>使用单位${field('agency',r.agency,'使用单位')}</label><label>报告标题${field('title',r.title,'报告标题')}</label><div class="report-fields"><label>统计区域${field('region',r.region,'统计区域')}</label><label>报告周期${field('period',r.period,'报告周期')}</label></div><h3>已纳入的有效数据</h3><div class="source-checks"><span>${svg('check',16)} 原料与批次数据</span><span>${svg('check',16)} 加工记录与产线能力</span><span>${svg('check',16)} 供需与对接结果</span><span>${svg('check',16)} 产量趋势与区域流向图</span></div><div class="evidence-note">事实、演示数据和建议分层标注；缺少来源的数据不会自动写成确定结论。</div></form><aside id="report-preview" class="panel report-preview">${reportPreview()}</aside></div>`;
-    const archive=`<div class="report-grid"><article class="panel report-item"><div>${svg('file',28)}<h2>柑橘产业运行与加工提升分析报告</h2><p>广西某农业农村局 · 2026 年度</p></div>${pill(r.generated?'本次会话已生成':'示例模板',r.generated?'black':'')}${button('查看报告','view-report')}</article><article class="panel report-item"><div>${svg('clipboard',28)}<h2>柑橘加工企业原料验收规范</h2><p>企业规范模板 · 待配置</p></div>${pill('模板')}${button('使用模板','use-enterprise-report')}</article></div>`;
-    return header('REPORTS','报告中心','把有效产业数据整理成结构完整、图文结合的政务或企业报告')+`<div class="toolbar">${tabs(['新建报告','报告记录','模板库'],tab)}<div class="actions">${button('导出报告','download-report',false,'download')}${button('生成完整报告','generate-report',true,'file')}</div></div>`+(tab===0?editor:archive);
+    const s=reportWorkSummary();
+    const editor=`<div class="report-layout"><form id="report-form" class="panel report-editor"><div class="section-heading"><h2>报告配置</h2><small>完成工作后，按单位要求生成正式业务报告</small></div><div class="report-form-grid"><label>使用单位${field('agency',r.agency,'使用单位')}</label><label>承办部门${field('department',r.department||'','承办部门')}</label><label>经办人员${field('preparedBy',r.preparedBy||'','经办人员')}</label><label>报告类型${select('reportType',r.reportType||'业务工作报告','报告类型',['业务工作报告','政策分析报告','企业规范报告','项目复盘报告'])}</label><label>报告标题${field('title',r.title,'报告标题')}</label><label>统计区域${field('region',r.region,'统计区域')}</label><label>报告周期${field('period',r.period,'报告周期')}</label><label>工作目的${field('purpose',r.purpose||'','工作目的')}</label></div><div class="template-config"><div class="section-heading"><h3>报告模板</h3><small>可先使用通用模板，也可上传单位自有模板作为编排依据</small></div><label>当前模板${select('template',r.template||'通用业务工作报告模板','当前模板',['通用业务工作报告模板','单位自定义模板'])}</label><label class="file-field">单位模板文件<input name="templateFile" aria-label="单位模板文件" type="file" accept=".doc,.docx,.pdf,.md,.html">${r.templateFile?`<small>已选择：${esc(r.templateFile)}</small>`:'<small>支持 Word、PDF、Markdown 或 HTML 模板；第一版保存文件名，后续可接入模板解析。</small>'}</label></div><h3>本次将纳入报告的有效工作成果</h3><div class="source-checks"><span>${svg('check',16)} 原料批次：${esc(s.batch)}</span><span>${svg('check',16)} 加工记录：${esc(s.processing)}</span><span>${svg('check',16)} 供需需求：${esc(s.demand)}</span><span>${svg('check',16)} 匹配结果：${esc(s.matches)}</span><span>${svg('check',16)} 数据质量：${esc(s.dataScore)}</span><span>${svg('check',16)} 图表与区域流向</span></div><div class="evidence-note">报告会把事实、分析、风险待办和行动建议分层呈现；缺少来源或未完成核验的数据会明确标注，不会被写成确定结论。</div></form><aside id="report-preview" class="panel report-preview">${reportPreview()}</aside></div>`;
+    const archive=`<div class="report-grid"><article class="panel report-item"><div>${svg('file',28)}<h2>${esc(r.title)}</h2><p>${esc(r.agency)} · ${esc(r.period)}</p></div>${pill(r.generated?'已生成初稿':'待生成',r.generated?'black':'')}${button(r.generated?'查看报告':'继续配置','view-report')}</article><article class="panel report-item"><div>${svg('clipboard',28)}<h2>单位自定义模板</h2><p>${r.templateFile?esc(r.templateFile):'尚未上传单位模板'}</p></div>${pill(r.templateFile?'已选择':'可配置')}${button('配置模板','use-enterprise-report')}</article></div>`;
+    const templateLibrary=`<div class="report-grid"><article class="panel report-item template-item"><div>${svg('file',28)}<h2>通用业务工作报告模板</h2><p>适合农业农村局、产业协会和园区运营部门；包含工作概况、数据底稿、业务结果、风险待办和行动计划。</p></div>${pill('系统模板','black')}${button('使用通用模板','view-report')}</article><article class="panel report-item template-item"><div>${svg('clipboard',28)}<h2>单位自定义模板</h2><p>由单位提供 Word、PDF、Markdown 或 HTML 模板，后续可按章节映射 Agent 的工作结果。</p></div>${pill(r.templateFile?'已上传':'待上传')}${button('上传并配置','use-enterprise-report')}</article></div>`;
+    return header('REPORTS','报告中心','将用户完成的 Agent 工作汇总为可复核、可流转、可导出的正式业务报告')+`<div class="toolbar">${tabs(['生成报告','报告记录','模板库'],tab)}<div class="actions">${button('导出业务报告','download-report',false,'download')}${button(r.generated?'重新生成初稿':'生成业务报告','generate-report',true,'file')}</div></div>`+(tab===0?editor:tab===1?archive:templateLibrary);
   }
 
   function visuals() {
@@ -226,7 +255,7 @@ export default function(component) {
   }
   function render() {
     root._view=view;root._tab=tab;root._selected=selected;root._listMode=listMode;
-    root.innerHTML=`<div class="page" data-view="${view}">${feedback?`<div class="feedback" role="status">${esc(feedback)}</div>`:''}${({data:dataCollection,production,supply,demand,match:matching,visuals,reports})[view]()}<p class="session-note">当前为演示工作台；保存、发布与对接只在本次会话模拟，不会发送给真实企业。</p></div><dialog aria-label="业务操作"></dialog>`;
+    root.innerHTML=`<div class="page" data-view="${view}">${feedback?`<div class="feedback" role="status">${esc(feedback)}</div>`:''}${({data:dataCollection,production,supply,demand,match:matching,visuals,reports})[view]()}<p class="session-note">当前工作台数据仅保留在本次会话中；正式发布前请完成单位复核。</p></div><dialog aria-label="业务操作"></dialog>`;
   }
   function modal(title,body,submit='',kind='') {
     const dialog=root.querySelector('dialog');
@@ -254,11 +283,11 @@ export default function(component) {
       downloadFile('citrus-clean-data.csv','field,value\r\n'+rows.join('\r\n'),'text/csv;charset=utf-8');return;
     }
     if(action?.startsWith('trade-')){const id=action.slice(6),candidate=tradeCandidates.find(c=>c.id===id);if(!candidate?.score)return;model.pendingTrade=id;modal('申请商业对接',`<p>${esc(candidate.seller)} · ${esc(candidate.origin)} → 重庆</p><p style="margin-top:12px">对接申请仅保存为会话草稿。提交前还需确认报价、运费、到厂验收和合同条款。</p>`,'保存对接申请','trade');return;}
-    if(action==='generate-report'){model.report.generated=true;persist();flash('完整报告已生成，可预览并导出为网页文档。');return;}
-    if(action==='download-report'){if(!model.report.generated){flash('请先生成完整报告，再执行导出。');return;}downloadFile('柑橘产业运行与加工提升分析报告.html',buildReportDocument(model.report),'text/html;charset=utf-8');return;}
+    if(action==='generate-report'){model.report.generated=true;model.report.generatedAt=new Date().toLocaleString('zh-CN');persist();flash('业务报告初稿已生成，可在右侧预览并导出。');return;}
+    if(action==='download-report'){if(!model.report.generated){flash('请先生成业务报告初稿，再执行导出。');return;}const fileName=(model.report.title||'柑橘产业业务工作报告').replace(/[\\/:*?"<>|]/g,'_');downloadFile(`${fileName}.html`,buildReportDocument(model.report,reportWorkSummary()),'text/html;charset=utf-8');return;}
     if(action==='download-chart'){downloadFile('柑橘产量示例数据.csv','年份,产量（万吨）\r\n2022,86\r\n2023,101\r\n2024,110\r\n2025,122\r\n2026,131','text/csv;charset=utf-8');return;}
     if(action==='view-report'){tab=0;render();return;}
-    if(action==='use-enterprise-report'){model.report.title='柑橘加工企业原料验收规范';model.report.agency='示例加工企业';model.report.generated=false;tab=0;persist();render();return;}
+    if(action==='use-enterprise-report'){model.report.title='柑橘加工企业原料验收规范';model.report.agency='本单位';model.report.reportType='企业规范报告';model.report.template='单位自定义模板';model.report.generated=false;tab=0;persist();render();return;}
     if(action==='save-demand'){persist();flash('需求草稿已保存到本次会话，可继续修改或查看匹配。');return;}
     if(action==='publish-demand') {
       const r=model.request;
@@ -286,7 +315,7 @@ export default function(component) {
     const el=event.target;
     if(el.name==='supply-search'){root.querySelector('#supply-results').innerHTML=supplyResults();return;}
     if(el.closest('#intake-form')&&el.name){model.intake[el.name]=el.value;model.intakeAudit=null;const progress=root.querySelector('#intake-progress');if(progress)progress.innerHTML=intakeProgress();return;}
-    if(el.closest('#report-form')&&el.name){model.report[el.name]=el.value;model.report.generated=false;const preview=root.querySelector('#report-preview');if(preview)preview.innerHTML=reportPreview();return;}
+    if(el.closest('#report-form')&&el.name){if(el.type==='file')return;model.report[el.name]=el.value;model.report.generated=false;const preview=root.querySelector('#report-preview');if(preview)preview.innerHTML=reportPreview();return;}
     if(!el.closest('#demand-form')||!el.name||el.type==='file')return;
     model.request[el.name]=el.type==='checkbox'?el.checked:el.value;
     model.request.published=false;
@@ -295,7 +324,8 @@ export default function(component) {
   function onChange(event) {
     const el=event.target;
     if(['supply-type','supply-status'].includes(el.name)){root.querySelector('#supply-results').innerHTML=supplyResults();return;}
-    if(el.closest('#intake-form')||el.closest('#report-form')){onInput(event);persist();return;}
+    if(el.closest('#intake-form')){onInput(event);persist();return;}
+    if(el.closest('#report-form')){if(el.name==='templateFile'){model.report.templateFile=el.files?.[0]?.name||'';model.report.generated=false;}else onInput(event);persist();const preview=root.querySelector('#report-preview');if(preview)preview.innerHTML=reportPreview();return;}
     if(el.closest('#demand-form')){
       if(el.name==='checklist'){model.request.published=false;model.request.checklist=el.files[0]?.name||'';root.querySelector('#preview').innerHTML=preview();}
       else onInput(event);
