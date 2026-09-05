@@ -4673,8 +4673,14 @@ div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label)
     background: var(--hover) !important;
 }
 
-[class*="st-key-workspace_industry_nav"] [data-testid="stBaseButton-primary"] {
+[class*="st-key-workspace_industry_nav"] [data-testid="stButton"] > button[data-testid="stBaseButton-primary"] {
     background: var(--active) !important;
+}
+
+[class*="st-key-workspace_industry_nav"] [data-testid="stButton"] > button[data-testid="stBaseButton-primary"]:hover {
+    background: var(--active) !important;
+    border-color: transparent !important;
+    transform: none;
 }
 
 [class*="st-key-workspace_industry_nav"] [data-testid="stButton"] > button p {

@@ -23,6 +23,17 @@ def test_sidebar_alignment_rules_cover_button_and_nested_label():
     assert '[class*="st-key-workspace_industry_nav"] [data-testid="stMarkdownContainer"]' in css
 
 
+def test_current_industry_navigation_button_keeps_the_active_background():
+    css = (Path(__file__).parents[1] / 'app/ui/design_system.css').read_text(encoding='utf-8')
+    selector = (
+        '[class*="st-key-workspace_industry_nav"] [data-testid="stButton"] '
+        '> button[data-testid="stBaseButton-primary"] {'
+    )
+    start = css.index(selector)
+    rule = css[start:css.index('}', start)]
+    assert 'background: var(--active) !important' in rule
+
+
 def test_reference_photos_are_bundled_for_cloud_static_serving():
     asset = Path(__file__).parents[1] / 'app/static/industry/supply-reference.png'
     assert asset.read_bytes().startswith(b'\x89PNG\r\n\x1a\n')
