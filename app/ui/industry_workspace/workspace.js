@@ -73,7 +73,7 @@ export function buildReportDocument(value, work={}) {
   const template=report.templateFile?`单位模板：${report.templateFile}`:report.template;
   const issues=(summary.issues?.length?summary.issues:['当前未识别到待补事项。']).map(item=>`<li>${esc(item)}</li>`).join('');
   const generatedAt=report.generatedAt||new Date().toLocaleString('zh-CN');
-  return '<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>'+esc(report.title)+'</title><style>@page{margin:24mm}body{font:16px/1.85 "Microsoft YaHei",sans-serif;max-width:900px;margin:48px auto;color:#161616}h1{text-align:center;font-size:30px;margin:72px 0 18px}h2{margin-top:32px;padding-bottom:8px;border-bottom:1px solid #bbb;font-size:20px}h3{font-size:17px;margin:22px 0 8px}p{margin:8px 0}.meta{text-align:center;color:#555}.summary{width:100%;border-collapse:collapse;margin:16px 0}.summary th,.summary td{padding:10px 12px;border:1px solid #bbb;text-align:left}.summary th{width:22%;background:#f4f4f4}.sign{margin-top:48px;text-align:right}.note{color:#555;font-size:13px}.workflow{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:16px 0}.workflow span{padding:12px;border:1px solid #bbb;text-align:center;background:#fafafa}.bars{display:flex;align-items:end;height:180px;gap:24px;border-bottom:1px solid #999;margin:16px 0}.bar{width:76px;background:#333;color:#fff;text-align:center;padding-top:8px}</style><body><h1>'+esc(report.title)+'</h1><p class="meta">'+esc(report.agency)+' · '+esc(report.department)+'<br>'+esc(report.period)+' · '+esc(report.region)+'</p><h2>一、报告说明</h2><table class="summary"><tr><th>报告类型</th><td>'+esc(report.reportType)+'</td></tr><tr><th>采用模板</th><td>'+esc(template)+'</td></tr><tr><th>经办人员</th><td>'+esc(report.preparedBy)+'</td></tr><tr><th>工作目的</th><td>'+esc(report.purpose)+'</td></tr></table><p class="note">本报告由系统依据本次工作过程形成初稿。事实数据、检测结论、合同条件和审批意见须由使用单位复核后定稿。</p><h2>二、本次工作完成情况</h2><div class="workflow"><span>数据采集与清洗</span><span>加工过程记录</span><span>供需匹配分析</span><span>成果汇总成文</span></div><table class="summary"><tr><th>原料批次</th><td>'+esc(summary.batch)+'</td></tr><tr><th>原料与数量</th><td>'+esc(summary.material)+' · '+esc(summary.quantity)+'</td></tr><tr><th>质量信息</th><td>'+esc(summary.quality)+'</td></tr><tr><th>加工任务</th><td>'+esc(summary.processing)+'</td></tr><tr><th>采购需求</th><td>'+esc(summary.demand)+'</td></tr><tr><th>数据质量</th><td>'+esc(summary.dataScore)+'</td></tr></table><h2>三、业务分析结果</h2><h3>（一）原料与批次情况</h3><p>本次工作围绕批次 '+esc(summary.batch)+' 开展，原料信息为 '+esc(summary.material)+'，计划处理数量为 '+esc(summary.quantity)+'。现有质量信息：'+esc(summary.quality)+'。</p><h3>（二）加工与过程管理</h3><p>'+esc(summary.processing)+'。生产参数、SOP 版本及放行结论应以单位批准记录为准。</p><h3>（三）供需匹配与对接</h3><p>当前需求为“'+esc(summary.demand)+'”，系统筛得 '+esc(summary.matches)+' 候选，已形成 '+esc(summary.connections)+' 对接申请或草稿。匹配结果仅用于业务筛选，价格、运费、验收及合同条款须由双方确认。</p><h2>四、图表与业务趋势</h2><div class="bars"><div class="bar" style="height:45%">采集<br>16</div><div class="bar" style="height:58%">加工<br>3</div><div class="bar" style="height:72%">匹配<br>'+esc(summary.matches)+'</div><div class="bar" style="height:86%">报告<br>1</div></div><p class="note">图表用于说明本次工作成果结构；正式报送前须由主管单位复核统计口径。</p><h2>五、风险与待补事项</h2><ul>'+issues+'</ul><h2>六、工作成效</h2><ol><li>形成一套可追溯的原料批次与加工任务底稿。</li><li>将供应、需求和匹配条件统一到可核验字段。</li><li>形成可供内部流转、会议汇报或后续报送使用的业务报告初稿。</li></ol><h2>七、下一步工作计划</h2><ol><li>补齐缺失字段、检测原件、审批意见和责任人签字。</li><li>由业务部门复核关键结论，必要时调整单位自有模板和章节。</li><li>经审核后形成正式版本，并将行动项纳入后续跟踪。</li></ol><p class="sign">经办人：'+esc(report.preparedBy)+'<br>生成时间：'+esc(generatedAt)+'</p></body></html>';
+  return '<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>'+esc(report.title)+'</title><style>@page{margin:24mm}body{font:16px/1.85 "Microsoft YaHei",sans-serif;max-width:900px;margin:48px auto;color:#161616}h1{text-align:center;font-size:30px;margin:72px 0 18px}h2{margin-top:32px;padding-bottom:8px;border-bottom:1px solid #bbb;font-size:20px}h3{font-size:17px;margin:22px 0 8px}p{margin:8px 0}.meta{text-align:center;color:#555}.summary{width:100%;border-collapse:collapse;margin:16px 0}.summary th,.summary td{padding:10px 12px;border:1px solid #bbb;text-align:left}.summary th{width:22%;background:#f4f4f4}.sign{margin-top:48px;text-align:right}.note{color:#555;font-size:13px}.workflow{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:16px 0}.workflow span{padding:12px;border:1px solid #bbb;text-align:center;background:#fafafa}</style><body><h1>'+esc(report.title)+'</h1><p class="meta">'+esc(report.agency)+' · '+esc(report.department)+'<br>'+esc(report.period)+' · '+esc(report.region)+'</p><h2>一、报告说明</h2><table class="summary"><tr><th>报告类型</th><td>'+esc(report.reportType)+'</td></tr><tr><th>采用模板</th><td>'+esc(template)+'</td></tr><tr><th>经办人员</th><td>'+esc(report.preparedBy)+'</td></tr><tr><th>工作目的</th><td>'+esc(report.purpose)+'</td></tr></table><p class="note">本报告由系统依据本次工作过程形成初稿。事实数据、检测结论、合同条件和审批意见须由使用单位复核后定稿。</p><h2>二、本次工作完成情况</h2><div class="workflow"><span>数据采集与清洗</span><span>加工过程记录</span><span>供需匹配分析</span><span>成果汇总成文</span></div><table class="summary"><tr><th>原料批次</th><td>'+esc(summary.batch)+'</td></tr><tr><th>原料与数量</th><td>'+esc(summary.material)+' · '+esc(summary.quantity)+'</td></tr><tr><th>质量信息</th><td>'+esc(summary.quality)+'</td></tr><tr><th>加工任务</th><td>'+esc(summary.processing)+'</td></tr><tr><th>采购需求</th><td>'+esc(summary.demand)+'</td></tr><tr><th>数据质量</th><td>'+esc(summary.dataScore)+'</td></tr></table><h2>三、业务分析结果</h2><h3>（一）原料与批次情况</h3><p>本次工作围绕批次 '+esc(summary.batch)+' 开展，原料信息为 '+esc(summary.material)+'，计划处理数量为 '+esc(summary.quantity)+'。现有质量信息：'+esc(summary.quality)+'。</p><h3>（二）加工与过程管理</h3><p>'+esc(summary.processing)+'。生产参数、SOP 版本及放行结论应以单位批准记录为准。</p><h3>（三）供需匹配与对接</h3><p>当前需求为“'+esc(summary.demand)+'”，系统筛得 '+esc(summary.matches)+' 候选，已形成 '+esc(summary.connections)+' 对接申请或草稿。匹配结果仅用于业务筛选，价格、运费、验收及合同条款须由双方确认。</p><h2>四、风险与待补事项</h2><ul>'+issues+'</ul><h2>五、工作成效</h2><ol><li>形成一套可追溯的原料批次与加工任务底稿。</li><li>将供应、需求和匹配条件统一到可核验字段。</li><li>形成可供内部流转、会议汇报或后续报送使用的业务报告初稿。</li></ol><h2>六、下一步工作计划</h2><ol><li>补齐缺失字段、检测原件、审批意见和责任人签字。</li><li>由业务部门复核关键结论，必要时调整单位自有模板和章节。</li><li>经审核后形成正式版本，并将行动项纳入后续跟踪。</li></ol><p class="sign">经办人：'+esc(report.preparedBy)+'<br>生成时间：'+esc(generatedAt)+'</p></body></html>';
 }
 const candidates=[
   {id:'A',place:'广西南宁',batch:'B-0903-001',quantity:20,brix:12.8,arrival:'2026-09-08',report:true,preferences:['完整投入品记录','可寄样']},
@@ -112,6 +112,7 @@ const equipment=(drafts=[],showAll=true)=>`<div class="equipment">${[['conveyor'
 export default function(component) {
   const {parentElement,data,setStateValue}=component;
   const root=parentElement.querySelector('.iw');
+  if(root._intakeScope!==data.intakeScope){delete root._model;delete root._view;delete root._intakeAck;root._intakeScope=data.intakeScope;}
   const model=root._model||structuredClone(data.model||{});
   model.request={...defaultRequest,...model.request};
   model.connections=model.connections||[];
@@ -132,20 +133,10 @@ export default function(component) {
   const persist=()=>setStateValue('snapshot',structuredClone(model));
   const flash=message=>{feedback=message;render();};
   const downloadFile=(name,text,type='text/plain;charset=utf-8')=>{const url=URL.createObjectURL(new Blob([text],{type})),a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
+  const intakeController=createIntakeController({root,model,data,setStateValue,render,flash,download:downloadFile,persist,changeView:changeLocalView});
 
-  function intakeProgress() {
-    const audit=cleanIntake(model.intake);
-    const completed=requiredIntake.length-audit.missing.length;
-    return `<div class="collection-score"><span>必填字段完整度</span><strong>${completed}/${requiredIntake.length}</strong><div class="meter"><i style="width:${completed/requiredIntake.length*100}%"></i></div></div><h3>数据使用规则</h3><ul class="rule-list"><li>${svg('check',16)} 完整且格式正确：进入匹配与报告数据池</li><li>${svg('info',16)} 缺少必填项：标记待补，不参与推荐</li><li>${svg('alert',16)} 数值异常或无来源：进入人工复核</li></ul><div class="field-legend"><span><i class="required-dot"></i>必填 ${completed}/${requiredIntake.length}</span><span><i></i>选填项用于追溯与排序</span></div>`;
-  }
   function dataCollection() {
-    const r=model.intake,audit=model.intakeAudit||cleanIntake(r);
-    const label=(text,input,required=true)=>`<label class="data-field"><span>${esc(text)} ${required?'<b>必填</b>':'<em>选填</em>'}</span>${input}</label>`;
-    const collection=`<div class="intake-layout"><form id="intake-form" class="data-form"><section class="panel intake-section"><div class="section-heading"><h2>01 加工任务与原料需求</h2><small>明确要加工什么、需要什么原料和数量</small></div><div class="data-grid">${label('企业/机构名称',field('organization',r.organization,'企业或机构名称'))}${label('食品生产许可证',field('license',r.license,'食品生产许可证'),false)}${label('目标产品',field('processingProduct',r.processingProduct,'目标产品'))}${label('原料类型',select('material',r.material,'原料类型',['沃柑鲜果','脐橙鲜果','柑橘果皮','柑橘鲜果']))}${label('计划用量',`<div class="unit-input">${field('plannedQuantity',r.plannedQuantity,'计划用量','number','min="0" step="0.1"')}${select('unit',r.unit,'数量单位',['吨','千克'])}</div>`)}${label('期望到厂日期',field('arrivalDate',r.arrivalDate,'期望到厂日期','date'),false)}</div></section><section class="panel intake-section"><div class="section-heading"><h2>02 原料批次与验收</h2><small>批次、产地、质量指标和证据</small></div><div class="data-grid">${label('原料批次号',field('batch',r.batch,'原料批次号'))}${label('产地',field('origin',r.origin,'产地'))}${label('采收日期',field('harvestDate',r.harvestDate,'采收日期','date'))}${label('糖度',`<div class="value-input">${field('brix',r.brix,'糖度','number','min="0" max="40" step="0.1"')}<span>°Brix</span></div>`)}${label('供应主体',field('supplier',r.supplier,'供应主体'))}${label('检测报告',field('inspectionReport',r.inspectionReport,'检测报告'),false)}${label('肥料供应商',field('fertilizerSupplier',r.fertilizerSupplier,'肥料供应商'),false)}${label('肥料品牌/产品',field('fertilizerBrand',r.fertilizerBrand,'肥料品牌或产品'),false)}</div></section><section class="panel intake-section"><div class="section-heading"><h2>03 加工过程追溯</h2><small>记录设备、工艺版本、参数来源和人员</small></div><div class="data-grid">${label('加工产线',field('line',r.line,'加工产线'))}${label('SOP 版本',field('sop',r.sop,'SOP 版本'))}${label('开始时间',field('processStart',r.processStart,'加工开始时间','datetime-local'),false)}${label('清洗用水状态',field('washWater',r.washWater,'清洗用水状态'),false)}${label('冷藏温度',`<div class="value-input">${field('temperature',r.temperature,'冷藏温度','number','step="0.1"')}<span>°C</span></div>`,false)}${label('食品添加剂/辅料',field('additive',r.additive,'食品添加剂或辅料'),false)}${label('操作负责人',field('operator',r.operator,'操作负责人'))}</div></section></form><aside class="panel collection-summary"><h2>采集状态</h2><div id="intake-progress">${intakeProgress()}</div><div class="evidence-note">${svg('shield',17)}<span>字段依据生产追溯、进货查验和加工过程控制需要设计；具体限量值必须按产品类别核对现行标准。</span></div></aside></div>`;
-    const cleaning=`<div class="cleaning-layout"><section class="panel cleaning-main"><div class="section-heading"><h2>数据清洗结果</h2><small>只有有效数据进入匹配、可视化与报告</small></div><div class="clean-flow"><div><span>原始记录</span><b>18</b></div><i>→</i><div><span>格式标准化</span><b>16</b></div><i>→</i><div><span>有效数据</span><b>${audit.valid?'16':'12'}</b></div></div><div class="table-wrap"><table><thead><tr><th>规则</th><th>处理前</th><th>处理后</th><th>状态</th></tr></thead><tbody><tr><td>数量与单位</td><td>${esc(r.plannedQuantity)} ${esc(r.unit)}</td><td>${esc(audit.standardized.plannedQuantity)} 吨</td><td>${pill('已统一')}</td></tr><tr><td>批次编号</td><td>${esc(r.batch)}</td><td>${esc(audit.standardized.batch)}</td><td>${pill('已规范')}</td></tr><tr><td>糖度格式</td><td>${esc(r.brix)}</td><td>${esc(audit.standardized.brix)} °Brix</td><td>${pill(audit.issues.length?'需复核':'有效',audit.issues.length?'orange':'')}</td></tr><tr><td>重复记录</td><td>2 条相似记录</td><td>合并为 1 条，保留来源</td><td>${pill('已去重')}</td></tr></tbody></table></div></section><aside class="panel cleaning-side"><h2>质量门禁</h2><div class="quality-ring"><b>${audit.score}</b><span>数据质量分</span></div><h3>待处理项</h3>${audit.missing.length||audit.issues.length?`<ul>${audit.missing.map(k=>`<li>缺少必填字段：${esc(k)}</li>`).join('')}${audit.issues.map(i=>`<li>${esc(i)}</li>`).join('')}</ul>`:'<p class="ok-line">'+svg('check',17)+' 当前示例记录可进入有效数据池</p>'}<div class="evidence-note">不完整、不可信或用途不明确的数据不会进入推荐结果。</div></aside></div>`;
-    const standards=`<div class="standards-layout"><section class="panel standard-intro"><h2>加工采集依据</h2><p>以下依据用于决定“采什么数据、在哪个环节采”。系统不自动给出合规结论，企业仍需按产品类别、工艺和属地要求核对现行文本。</p><div class="standard-map"><span>原料进货查验</span><i>→</i><span>过程卫生控制</span><i>→</i><span>添加剂与限量</span><i>→</i><span>检验与追溯</span></div></section><section class="standard-list"><a class="panel standard-card" target="_blank" rel="noopener" href="https://www.samr.gov.cn/spxts/gzdt/art/2023/art_a54cbedacfd44ff5bd2b40504ea98649.html"><b>中华人民共和国食品安全法</b><span>法律 · 生产经营、进货查验、过程控制与追溯</span><em>查看官方来源 →</em></a><a class="panel standard-card" target="_blank" rel="noopener" href="https://www.nhc.gov.cn/sps/c100088/201306/998283ee924740e98d630ac660e887f3.shtml"><b>GB 14881—2013 食品生产通用卫生规范</b><span>加工场所、设备、原料、过程控制、检验与记录</span><em>查看官方来源 →</em></a><a class="panel standard-card" target="_blank" rel="noopener" href="https://www.nhc.gov.cn/sps/c100088/202403/bda120e678df4a49a8beb90852559d7c.shtml"><b>GB 2760—2024 食品添加剂使用标准</b><span>食品添加剂使用原则、品种和使用规定</span><em>查看官方来源 →</em></a><a class="panel standard-card" target="_blank" rel="noopener" href="https://www.nhc.gov.cn/sps/c100088/202509/5dc5e1e2b26d4d27a7913b9e71bbe931.shtml"><b>GB 2762—2025 食品中污染物限量</b><span>污染物限量 · 应按原料和产品类别核对</span><em>查看官方来源 →</em></a><a class="panel standard-card" target="_blank" rel="noopener" href="https://jgs.moa.gov.cn/nybz/202103/t20210318_6364007.htm"><b>GB 2763—2021 食品中农药最大残留限量</b><span>鲜果验收和农残报告核验基础</span><em>查看官方来源 →</em></a><a class="panel standard-card" target="_blank" rel="noopener" href="https://www.samr.gov.cn/zw/zfxxgk/fdzdgknr/bgt/art/2023/art_f5a0c2c6c3724a6aad91645043b012ce.html"><b>中华人民共和国农产品质量安全法</b><span>产地、生产记录、承诺达标与质量追溯</span><em>查看官方来源 →</em></a></section></div>`;
-    const actions=tab===1?button('导出有效数据','download-data',false,'download')+button('重新清洗','clean-data',true,'filter'):tab===2?'':button('保存采集草稿','save-intake')+button('清洗并入库','clean-data',true,'filter');
-    return header('DATA','产业数据采集','把原料、需求与加工过程转成可匹配、可追溯、可报告的数据')+`<div class="toolbar">${tabs(['数据采集','数据清洗','标准依据'],tab)}<div class="actions">${actions}</div></div>`+(tab===0?collection:tab===1?cleaning:standards);
+    return intakeController ? intakeController.render() : '<p>采集表加载中，请刷新后重试。</p>';
   }
 
   function production() {
@@ -212,6 +203,18 @@ export default function(component) {
   }
 
   function reportWorkSummary() {
+    if(model.activeIntakeReport){
+      const d=model.activeIntakeReport,f=d.fields,r=d.rows.materials?.[0]||{};
+      const supplier=d.side==='supplier';
+      const audit=intakeAudit(d,data.intakeSchema);
+      return {batch:supplier?f['harvest.batch']||'待补充':r.batch||'待补充',
+        material:supplier?`${f['base.variety']||'待补充'} · ${f['base.origin']||'产地待补充'}`:`${r.name||'待补充'} · ${r.origin||'产地待补充'}`,
+        quantity:supplier?`${f['harvest.quantity']||'待补充'} ${f['harvest.unit']||''}`:`${r.input||'投料量待补充'} ${r.unit||''}`,
+        quality:supplier?`${f['quality.brix']||'糖度待补充'} °Brix · ${f['quality.testStatus']||'检测待补充'}`:`${f['release.conclusion']||'待检'} · ${f['release.reportNo']||'报告待补充'}`,
+        processing:supplier?'本记录为供应端种植与采收档案':`${f['product.name']||'产品待补充'} · ${f['product.batch']||'成品批次待补充'} · ${f['process.sop']||'SOP待补充'}`,
+        demand:'本次采集未关联采购需求',matches:'未执行匹配',connections:'未发起对接',dataScore:`必填完整度 ${audit.score}%（非质量合格评分）`,
+        issues:[...audit.errors.map(x=>x.message),'记录为用户填报，检测和工艺结论尚需单位复核。']};
+    }
     const intake=model.intake||defaultIntake;
     const audit=model.intakeAudit||cleanIntake(intake);
     const request=model.request||defaultRequest;
@@ -255,7 +258,7 @@ export default function(component) {
   }
   function render() {
     root._view=view;root._tab=tab;root._selected=selected;root._listMode=listMode;
-    root.innerHTML=`<div class="page" data-view="${view}">${feedback?`<div class="feedback" role="status">${esc(feedback)}</div>`:''}${({data:dataCollection,production,supply,demand,match:matching,visuals,reports})[view]()}<p class="session-note">当前工作台数据仅保留在本次会话中；正式发布前请完成单位复核。</p></div><dialog aria-label="业务操作"></dialog>`;
+    root.innerHTML=`<div class="page" data-view="${view}">${feedback?`<div class="feedback" role="status">${esc(feedback)}</div>`:''}${({data:dataCollection,production,supply,demand,match:matching,visuals,reports})[view]()}<p class="session-note">${view==='data'?'采集记录保存于当前服务的数据存储；建议导出备份。账号体系及长期云存储配置后可进一步保障跨设备与重建恢复。':'当前工作台数据仅保留在本次会话中；正式发布前请完成单位复核。'}</p></div><dialog aria-label="业务操作"></dialog>`;
   }
   function modal(title,body,submit='',kind='') {
     const dialog=root.querySelector('dialog');
@@ -270,6 +273,7 @@ export default function(component) {
   }
   function onClick(event) {
     const el=event.target.closest('button');if(!el||el.disabled)return;
+    if(intakeController?.click(el))return;
     if(el.dataset.tab!==undefined){tab=Number(el.dataset.tab);feedback='';render();return;}
     if(el.dataset.candidate){selected=el.dataset.candidate;render();return;}
     if(el.dataset.pref){const p=el.dataset.pref;model.request.preferences=model.request.preferences.includes(p)?model.request.preferences.filter(x=>x!==p):[...model.request.preferences,p];render();persist();return;}
@@ -313,6 +317,7 @@ export default function(component) {
   }
   function onInput(event) {
     const el=event.target;
+    if(intakeController?.input(el))return;
     if(el.name==='supply-search'){root.querySelector('#supply-results').innerHTML=supplyResults();return;}
     if(el.closest('#intake-form')&&el.name){model.intake[el.name]=el.value;model.intakeAudit=null;const progress=root.querySelector('#intake-progress');if(progress)progress.innerHTML=intakeProgress();return;}
     if(el.closest('#report-form')&&el.name){if(el.type==='file')return;model.report[el.name]=el.value;model.report.generated=false;const preview=root.querySelector('#report-preview');if(preview)preview.innerHTML=reportPreview();return;}
@@ -323,6 +328,7 @@ export default function(component) {
   }
   function onChange(event) {
     const el=event.target;
+    if(intakeController?.change(el))return;
     if(['supply-type','supply-status'].includes(el.name)){root.querySelector('#supply-results').innerHTML=supplyResults();return;}
     if(el.closest('#intake-form')){onInput(event);persist();return;}
     if(el.closest('#report-form')){if(el.name==='templateFile'){model.report.templateFile=el.files?.[0]?.name||'';model.report.generated=false;}else onInput(event);persist();const preview=root.querySelector('#report-preview');if(preview)preview.innerHTML=reportPreview();return;}
@@ -350,6 +356,6 @@ export default function(component) {
     root.querySelector('dialog').close();persist();
     flash(kind==='connection'||kind==='trade'?'对接申请草稿已保存；未发送给真实企业。':kind==='template'?'已载入示例需求模板。':'记录已保存到本次会话。');
   }
-  if(root._view!==view||!root.querySelector('.page'))render();
+  if(root._view!==view||!root.querySelector('.page')||intakeController?.refreshed)render();
   return bindWorkspaceEvents(root,{click:onClick,input:onInput,change:onChange,submit:onSubmit});
 }

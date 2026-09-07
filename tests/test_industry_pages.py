@@ -47,8 +47,10 @@ def test_industry_navigation_contains_the_meeting_modules_without_ai_guidance_co
         assert label in main
     assert 'AI引导' not in main + workspace
     assert '设计示例 · 演示数据' not in workspace
-    for standard in ('GB 14881—2013', 'GB 2760—2024', 'GB 2762—2025', 'GB 2763—2021'):
-        assert standard in workspace
+    from app.intake_schema import intake_schema
+    standards = str(intake_schema()['standards'])
+    for standard in ('GB 14881—2025', 'GB 2760—2024', 'GB 2762—2025', 'GB 2763—2026'):
+        assert standard in standards
 
 
 def test_industry_navigation_callback_accepts_every_visible_workspace_route():

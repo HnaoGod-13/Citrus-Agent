@@ -59,12 +59,12 @@ test('industry intake cleaning normalizes useful records and blocks unusable one
   assert.ok(invalid.missing.length>0);
   assert.ok(invalid.issues.length>=2);
 });
-test('generated report escapes organization text and keeps chart and review caveat',()=>{
+test('generated report escapes organization text and keeps review caveat',()=>{
   const report=buildReportDocument({agency:'<img onerror=alert(1)>',title:'产业报告',region:'广西',period:'2026'});
   assert.doesNotMatch(report,/<img onerror/);
   assert.match(report,/&lt;img onerror=alert\(1\)&gt;/);
-  assert.match(report,/bars/);
-  assert.match(report,/正式报送前须由主管单位复核/);
+  assert.doesNotMatch(report,/采集<br>16/);
+  assert.match(report,/须由使用单位复核后定稿/);
 });
 test('business report carries unit template metadata and completed work summary',()=>{
   const report=buildReportDocument({
