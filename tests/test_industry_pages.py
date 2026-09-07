@@ -68,6 +68,15 @@ def test_industry_navigation_contains_the_meeting_modules_without_ai_guidance_co
         assert standard in standards
 
 
+def test_intake_home_uses_distinct_entry_cards_without_the_removed_guidance_panel():
+    source = (
+        Path(__file__).parents[1] / 'app/ui/industry_workspace/intake.js'
+    ).read_text(encoding='utf-8')
+    assert 'ic-entry-${key}' in source
+    assert '一份批次档案，贯通两端信息' not in source
+    assert '导入采集备份' not in source
+
+
 def test_industry_navigation_callback_accepts_every_visible_workspace_route():
     source = (Path(__file__).parents[1] / 'app/main.py').read_text(encoding='utf-8')
     callback = source.split('def select_industry_view', 1)[1].split(
