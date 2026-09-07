@@ -124,8 +124,8 @@ export default function(component) {
   model.intakeAudit=model.intakeAudit||null;
   root._model=model;
   const view=data.view;
-  const initialTab=view==='production'||view==='demand'?1:view==='match'?(model.matchOpenTab??1):0;
-  if(root._view!==view&&view==='match')delete model.matchOpenTab;
+  const initialTab=view==='market'?(model.marketOpenTab??0):0;
+  if(root._view!==view&&view==='market')delete model.marketOpenTab;
   let tab=root._view===view?(root._tab??initialTab):initialTab;
   let selected=root._selected||'A';
   let listMode=root._listMode||false;
@@ -165,10 +165,12 @@ export default function(component) {
     if(listMode)return `<div class="panel table-wrap"><table><thead><tr><th>供应批次</th><th>产地</th><th>可供数量</th><th>状态</th><th>操作</th></tr></thead><tbody>${records.map(s=>`<tr><td>${esc(s.name)} · ${s.id}</td><td>${s.origin}</td><td>${s.quantity}</td><td>${pill(s.pending?'待补资料':'上架中',s.pending?'orange':'')}</td><td>${button('查看',`manage-${s.id}`)}</td></tr>`).join('')}</tbody></table></div>`;
     return `<div class="supply-grid">${records.map(supplyCard).join('')}</div>`;
   }
-  function supply() {
+  function supply(embedded=false) {
+    const active=embedded?0:tab;
     let body=`<div class="supply-filters"><label class="search-field">${svg('search')}${field('supply-search','','搜索供应','search','placeholder="搜索品种、产区、批次号"')}</label>${select('supply-type','全部品类','供应品类',['全部品类','沃柑','脐橙','果皮'])}${select('supply-status','全部状态','供应状态',['全部状态','上架中','待补资料'])}<div class="switcher">${button('列表','list',listMode,'list')}${button('卡片','cards',!listMode,'grid')}</div></div><div id="supply-results">${supplyResults()}</div>`;
-    if(tab===1)body=`<section class="panel audit"><h2>匹配买家</h2><div class="equipment-row"><span>NFC 果汁加工原料采购</span><span>15—25 吨 · 糖度 ≥ 12.0 °Brix</span>${button('查看匹配','show-matches')}</div>${notice('演示匹配','以上为示例采购需求，不代表真实买家询盘。')}</section>`;
-    if(tab===2)body=`<section class="panel audit"><h2>发布记录</h2>${model.supplies.length?model.supplies.map(s=>`<div class="equipment-row">${esc(s.name)} · ${esc(s.batch)} ${pill('会话草稿')}</div>`).join(''):'<p class="empty">本次会话尚无新建供应草稿。</p>'}</section>`;
+    if(active===1)body=`<section class="panel audit"><h2>匹配买家</h2><div class="equipment-row"><span>NFC 果汁加工原料采购</span><span>15—25 吨 · 糖度 ≥ 12.0 °Brix</span>${button('查看匹配','show-matches')}</div>${notice('演示匹配','以上为示例采购需求，不代表真实买家询盘。')}</section>`;
+    if(active===2)body=`<section class="panel audit"><h2>发布记录</h2>${model.supplies.length?model.supplies.map(s=>`<div class="equipment-row">${esc(s.name)} · ${esc(s.batch)} ${pill('会话草稿')}</div>`).join(''):'<p class="empty">本次会话尚无新建供应草稿。</p>'}</section>`;
+    if(embedded)return body;
     return header('SUPPLY','供应中心','将真实批次发布为供应单，找到合适的采购方')+`<div class="toolbar">${tabs(['我的供应','匹配买家','发布记录'],tab)}<div class="actions">${button('导入批次','import-supply',false,'upload')}${button('发布供应','new-supply',true,'plus')}</div></div>`+stats([['box','上架中','8'],['file','待补资料','2'],['chat','新增询盘','6'],['clock','即将到期','1']])+body+notice('发布与隐私','公开页仅展示授权信息；联系人与检测原件在双方同意后开放。供应单不是质量合格证明。');
   }
 
@@ -177,15 +179,16 @@ export default function(component) {
     const valid=[r.brix.trim()!==''&&Number.isFinite(Number(r.brix))&&Number(r.brix)>=0,!!quantityRange(r.quantity),!!r.delivery,r.report].filter(Boolean).length;
     return `<div class="preview-head"><h2>需求预览</h2>${pill(r.published?'会话演示 · 已发布':'草稿 · 未发布')}</div><h3>${esc(r.name||'未命名需求')}</h3><dl><div><dt>原料</dt><dd>${esc(r.material)}</dd></div><div><dt>数量</dt><dd>${esc(r.quantity||'待填写')} 吨</dd></div><div><dt>糖度</dt><dd>≥ ${esc(r.brix||'待填写')} °Brix</dd></div><div><dt>到厂</dt><dd>${esc(r.delivery.replaceAll('-','.'))} 前</dd></div><div><dt>目的地</dt><dd>${esc(r.destination)}</dd></div></dl><div class="preflight"><h3>发布前检查</h3><p>${svg('check',18)} ${valid} 项必须条件已填写</p><p class="${r.checklist?'':'warn'}">${svg(r.checklist?'check':'info',18)} ${r.checklist?`已选择清单：${esc(r.checklist)}`:'验收清单待上传'}</p></div><p class="preview-note">发布后系统将按硬条件筛选供应批次。<br>信息缺失会标为待补充，不会默认合格。</p>`;
   }
-  function demand() {
+  function demand(embedded=false) {
     const r=model.request;
     const basic=`<section class="panel form-section"><div class="section-heading"><h2>01 基础信息</h2></div><div class="basic-fields"><label class="inline-field">需求名称${field('name',r.name,'需求名称')}</label><label class="inline-field">原料类型${select('material',r.material,'原料类型',['沃柑鲜果','脐橙鲜果','柑橘果皮'])}</label><label class="inline-field">用途${field('use',r.use,'用途')}</label><label class="inline-field">采购地区${select('region',r.region,'采购地区',['广西及周边','江西及周边','全国'])}</label></div></section>`;
     const hard=`<section class="panel form-section"><div class="section-heading"><h2>02 必须满足的条件</h2><small>未满足或缺少证据的候选，不进入合格推荐</small></div><div class="must-rows"><div class="must-row"><span class="field-name">糖度</span><label class="value-input"><span>≥</span>${field('brix',r.brix,'糖度下限','number','min="0" max="40" step="0.1"')}<span>°Brix</span></label><label class="check"><input type="checkbox" checked disabled>必须</label></div><div class="must-row"><span class="field-name">采购数量</span><label class="value-input">${field('quantity',r.quantity,'采购数量')}<span>吨</span></label><label class="check"><input type="checkbox" checked disabled>必须</label></div><div class="must-row"><span class="field-name">到厂日期</span>${field('delivery',r.delivery,'到厂日期','date')}<label class="check"><input type="checkbox" checked disabled>必须</label></div><div class="must-row report-row"><span class="field-name">有效检测报告</span><label class="check"><input name="report" type="checkbox" ${r.report?'checked':''}>按企业验收清单提供</label><label class="file-label">上传验收清单<input name="checklist" type="file" accept=".pdf,.png,.jpg,.xlsx,.docx"></label></div></div></section>`;
     const prefs=`<section class="panel form-section"><div class="section-heading"><h2>03 偏好条件</h2><small>用于排序，不代替必须条件</small></div><div class="chips">${defaultRequest.preferences.map(p=>`<button type="button" class="chip${r.preferences.includes(p)?' selected':''}" aria-pressed="${r.preferences.includes(p)}" data-pref="${p}">${p} ${r.preferences.includes(p)?'×':'＋'}</button>`).join('')}</div></section>`;
     const delivery=`<section class="panel form-section"><div class="section-heading"><h2>04 交付与预算</h2></div><div class="delivery-fields"><label>交货地点${field('destination',r.destination,'交货地点')}</label><label>预算范围${field('budget',r.budget,'预算范围')}</label><label>联系方式<input value="双方同意后开放" aria-label="联系方式" readonly></label></div></section>`;
     let body=`<div class="demand-layout"><form id="demand-form" class="form-sections">${basic}${hard}${prefs}${delivery}</form><aside id="preview" class="panel preview">${preview()}</aside></div>`;
-    if(tab===0)body=`<section class="panel audit"><h2>我的需求</h2><div class="equipment-row"><span>${esc(r.name)}</span>${pill(r.published?'会话演示 · 已发布':'草稿')}${button('继续编辑','edit-demand')}${button('查看匹配','show-matches')}</div></section>`;
-    if(tab===2)body=`<section class="panel audit"><h2>历史模板</h2><div class="equipment-row"><span>NFC 果汁加工原料采购 · 示例模板</span>${button('使用模板','use-template')}</div><p>使用模板会替换当前草稿，使用前可确认。</p></section>`;
+    if(!embedded&&tab===0)body=`<section class="panel audit"><h2>我的需求</h2><div class="equipment-row"><span>${esc(r.name)}</span>${pill(r.published?'会话演示 · 已发布':'草稿')}${button('继续编辑','edit-demand')}${button('查看匹配','show-matches')}</div></section>`;
+    if(!embedded&&tab===2)body=`<section class="panel audit"><h2>历史模板</h2><div class="equipment-row"><span>NFC 果汁加工原料采购 · 示例模板</span>${button('使用模板','use-template')}</div><p>使用模板会替换当前草稿，使用前可确认。</p></section>`;
+    if(embedded)return body;
     return header('DEMAND','需求中心','把采购标准写清楚，让合适的原料主动找到你')+`<div class="toolbar">${tabs(['我的需求','新建采购需求','历史模板'],tab)}<div class="actions">${button('保存草稿','save-demand')}${button('发布需求','publish-demand',true)}</div></div>`+body;
   }
   function matchDetails(c) {
@@ -193,13 +196,24 @@ export default function(component) {
     const rows=[['糖度',`≥ ${r.brix} °Brix`,`${c.brix.toFixed(1)} °Brix`],['数量',`${r.quantity} 吨`,`${c.quantity.toFixed(1)} 吨`],['到厂日期',`${r.delivery.slice(5).replace('-','.')} 前`,`可于 ${c.arrival.slice(5).replace('-','.')} 到厂`],['检测资料',r.report?'验收清单要求':'未设为必须',c.report?'对应报告已核验':'检测报告缺失']];
     return `<div class="detail-head"><div><h2>供应主体 ${c.id}</h2><p>批次 ${c.batch} · ${c.report?'资料已核验':'资料待补充'}</p></div>${button(requested?'已生成申请':'申请对接','connect',true,'',!e.fit||requested?'disabled':'')}</div><div class="match-stats">${[['lock','必须条件',`${e.checks.filter(Boolean).length}/4`],['file','资料完整度',c.report?'100%':'75%'],['star','偏好满足',`${e.prefs}/${r.preferences.length}`]].map(([i,l,v])=>`<div class="match-stat">${svg(i,28)}<div><span>${l}</span><b>${v}</b></div></div>`).join('')}</div><h3>逐项条件对比</h3><div class="compare table-wrap"><table><thead><tr><th>必须条件</th><th>采购要求</th><th>批次情况</th><th>结果</th></tr></thead><tbody>${rows.map(([l,a,b],i)=>`<tr><td>${l}</td><td>${esc(a)}</td><td>${esc(b)}</td><td><span class="result${e.checks[i]?'':' bad'}">${svg(e.checks[i]?'check':'info',14)}${e.checks[i]?'满足':i===3?'待补':'不符合'}</span></td></tr>`).join('')}</tbody></table></div><section class="reasons"><h3>${e.fit?'推荐理由':'暂不推荐原因'}</h3>${e.fit?'<ul><li>数量与交期符合本次采购条件</li><li>支持寄样，投入品记录可申请查看</li></ul>':`<ul>${!e.compatible?'<li>原料类型或采购地区与候选不符</li>':''}${rows.filter((_,i)=>!e.checks[i]).map(([l])=>`<li>${l}未满足或缺少相应证据</li>`).join('')}</ul>`}<p>价格仍需双方协商</p></section>`;
   }
-  function matching() {
+  function matching(embedded=false, section=tab) {
     const r=model.request;
     const list=candidates.map(c=>{const e=evaluateCandidate(c,r);return `<button type="button" class="candidate${selected===c.id?' active':''}" data-candidate="${c.id}" aria-pressed="${selected===c.id}"><div class="candidate-title"><span>供应主体 ${c.id} <small>· ${c.place}</small></span>${pill(e.label,e.tone)}</div><p>批次 ${c.batch}</p>${e.fit?`<div class="score">适配度 <b>${e.score}</b></div>`:''}<span class="facts">${c.quantity.toFixed(1)} 吨 · ${c.brix.toFixed(1)} °Brix</span><small class="reason">${e.fit?'4 项必须条件满足':e.missing?'检测报告缺失 · 暂不进入推荐':!e.compatible?'原料或地区不符 · 已排除':!e.checks[0]?'糖度低于要求 · 已排除':'硬条件未满足 · 已排除'}</small></button>`;}).join('');
     const current=`<div class="match-actions">${button('调整需求','edit-demand')}${button('重新匹配','rematch')}</div><div class="panel query"><strong>采购需求： ${esc(r.name)}</strong>${[r.material,`${r.quantity} 吨`,`糖度 ≥ ${r.brix} °Brix`,`${r.delivery.slice(5).replace('-','.')} 前到厂`].map(v=>`<span class="tag">${esc(v)}</span>`).join('')}</div><div class="match-layout"><aside class="panel candidates"><h2>候选供应&nbsp; 3</h2>${list}</aside><section id="match-detail" class="panel match-detail">${matchDetails(candidates.find(c=>c.id===selected)||candidates[0])}</section></div>`;
     const trade=`<section class="panel trade-demand"><div><span class="eyebrow">采购方 · 重庆北碚示例加工厂</span><h2>NFC 果汁加工原料跨区域采购</h2><p>柑橘鲜果 · 80—120 吨 · 糖度 ≥ 11.8 °Brix · 11.15 前到厂</p></div><div class="trade-route">山东 / 江西 / 广西 <b>→</b> 重庆</div></section><div class="trade-grid">${tradeCandidates.map((c,i)=>`<article class="panel trade-card"><div class="trade-title"><h2>${esc(c.seller)}</h2>${pill(c.label,c.score?i===0?'black':'':'red')}</div><p>${esc(c.origin)} · ${esc(c.material)}</p><div class="trade-score">${c.score?`<b>${c.score}</b><span>商业适配度</span>`:'<b>—</b><span>暂不推荐</span>'}</div><dl><div><dt>可供数量</dt><dd>${c.quantity} 吨</dd></div><div><dt>糖度</dt><dd>${c.brix} °Brix</dd></div><div><dt>预计到厂</dt><dd>${c.arrival}</dd></div><div><dt>资料</dt><dd>${c.docs}</dd></div></dl>${button(c.score?'申请商业对接':'数量不满足',`trade-${c.id}`,i===0,'link',c.score?'':'disabled')}</article>`).join('')}</div>${notice('商业边界','匹配只用于筛选候选。采购价、运费、发票、原料验收和合同条款须由双方确认。')}`;
     const records=`<section class="panel audit"><h2>对接记录</h2>${model.tradeConnections?.length?model.tradeConnections.map(id=>`<div class="equipment-row"><span>${esc(id)} · 重庆采购场景</span>${pill('申请草稿')}</div>`).join(''):'<p class="empty">本次会话尚无商业对接申请。</p>'}${notice('联系人保护','双方确认前不开放手机号、地址、检测原件等敏感信息。')}</section>`;
-    return header('CONNECTIONS','商业对接','连接跨区域原料供应与加工需求，先筛条件再谈交易')+`<div class="toolbar">${tabs(['当前需求匹配','跨区域商机','对接记录'],tab)}</div>`+(tab===0?current:tab===1?trade:records)+(tab===0?notice('匹配建议不等于检测放行；原件与联系人需双方授权后查看。',''):'')+'<p class="footnote">规则版本 v1.1 · 演示数据 · 2026.09</p>';
+    const body=(section===0?current:section===1?trade:records)+(section===0?notice('匹配建议不等于检测放行；原件与联系人需双方授权后查看。',''):'')+'<p class="footnote">规则版本 v1.1 · 候选批次为界面演示数据 · 2026.09</p>';
+    if(embedded)return body;
+    return header('CONNECTIONS','商业对接','连接跨区域原料供应与加工需求，先筛条件再谈交易')+`<div class="toolbar">${tabs(['当前需求匹配','跨区域商机','对接记录'],tab)}</div>`+body;
+  }
+
+  function market() {
+    const actions=tab===0?button('导入采集批次','import-supply',false,'upload')+button('发布供应','new-supply',true,'plus'):
+      tab===1?button('保存需求草稿','save-demand')+button('发布需求','publish-demand',true):
+      tab===2?button('按当前需求重新匹配','rematch',true,'filter'):'';
+    const source=`<section class="market-source"><div><span>业务数据边界</span><b>供应、采购、匹配与对接在一个流程内完成</b></div><p>当前供应批次和候选企业为界面演示数据；采购需求及对接申请仅保存在本次会话，尚未连接真实交易市场。</p></section>`;
+    const bodies=[supply(true),demand(true),matching(true,0),matching(true,1),matching(true,2)];
+    return header('SUPPLY & DEMAND','产销对接中心','从批次供应、采购需求到规则匹配和商业对接，形成一条连续业务链')+`<div class="toolbar market-toolbar">${tabs(['供应资源','采购需求','智能匹配','跨区商机','对接记录'],tab)}<div class="actions">${actions}</div></div>${source}${bodies[tab]||bodies[0]}`;
   }
 
   function reportWorkSummary() {
@@ -251,14 +265,11 @@ export default function(component) {
   }
 
   function visuals() {
-    const bars=[['2022',86],['2023',101],['2024',110],['2025',122],['2026',131]];
-    const trend=`<div class="visual-layout"><section class="panel chart-panel"><div class="section-heading"><h2>柑橘产量趋势</h2><small>示例数据 · 单位：万吨</small></div><div class="production-bars" role="img" aria-label="2022年至2026年柑橘示例产量柱状图">${bars.map(([year,value])=>`<div><b>${value}</b><i style="height:${value/1.5}px"></i><span>${year}</span></div>`).join('')}</div></section><section class="panel chart-panel"><div class="section-heading"><h2>区域供需流向</h2><small>跨区域商机示意</small></div><svg class="flow-chart" viewBox="0 0 560 260" role="img" aria-label="山东、江西和广西的柑橘原料流向重庆加工厂"><title>柑橘跨区域供需流向</title><path d="M115 55 C270 55 290 130 420 130"/><path d="M115 130 C270 130 290 130 420 130"/><path d="M115 205 C270 205 290 130 420 130"/><circle cx="92" cy="55" r="32"/><circle cx="92" cy="130" r="32"/><circle cx="92" cy="205" r="32"/><rect x="420" y="92" width="112" height="76" rx="8"/><text x="92" y="60">山东</text><text x="92" y="135">江西</text><text x="92" y="210">广西</text><text x="476" y="123">重庆加工</text><text x="476" y="145">需求 80—120t</text></svg></section></div>`;
-    const types=`<section class="visual-types"><div class="section-heading"><h2>可生成的产业图片</h2><small>选择与报告目的匹配的图，不堆砌无关图表</small></div><div class="type-grid">${[['chart','产量与加工量柱形图','年度、地区、品种对比'],['map','区域供需流向图','原料从产区到加工地'],['factory','产业链流程图','种植、采收、加工、销售'],['shield','质量指标对比图','糖度、酸度、合格率'],['database','批次产地分布图','批次、产区与可追溯状态'],['clock','季节供应日历','上市期、采购期和产线档期']].map(([i,t,d])=>`<article class="panel type-card">${svg(i,25)}<div><h3>${t}</h3><p>${d}</p></div></article>`).join('')}</div></section>`;
-    return header('VISUALS','产业可视化','把产量、加工、质量和区域供需关系变成可直接用于报告的图片')+`<div class="toolbar">${tabs(['综合看板','产量与加工','区域供需','图表库'],tab)}<div class="actions">${button('下载示例图表','download-chart',false,'download')}</div></div>`+stats([['chart','年度产量','131 万吨'],['factory','加工转化率','32%'],['map','重点产区','6'],['link','跨区域商机','12']])+trend+types+notice('数据说明','当前图表使用演示数据；接入真实统计或企业数据后，应显示数据来源、时间范围和口径。');
+    return renderIndustryVisuals({tab,raw:data.intakeAnalytics,request:model.request,header,tabs,button,svg,esc});
   }
   function render() {
     root._view=view;root._tab=tab;root._selected=selected;root._listMode=listMode;
-    root.innerHTML=`<div class="page" data-view="${view}">${feedback?`<div class="feedback" role="status">${esc(feedback)}</div>`:''}${({data:dataCollection,production,supply,demand,match:matching,visuals,reports})[view]()}<p class="session-note">${view==='data'?'采集记录保存于当前服务的数据存储；建议导出备份。账号体系及长期云存储配置后可进一步保障跨设备与重建恢复。':'当前工作台数据仅保留在本次会话中；正式发布前请完成单位复核。'}</p></div><dialog aria-label="业务操作"></dialog>`;
+    root.innerHTML=`<div class="page" data-view="${view}">${feedback?`<div class="feedback" role="status">${esc(feedback)}</div>`:''}${({data:dataCollection,market,visuals,reports})[view]()}<p class="session-note">${view==='data'?'采集记录保存于当前服务的数据存储；建议导出备份。账号体系及长期云存储配置后可进一步保障跨设备与重建恢复。':view==='market'?'供应发布、需求发布和商业对接当前均为会话草稿；接入账号、审核和真实企业库后再开放实际交易。':'页面结论仅用于业务分析；正式发布前请完成单位复核。'}</p></div><dialog aria-label="业务操作"></dialog>`;
   }
   function modal(title,body,submit='',kind='') {
     const dialog=root.querySelector('dialog');
@@ -289,7 +300,8 @@ export default function(component) {
     if(action?.startsWith('trade-')){const id=action.slice(6),candidate=tradeCandidates.find(c=>c.id===id);if(!candidate?.score)return;model.pendingTrade=id;modal('申请商业对接',`<p>${esc(candidate.seller)} · ${esc(candidate.origin)} → 重庆</p><p style="margin-top:12px">对接申请仅保存为会话草稿。提交前还需确认报价、运费、到厂验收和合同条款。</p>`,'保存对接申请','trade');return;}
     if(action==='generate-report'){model.report.generated=true;model.report.generatedAt=new Date().toLocaleString('zh-CN');persist();flash('业务报告初稿已生成，可在右侧预览并导出。');return;}
     if(action==='download-report'){if(!model.report.generated){flash('请先生成业务报告初稿，再执行导出。');return;}const fileName=(model.report.title||'柑橘产业业务工作报告').replace(/[\\/:*?"<>|]/g,'_');downloadFile(`${fileName}.html`,buildReportDocument(model.report,reportWorkSummary()),'text/html;charset=utf-8');return;}
-    if(action==='download-chart'){downloadFile('柑橘产量示例数据.csv','年份,产量（万吨）\r\n2022,86\r\n2023,101\r\n2024,110\r\n2025,122\r\n2026,131','text/csv;charset=utf-8');return;}
+    if(action==='download-chart'){downloadFile('柑橘产业可视化数据.csv',visualizationCsv(data.intakeAnalytics),'text/csv;charset=utf-8');return;}
+    if(action==='visual-goto'){tab=Number(el.dataset.visualTab)||0;render();return;}
     if(action==='view-report'){tab=0;render();return;}
     if(action==='use-enterprise-report'){model.report.title='柑橘加工企业原料验收规范';model.report.agency='本单位';model.report.reportType='企业规范报告';model.report.template='单位自定义模板';model.report.generated=false;tab=0;persist();render();return;}
     if(action==='save-demand'){persist();flash('需求草稿已保存到本次会话，可继续修改或查看匹配。');return;}
@@ -299,8 +311,8 @@ export default function(component) {
       if(r.report&&!r.checklist){flash('发布前请先上传企业验收清单。演示版仅保存文件名，不上传原件。');return;}
       r.published=true;persist();flash('需求已在本次会话模拟发布；未公开到真实供需市场。');return;
     }
-    if(action==='edit-demand'){if(view==='demand'){tab=1;render();}else changeLocalView('demand');return;}
-    if(action==='show-matches'||action?.startsWith('buyers-')){model.matchOpenTab=0;changeLocalView('match');return;}
+    if(action==='edit-demand'){if(view==='market'){tab=1;render();}else{model.marketOpenTab=1;changeLocalView('market');}return;}
+    if(action==='show-matches'||action?.startsWith('buyers-')){if(view==='market'){tab=2;render();}else{model.marketOpenTab=2;changeLocalView('market');}return;}
     if(action==='rematch'){selected=candidates.find(c=>evaluateCandidate(c,model.request).fit)?.id||'A';flash('已按当前需求重新核对三个演示候选批次。');return;}
     if(action==='connect') {
       const c=candidates.find(c=>c.id===selected);if(!evaluateCandidate(c,model.request).fit)return;

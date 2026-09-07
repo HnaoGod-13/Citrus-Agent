@@ -1181,12 +1181,10 @@ def select_product_view(view: str) -> None:
 
 def select_industry_view(view: str) -> None:
     normalized = str(view or "").strip().lower()
+    normalized = {"production": "data", "supply": "market", "demand": "market", "match": "market"}.get(normalized, normalized)
     if normalized not in {
         "data",
-        "production",
-        "supply",
-        "demand",
-        "match",
+        "market",
         "visuals",
         "reports",
     }:
@@ -1540,10 +1538,7 @@ def render_product_secondary_panel(view: str) -> None:
     if view == "workspace":
         industry_items = (
             ("data", "产业数据采集", "Data intake"),
-            ("production", "加工能力与生产记录", "Processing records"),
-            ("supply", "供应中心", "Supply center"),
-            ("demand", "需求中心", "Demand center"),
-            ("match", "商业对接", "Connections"),
+            ("market", "产销对接中心", "Supply & demand"),
             ("visuals", "产业可视化", "Visual analytics"),
             ("reports", "报告中心", "Report center"),
         )

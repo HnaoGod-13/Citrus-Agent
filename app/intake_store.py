@@ -12,6 +12,7 @@ import math
 import re
 import sqlite3
 import unicodedata
+from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
@@ -198,6 +199,95 @@ class IntakeStore:
             return [dict(r) for r in db.execute(
                 "SELECT id,side,title,status,revision,updated_at FROM intake_records WHERE user_id=? AND project_id=? ORDER BY updated_at DESC LIMIT 100",
                 (user, project))]
+
+    def analytics(self, user, project):
+        """Return attachment-free aggregates for the current private scope."""
+        self.scope(user, project)
+        with self.connect() as db:
+            records = db.execute(
+                "SELECT side,status,updated_at,payload FROM intake_records WHERE user_id=? AND project_id=? ORDER BY updated_at",
+                (user, project),
+            ).fetchall()
+        timeline = defaultdict(lambda: {"supply": 0.0, "output": 0.0})
+        origins = Counter()
+        quality = Counter()
+        supply_tons = input_tons = output_tons = 0.0
+        brix_values = []
+        supplier_count = processor_count = submitted_count = 0
+
+        def amount(value, unit="kg"):
+            number = float_or_none(value)
+            if number is None:
+                return 0.0
+            return number if unit == "吨" else number / 1000
+
+        for record in records:
+            try:
+                document = json.loads(record["payload"])
+            except (TypeError, json.JSONDecodeError):
+                continue
+            fields = document.get("fields", {})
+            rows = document.get("rows", {})
+            if record["status"] == "submitted":
+                submitted_count += 1
+            if record["side"] == "supplier":
+                supplier_count += 1
+                quantity = amount(fields.get("harvest.quantity"), fields.get("harvest.unit"))
+                supply_tons += quantity
+                date = fields.get("harvest.date") or record["updated_at"][:10]
+                if quantity > 0:
+                    timeline[str(date)[:7]]["supply"] += quantity
+                origin = str(fields.get("base.origin") or "").strip()
+                if origin:
+                    origins[origin] += 1
+                brix = float_or_none(fields.get("quality.brix"))
+                if brix is not None:
+                    brix_values.append(brix)
+            else:
+                processor_count += 1
+                date = fields.get("product.date") or record["updated_at"][:10]
+                output = amount(fields.get("output.productMass"), "kg")
+                output_tons += output
+                if output > 0:
+                    timeline[str(date)[:7]]["output"] += output
+                for material in rows.get("materials", []):
+                    input_tons += amount(material.get("input"), material.get("unit"))
+                release = fields.get("release.conclusion")
+                if release == "合格":
+                    quality["qualified"] += 1
+                elif release == "不合格":
+                    quality["unqualified"] += 1
+                elif release:
+                    quality["pending"] += 1
+            for test in rows.get("tests", []):
+                conclusion = test.get("conclusion")
+                if conclusion == "合格":
+                    quality["qualified"] += 1
+                elif conclusion == "不合格":
+                    quality["unqualified"] += 1
+                elif conclusion:
+                    quality["pending"] += 1
+
+        points = [
+            {"label": month, "supply": round(values["supply"], 3), "output": round(values["output"], 3)}
+            for month, values in sorted(timeline.items())[-12:]
+        ]
+        return {
+            "source": "当前账号产业数据采集记录",
+            "recordCount": len(records),
+            "supplierCount": supplier_count,
+            "processorCount": processor_count,
+            "submittedCount": submitted_count,
+            "draftCount": len(records) - submitted_count,
+            "supplyTons": round(supply_tons, 3),
+            "inputTons": round(input_tons, 3),
+            "outputTons": round(output_tons, 3),
+            "averageBrix": round(sum(brix_values) / len(brix_values), 2) if brix_values else None,
+            "timeline": points,
+            "origins": [{"label": label, "value": value} for label, value in origins.most_common(8)],
+            "quality": dict(qualified=quality["qualified"], pending=quality["pending"], unqualified=quality["unqualified"]),
+            "updatedAt": records[-1]["updated_at"] if records else "",
+        }
 
     def load(self, user, project, record_id):
         self.scope(user, project)

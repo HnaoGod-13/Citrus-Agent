@@ -18,13 +18,15 @@ _ASSETS = Path(__file__).parent / "industry_workspace"
 
 
 def current_industry_view() -> str:
-    allowed = {"data", "production", "supply", "demand", "match", "visuals", "reports"}
+    allowed = {"data", "market", "visuals", "reports"}
+    legacy = {"production": "data", "supply": "market", "demand": "market", "match": "market"}
     query = st.query_params.get("industry", "")
     if isinstance(query, list):
         query = query[0] if query else ""
     query = str(query).strip().lower()
-    saved = st.session_state.get("industry_workspace_view", "production")
-    selected = query if query in allowed else saved if saved in allowed else "production"
+    query = legacy.get(query, query)
+    saved = legacy.get(st.session_state.get("industry_workspace_view", "data"), st.session_state.get("industry_workspace_view", "data"))
+    selected = query if query in allowed else saved if saved in allowed else "data"
     st.session_state.industry_workspace_view = selected
     return selected
 
@@ -99,10 +101,12 @@ def render_industry_workspace() -> None:
         for key in ("industry_ui_model", "intake_result", "intake_last_request"):
             st.session_state.pop(key, None)
     st.session_state.intake_scope = scope
-    records = []
+    records, analytics = [], {}
     if all(scope):
         try:
-            records = _intake_store().list(*scope)
+            store = _intake_store()
+            records = store.list(*scope)
+            analytics = store.analytics(*scope)
         except (ValueError, OSError, sqlite3.Error):
             st.warning("暂时无法读取已保存的采集记录。请稍后重试，当前填写内容仍可导出备份。")
     # Register in the active runtime, including a fresh AppTest or hot reload.
@@ -111,7 +115,11 @@ def render_industry_workspace() -> None:
         "citrus_industry_workspace_v3",
         html='<div class="iw" data-industry-canvas="v3"></div>',
         css=(_ASSETS / "workspace.css").read_text(encoding="utf-8"),
-        js=(_ASSETS / "intake.js").read_text(encoding="utf-8") + "\n" + (_ASSETS / "workspace.js").read_text(encoding="utf-8"),
+        js="\n".join((
+            (_ASSETS / "intake.js").read_text(encoding="utf-8"),
+            (_ASSETS / "analytics.js").read_text(encoding="utf-8"),
+            (_ASSETS / "workspace.js").read_text(encoding="utf-8"),
+        )),
         isolate_styles=True,
     )
     canvas(
@@ -123,6 +131,7 @@ def render_industry_workspace() -> None:
             "intakeSchema": intake_schema(),
             "intakeScope": hashlib.sha256(repr(scope).encode()).hexdigest()[:20],
             "intakeRecords": records,
+            "intakeAnalytics": analytics,
             "intakeResult": st.session_state.get("intake_result"),
         },
         on_snapshot_change=_save_snapshot,

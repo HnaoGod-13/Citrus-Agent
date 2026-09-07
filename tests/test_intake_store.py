@@ -121,3 +121,35 @@ def test_attachment_and_repeat_limits_are_enforced():
         validate_document(doc)
     with pytest.raises(ValueError):
         IntakeStore("unused.db").list("", "")
+
+
+def test_private_analytics_use_saved_batch_values_without_attachments(tmp_path):
+    store = IntakeStore(tmp_path / "intake.db")
+    supply = supplier()
+    supply["fields"]["quality.brix"] = "12.6"
+    store.save("u", "p", supply, submit=True)
+    store.save("u", "p", dict(
+        side="processor",
+        fields={
+            "profile.organization": "测试加工厂",
+            "product.date": "2026-09-07",
+            "output.productMass": "500",
+            "release.conclusion": "合格",
+        },
+        rows={"materials": [dict(input="1000", unit="kg")]},
+        attachments=[],
+    ))
+    analytics = store.analytics("u", "p")
+    assert analytics["recordCount"] == 2
+    assert analytics["supplierCount"] == analytics["processorCount"] == 1
+    assert analytics["submittedCount"] == 1
+    assert analytics["supplyTons"] == 2
+    assert analytics["inputTons"] == 1
+    assert analytics["outputTons"] == .5
+    assert analytics["averageBrix"] == 12.6
+    assert analytics["origins"] == [{"label": "重庆", "value": 1}]
+    assert analytics["quality"]["qualified"] == 1
+    assert store.analytics("someone-else", "p")["recordCount"] == 0
+    blank_store = IntakeStore(tmp_path / "blank.db")
+    blank_store.save("u", "p", dict(side="supplier"))
+    assert blank_store.analytics("u", "p")["timeline"] == []
