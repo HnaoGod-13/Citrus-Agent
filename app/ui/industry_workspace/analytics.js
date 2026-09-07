@@ -79,7 +79,7 @@ function routeChart(origins, destination, esc) {
   if(!origins.length)return '<div class="viz-empty"><b>暂无可核验的区域流向</b><span>需要供应端产地和当前采购目的地共同形成。</span></div>';
   const selected=origins.slice(0,4), max=Math.max(1,...selected.map(p=>p.value));
   const total=selected.reduce((sum,p)=>sum+p.value,0);
-  return `<div class="viz-route-flow" role="img" aria-label="供应产地到采购目的地的流向示意"><div class="viz-route-list">${selected.map((p,i)=>`<article class="viz-route-origin"><span>${String(i+1).padStart(2,'0')}</span><div><b>${esc(p.label)}</b><i><em style="width:${Math.max(8,p.value/max*100)}%"></em></i></div><strong>${compact(p.value)}<small>批次</small></strong></article>`).join('')}</div><div class="viz-route-direction" aria-hidden="true"><span>候选汇入</span><i></i><b>→</b></div><div class="viz-route-target"><span>采购目的地</span><strong>${esc(destination||'待填写')}</strong><p>${selected.length} 个供应产地 · ${compact(total)} 个候选批次</p></div></div>`;
+  return `<div class="viz-route-flow" role="img" aria-label="供应产地到采购目的地的流向示意"><div class="viz-route-list">${selected.map((p,i)=>`<article class="viz-route-origin"><span>${String(i+1).padStart(2,'0')}</span><div><b>${esc(p.label)}</b><i><em style="width:${Math.max(8,p.value/max*100)}%"></em></i></div><strong>${compact(p.value)}<small>批次</small></strong></article>`).join('')}</div><div class="viz-route-direction" aria-hidden="true"><span>候选汇入</span><i></i><b>→</b></div><div class="viz-route-target"><span>采购目的地</span><strong>${esc(destination||'待填写')}</strong><p>${selected.length} 个产地 · ${compact(total)} 批次</p></div></div>`;
 }
 
 export function renderIndustryVisuals({tab, raw, request, header, tabs, button, svg, esc}) {
