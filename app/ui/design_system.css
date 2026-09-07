@@ -3117,7 +3117,7 @@ div[data-testid="stDataFrame"] * {
 
 .analytics-trend-period {
     color: #6b6b6b;
-    font-size: 11px;
+    font-size: 12px;
     font-weight: var(--weight-medium);
     letter-spacing: 0;
     line-height: 1.4;
@@ -3158,7 +3158,7 @@ div[data-testid="stDataFrame"] * {
     gap: 16px;
     padding-top: 2px;
     color: var(--text-secondary);
-    font-size: 11px;
+    font-size: 12px;
     line-height: 1.4;
 }
 
@@ -3271,7 +3271,7 @@ div[data-testid="stDataFrame"] * {
 .analytics-trend-axis-label {
     min-width: 0;
     color: #6b6b6b;
-    font-size: 11px;
+    font-size: 12px;
     font-variant-numeric: tabular-nums;
     letter-spacing: 0;
     line-height: 1.4;
@@ -3303,7 +3303,7 @@ div[data-testid="stDataFrame"] * {
 .analytics-trend-stats dt {
     margin: 0;
     color: #6b6b6b;
-    font-size: 11px;
+    font-size: 12px;
     font-weight: var(--weight-medium);
     letter-spacing: 0;
     line-height: 1.4;
@@ -4401,7 +4401,7 @@ div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label)
     }
 
     .analytics-trend-axis-label {
-        font-size: 10px;
+        font-size: 12px;
     }
 
     .analytics-trend-axis-desktop {

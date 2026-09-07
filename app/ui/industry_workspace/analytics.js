@@ -15,7 +15,9 @@ const VISUAL_PREVIEW = {
 const visualNumber = value => Number.isFinite(Number(value)) ? Number(value) : 0;
 const compact = value => {
   const n=visualNumber(value);
-  return Math.abs(n)>=1000 ? `${(n/1000).toFixed(1)}k` : Number.isInteger(n) ? String(n) : n.toFixed(1);
+  if(Math.abs(n)>=1000)return `${(n/1000).toFixed(1).replace(/\.0$/,'')}k`;
+  if(Number.isInteger(n))return String(n);
+  return n.toFixed(Math.abs(n)<1?2:1).replace(/0+$/,'').replace(/\.$/,'');
 };
 
 export function visualizationDataset(raw={}) {
@@ -50,36 +52,50 @@ export function visualizationCsv(raw={}) {
 
 function volumeChart(points, esc) {
   if(!points.length)return '<div class="viz-empty"><b>暂无可绘制的批次量数据</b><span>完成供应端采收量或生产端成品产量填报后自动生成。</span></div>';
-  const width=760,height=286,left=54,right=24,top=25,bottom=46,innerW=width-left-right,innerH=height-top-bottom;
-  const max=Math.max(1,...points.flatMap(p=>[p.supply,p.output]));
-  const x=i=>left+(points.length===1?innerW/2:i*innerW/(points.length-1));
-  const y=value=>top+innerH-(value/max)*innerH;
+  const width=1000,height=260,top=10,bottom=250;
+  const rawMax=Math.max(1,...points.flatMap(p=>[p.supply,p.output]));
+  const magnitude=10**Math.floor(Math.log10(rawMax));
+  const normalized=rawMax/magnitude;
+  const step=normalized<=1?1:normalized<=2?2:normalized<=5?5:10;
+  const max=step*magnitude;
+  const x=i=>((i+.5)/points.length)*width;
+  const y=value=>top+(1-value/max)*(bottom-top);
   const line=key=>points.map((p,i)=>`${i?'L':'M'} ${x(i).toFixed(1)} ${y(p[key]).toFixed(1)}`).join(' ');
-  const area=`${line('supply')} L ${x(points.length-1)} ${top+innerH} L ${x(0)} ${top+innerH} Z`;
-  const grids=[0,.25,.5,.75,1].map(r=>`<g><line x1="${left}" x2="${width-right}" y1="${top+innerH*(1-r)}" y2="${top+innerH*(1-r)}"/><text x="${left-12}" y="${top+innerH*(1-r)+4}">${compact(max*r)}</text></g>`).join('');
-  const labels=points.map((p,i)=>`<text class="axis-label" x="${x(i)}" y="${height-15}">${esc(p.label)}</text>`).join('');
-  const dots=points.map((p,i)=>`<g class="viz-point"><circle cx="${x(i)}" cy="${y(p.supply)}" r="4"/><title>${esc(p.label)} 供应 ${compact(p.supply)} 吨</title></g><g class="viz-point output"><circle cx="${x(i)}" cy="${y(p.output)}" r="4"/><title>${esc(p.label)} 成品 ${compact(p.output)} 吨</title></g>`).join('');
-  return `<svg class="viz-volume-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="供应量与成品产量趋势"><defs><linearGradient id="citrusArea" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#df810e" stop-opacity=".24"/><stop offset="1" stop-color="#df810e" stop-opacity="0"/></linearGradient></defs><g class="viz-grid">${grids}</g><path class="viz-area" d="${area}"/><path class="viz-line supply" d="${line('supply')}"/><path class="viz-line output" d="${line('output')}"/>${dots}${labels}</svg>`;
+  const area=`${line('supply')} L ${x(points.length-1).toFixed(1)} ${bottom} L ${x(0).toFixed(1)} ${bottom} Z`;
+  const ticks=[1,.75,.5,.25,0];
+  const grids=ticks.map(r=>`<line x1="0" x2="${width}" y1="${y(max*r).toFixed(1)}" y2="${y(max*r).toFixed(1)}"/>`).join('');
+  const yLabels=ticks.map(r=>`<span style="--y:${((1-r)*92+4).toFixed(1)}%">${compact(max*r)}</span>`).join('');
+  const xLabels=points.map((p,i)=>{
+    if(!/^\d{4}-\d{2}$/.test(p.label))return `<span title="${esc(p.label)}">${esc(p.label)}</span>`;
+    const showYear=i===0||!/^\d{4}-\d{2}$/.test(points[i-1].label)||points[i-1].label.slice(0,4)!==p.label.slice(0,4);
+    return `<span class="${showYear?'year-mark':''}" title="${esc(p.label)}">${showYear?`<small>${esc(p.label.slice(2,4))}</small>`:''}${esc(p.label.slice(5))}</span>`;
+  }).join('');
+  const markers=points.map((p,i)=>[
+    `<i class="viz-chart-point supply" style="--x:${((i+.5)/points.length*100).toFixed(2)}%;--y:${(4+(1-p.supply/max)*92).toFixed(2)}%" role="img" tabindex="0" aria-label="${esc(p.label)}供应量${compact(p.supply)}吨" title="${esc(p.label)} · 供应 ${compact(p.supply)} 吨"></i>`,
+    `<i class="viz-chart-point output" style="--x:${((i+.5)/points.length*100).toFixed(2)}%;--y:${(4+(1-p.output/max)*92).toFixed(2)}%" role="img" tabindex="0" aria-label="${esc(p.label)}成品产量${compact(p.output)}吨" title="${esc(p.label)} · 成品 ${compact(p.output)} 吨"></i>`,
+  ]).flat().join('');
+  return `<figure class="viz-volume-figure"><div class="viz-chart-shell"><div class="viz-chart-y-axis" aria-hidden="true">${yLabels}</div><div class="viz-chart-main"><div class="viz-chart-plot"><svg class="viz-volume-chart" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="供应量与成品产量趋势折线图"><g class="viz-grid">${grids}</g><path class="viz-area" d="${area}"/><path class="viz-line supply" d="${line('supply')}"/><path class="viz-line output" d="${line('output')}"/></svg>${markers}</div><div class="viz-chart-x-axis${points.length>8?' dense':''}" style="--columns:${points.length}" aria-hidden="true">${xLabels}</div></div></div><figcaption>仅展示有填报记录的月份，横向间距不代表连续月份；纵轴单位为吨</figcaption></figure>`;
 }
 
 function qualityChart(quality) {
   const total=quality.qualified+quality.pending+quality.unqualified;
   if(!total)return '<div class="viz-empty compact"><b>暂无质检结论</b><span>检测项目或成品放行结论录入后展示。</span></div>';
   const pass=Math.round(quality.qualified/total*100),pending=Math.round(quality.pending/total*100);
-  return `<div class="viz-quality"><div class="viz-donut" style="--pass:${pass*3.6}deg;--pending:${(pass+pending)*3.6}deg"><strong>${pass}%</strong><span>合格占比</span></div><dl><div><dt><i class="pass"></i>合格</dt><dd>${quality.qualified}</dd></div><div><dt><i class="pending"></i>待复核</dt><dd>${quality.pending}</dd></div><div><dt><i class="fail"></i>不合格</dt><dd>${quality.unqualified}</dd></div></dl></div>`;
+  const items=[['pass','合格',quality.qualified],['pending','待复核',quality.pending],['fail','不合格',quality.unqualified]];
+  return `<div class="viz-quality"><div class="viz-donut" style="--pass:${pass*3.6}deg;--pending:${(pass+pending)*3.6}deg" role="img" aria-label="合格占比${pass}%"><strong>${pass}%</strong><span>合格占比</span></div><div class="viz-quality-summary"><p>共计 <strong>${compact(total)}</strong> 条质检结论</p><dl>${items.map(([tone,label,value])=>`<div><dt><i class="${tone}"></i>${label}</dt><dd><strong>${compact(value)}</strong><span>${Math.round(value/total*100)}%</span></dd></div>`).join('')}</dl></div></div>`;
 }
 
 function originChart(origins, esc) {
   if(!origins.length)return '<div class="viz-empty"><b>暂无产地分布</b><span>供应端填写产地并保存后自动汇总。</span></div>';
   const max=Math.max(1,...origins.map(p=>p.value));
-  return `<div class="viz-origin-bars">${origins.map((p,i)=>`<div><span>${String(i+1).padStart(2,'0')}</span><b>${esc(p.label)}</b><i><em style="width:${Math.max(4,p.value/max*100)}%"></em></i><strong>${compact(p.value)} 批</strong></div>`).join('')}</div>`;
+  return `<div class="viz-origin-bars">${origins.map((p,i)=>`<article class="viz-origin-row"><header><span>${String(i+1).padStart(2,'0')}</span><b>${esc(p.label)}</b><strong>${compact(p.value)}<small>批</small></strong></header><i aria-hidden="true"><em style="width:${Math.max(4,p.value/max*100)}%"></em></i></article>`).join('')}</div>`;
 }
 
 function routeChart(origins, destination, esc) {
   if(!origins.length)return '<div class="viz-empty"><b>暂无可核验的区域流向</b><span>需要供应端产地和当前采购目的地共同形成。</span></div>';
   const selected=origins.slice(0,4), max=Math.max(1,...selected.map(p=>p.value));
   const total=selected.reduce((sum,p)=>sum+p.value,0);
-  return `<div class="viz-route-flow" role="img" aria-label="供应产地到采购目的地的流向示意"><div class="viz-route-list">${selected.map((p,i)=>`<article class="viz-route-origin"><span>${String(i+1).padStart(2,'0')}</span><div><b>${esc(p.label)}</b><i><em style="width:${Math.max(8,p.value/max*100)}%"></em></i></div><strong>${compact(p.value)}<small>批次</small></strong></article>`).join('')}</div><div class="viz-route-direction" aria-hidden="true"><span>候选汇入</span><i></i><b>→</b></div><div class="viz-route-target"><span>采购目的地</span><strong>${esc(destination||'待填写')}</strong><p>${selected.length} 个产地 · ${compact(total)} 批次</p></div></div>`;
+  return `<div class="viz-route-board" role="group" aria-label="主要供应产地与采购目的地信息汇总"><div class="viz-route-heading"><span>供应来源</span><strong>${selected.length} 个主要产地</strong></div><div class="viz-route-list">${selected.map((p,i)=>`<article class="viz-route-origin"><header><span>${String(i+1).padStart(2,'0')}</span><strong>${compact(p.value)}<small>批次</small></strong></header><b>${esc(p.label)}</b><i aria-hidden="true"><em style="width:${Math.max(8,p.value/max*100)}%"></em></i></article>`).join('')}</div><div class="viz-route-merge" aria-hidden="true"><i></i><span>待匹配汇入</span><i></i><b>↓</b></div><article class="viz-route-target"><div><span>采购目的地</span><strong>${esc(destination||'待填写')}</strong></div><dl><div><dt>来源范围</dt><dd>${selected.length} 个产地</dd></div><div><dt>记录规模</dt><dd>${compact(total)} 个批次</dd></div></dl></article></div>`;
 }
 
 export function renderIndustryVisuals({tab, raw, request, header, tabs, button, svg, esc}) {
@@ -87,14 +103,14 @@ export function renderIndustryVisuals({tab, raw, request, header, tabs, button, 
   const source=`<section class="viz-source ${preview?'preview':''}"><div><span>${preview?'结构预览':'当前账号实报'}</span><h2>${esc(d.source)}</h2><p>${preview?'当前账号尚无已保存采集记录，下方数字仅用于展示图表结构，不代表任何地区真实产量。':'仅汇总当前账号已保存的供应端与生产端记录，不包含外部统计数据。'}</p></div><dl><div><dt>统计范围</dt><dd>${d.recordCount} 份记录</dd></div><div><dt>更新时间</dt><dd>${esc(d.updatedAt)}</dd></div></dl></section>`;
   const legend='<div class="viz-legend"><span><i class="supply"></i>供应端采收量</span><span><i class="output"></i>生产端成品产量</span><small>统一折算为吨</small></div>';
   const metrics=`<div class="viz-kpis"><article><span>采集记录</span><b>${compact(d.recordCount)}</b><small>供应 ${d.supplierCount} · 生产 ${d.processorCount}</small></article><article><span>供应端采收量</span><b>${compact(d.supplyTons)}<em>吨</em></b><small>按批次填报数量折算</small></article><article><span>生产端成品量</span><b>${compact(d.outputTons)}<em>吨</em></b><small>由成品净产量换算</small></article><article><span>平均糖度</span><b>${d.averageBrix===null?'—':compact(d.averageBrix)}<em>°Brix</em></b><small>仅统计已填糖度的供应批次</small></article></div>`;
-  const volume=`<section class="panel viz-panel viz-wide"><div class="viz-panel-head"><div><span>VOLUME · TON</span><h2>供应与加工量趋势</h2><p>供应端采收量对比生产端成品净产量</p></div>${legend}</div>${volumeChart(d.timeline,esc)}</section>`;
-  const quality=`<section class="panel viz-panel"><div class="viz-panel-head"><div><span>QUALITY · RESULT</span><h2>质检结论构成</h2><p>来源于检测明细与成品放行结论</p></div></div>${qualityChart(d.quality)}</section>`;
+  const volume=`<section class="panel viz-panel viz-wide"><div class="viz-panel-head"><div><span>VOLUME · TON</span><h2>供应与加工量月度对比</h2><p>供应端采收量对比生产端成品净产量</p></div>${legend}</div>${volumeChart(d.timeline,esc)}</section>`;
+  const quality=`<section class="panel viz-panel viz-quality-panel"><div class="viz-panel-head"><div><span>QUALITY · RESULT</span><h2>质检结论构成</h2><p>来源于检测明细与成品放行结论</p></div></div>${qualityChart(d.quality)}</section>`;
   const origins=`<section class="panel viz-panel"><div class="viz-panel-head"><div><span>ORIGIN · BATCH</span><h2>供应批次产地分布</h2><p>按供应端批次数统计，不代表地区总产量</p></div></div>${originChart(d.origins,esc)}</section>`;
   const summary=metrics+`<div class="viz-dashboard">${volume}${quality}${origins}</div>`;
   const detail=`<div class="viz-detail-layout">${volume}<section class="panel viz-panel"><div class="viz-panel-head"><div><span>DATA · TABLE</span><h2>月度数据明细</h2><p>图表所用的同一组数据</p></div></div><div class="table-wrap"><table><thead><tr><th>月份</th><th>供应量（吨）</th><th>成品量（吨）</th></tr></thead><tbody>${d.timeline.map(p=>`<tr><td>${esc(p.label)}</td><td>${compact(p.supply)}</td><td>${compact(p.output)}</td></tr>`).join('')||'<tr><td colspan="3">暂无数据</td></tr>'}</tbody></table></div></section></div>`;
-  const region=`<div class="viz-region-layout"><section class="panel viz-panel"><div class="viz-panel-head"><div><span>REGION · FLOW</span><h2>产地与采购流向</h2><p>产地来自供应记录；终点来自当前会话采购需求</p></div></div>${routeChart(d.origins,request?.destination,esc)}<p class="viz-caption">流向图只表示候选关系，不表示已成交、已运输或已验收。</p></section>${origins}</div>`;
+  const region=`<div class="viz-region-layout"><section class="panel viz-panel"><div class="viz-panel-head"><div><span>REGION · FLOW</span><h2>区域供需位置关系</h2><p>产地来自供应记录；终点来自当前会话采购需求</p></div></div>${routeChart(d.origins,request?.destination,esc)}<p class="viz-caption">该图用于展示待匹配的区域关系，不表示已完成条件筛选、成交、运输或验收。</p></section>${origins}</div>`;
   const libraryItems=[
-    ['chart','供应与加工量趋势','采收量、投料量、成品量','1','已接入'],
+    ['chart','供应与加工量月度对比','采收量、成品量','1','已接入'],
     ['map','区域供需流向','供应产地、采购目的地','2','已接入'],
     ['shield','质量结论构成','检测项目、放行结论','0','已接入'],
     ['database','批次产地分布','供应批次、标准产地','2','已接入'],
