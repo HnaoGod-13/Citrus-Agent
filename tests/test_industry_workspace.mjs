@@ -66,6 +66,7 @@ test('generated report escapes organization text and keeps review caveat',()=>{
   assert.doesNotMatch(report,/采集<br>16/);
   assert.match(report,/须由使用单位复核后定稿/);
 });
+
 test('business report carries unit template metadata and completed work summary',()=>{
   const report=buildReportDocument({
     agency:'某县农业农村局',
@@ -91,4 +92,10 @@ test('business report carries unit template metadata and completed work summary'
   assert.match(report,/B-0905-001/);
   assert.match(report,/NFC 柑橘汁 · 榨汁线 A · SOP v3\.0/);
   assert.match(report,/检测报告待复核/);
+});
+
+test('operational workspace omits prototype boundary and session explanation strips',()=>{
+  for(const phrase of ['业务数据边界','供应、采购、匹配与对接在一个流程内完成','当前供应批次和候选企业为界面演示数据','class="session-note"','class="evidence-note"']){
+    assert.doesNotMatch(source,new RegExp(phrase));
+  }
 });

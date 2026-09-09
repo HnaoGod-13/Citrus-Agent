@@ -123,7 +123,7 @@ export function createIntakeController({root, model, data, setStateValue, render
   }
   function markup() {
     const side=state.side && schema.sides[state.side], step=state.steps[state.side] || 0;
-    const headline=`<header class="page-head"><div class="eyebrow">CITRUS AI · DATA INTAKE</div><h1>${side?e(side.title):'产业数据采集'}</h1><p class="subtitle">${side?e(side.subtitle):'连接种植、原料、加工与成品质检，沉淀可追溯的产业记录'}</p></header>`;
+    const headline=`<header class="page-head"><div class="eyebrow">CITRUS AI · DATA INTAKE</div><h1>${side?e(side.title):'产业数据采集'}</h1></header>`;
     const nav=`<div class="toolbar ic-toolbar"><div class="tabs">${button('采集入口','home')}${button('采集记录','records')}${button('标准依据','standards')}</div>${side?`<div class="actions">${button('导出采集表','print')}${button(state.pending?'保存中…':'保存草稿','save',true,state.pending?'disabled':'')}</div>`:''}</div>`;
     const status=state.message?`<div class="feedback" role="status">${e(state.message)}</div>`:'';
     if (state.panel==='records') return headline+nav+status+recordList();

@@ -3,6 +3,7 @@ import test from 'node:test';
 import {readFile} from 'node:fs/promises';
 
 const source=await readFile(new URL('../app/ui/industry_workspace/analytics.js',import.meta.url),'utf8');
+const styles=await readFile(new URL('../app/ui/industry_workspace/workspace.css',import.meta.url),'utf8');
 const {visualizationDataset,visualizationCsv,renderIndustryVisuals}=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
 
 test('empty accounts receive clearly labelled preview data',()=>{
@@ -70,4 +71,27 @@ test('volume chart keeps axis labels outside its stable svg canvas',()=>{
   const chart=html.match(/<svg\b[\s\S]*?<\/svg>/)?.[0];
   assert.ok(chart,'volume chart should include an SVG plotting canvas');
   assert.doesNotMatch(chart,/<text\b/);
+});
+
+test('visual dashboard keeps provenance fields without prototype explanation copy',()=>{
+  const html=renderIndustryVisuals({
+    tab:0,raw:{recordCount:0},request:{destination:'重庆加工园区'},
+    header:()=>'',tabs:()=>'',button:()=>'',svg:()=>'',esc:value=>String(value),
+  });
+  assert.match(html,/数据状态/);
+  assert.match(html,/数据来源/);
+  assert.match(html,/演示数据/);
+  for(const phrase of ['当前账号尚无已保存采集记录','仅用于展示图表结构','供应端采收量对比生产端成品净产量','图表所用的同一组数据']){
+    assert.doesNotMatch(html,new RegExp(phrase));
+  }
+});
+
+test('industry charts use one restrained publication palette and no decorative card gradients',()=>{
+  for(const token of ['--viz-neutral:#34353a','--viz-ochre:#8a6b3d','--viz-green:#4f6956','--viz-red:#8f5f5a']){
+    assert.ok(styles.includes(token),`missing palette token ${token}`);
+  }
+  assert.match(styles,/\.iw \.viz-line\.supply \{ stroke:var\(--viz-ochre\); \}/);
+  assert.match(styles,/\.iw \.viz-line\.output \{ stroke:var\(--viz-neutral\); \}/);
+  assert.doesNotMatch(styles,/\.iw \.ic-entry-(?:supplier|processor)[^\n]*linear-gradient/);
+  assert.doesNotMatch(styles,/\.iw \.viz-route-target[^\n]*box-shadow:(?!none)/);
 });
