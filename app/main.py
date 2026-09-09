@@ -1502,7 +1502,7 @@ def render_product_secondary_panel(view: str) -> None:
         "workspace": {
             "eyebrow": "CITRUS AI · WORKSPACE",
             "title": "工作台",
-            "description": "集中查看产业批次、供需匹配与 Agent 分析记录。",
+            "description": "",
             "items": (("批次采集", "Batch intake"), ("供需匹配", "Supply & demand"), ("报告与看板", "Reports & analytics")),
         },
         "knowledge": {
@@ -1565,12 +1565,11 @@ def render_product_secondary_panel(view: str) -> None:
             f'<div class="secondary-section-label">页面结构</div><div class="secondary-nav-stack">{rows}</div>',
             unsafe_allow_html=True,
         )
-    panel_note = (
-        "采集记录可保存与导出；商业对接操作仍保留为本次会话草稿。"
-        if view == "workspace"
-        else "页面数据为只读视图。Agent、模型配置与知识库内容不会在这里被静默修改。"
-    )
-    st.markdown(f'<div class="secondary-note">{panel_note}</div>', unsafe_allow_html=True)
+    if view != "workspace":
+        st.markdown(
+            '<div class="secondary-note">页面数据为只读视图。Agent、模型配置与知识库内容不会在这里被静默修改。</div>',
+            unsafe_allow_html=True,
+        )
 
 
 def render_sidebar(view: str = "chat") -> tuple[str, bool, bytes | None, str, str]:
