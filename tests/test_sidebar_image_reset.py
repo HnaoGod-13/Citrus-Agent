@@ -19,7 +19,9 @@ def sample_png() -> bytes:
 
 class SidebarImageResetTests(unittest.TestCase):
     def run_app(self) -> AppTest:
-        app = AppTest.from_file(str(APP_PATH), default_timeout=30).run()
+        app = AppTest.from_file(str(APP_PATH), default_timeout=30)
+        app.query_params["view"] = "chat"
+        app.run()
         self.assertEqual([], list(app.exception))
         return app
 
@@ -101,7 +103,8 @@ class SidebarImageResetTests(unittest.TestCase):
         self.assertEqual("deep", app.session_state.retrieval_mode)
         self.assertEqual([], list(app.get("button_group")))
 
-        app.button(key="product_nav_button_chat").click().run()
+        app.query_params["view"] = "chat"
+        app.run()
         self.assertEqual("deep", app.get("button_group")[0].value)
         self.assertEqual([], list(app.exception))
 

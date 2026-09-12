@@ -988,7 +988,7 @@ def _knowledge_quality_label(value: Any) -> str:
 def render_knowledge_page() -> None:
     _render_page_header(
         "CITRUS AI · KNOWLEDGE",
-        "知识库",
+        "知识与标准",
         "检索已入库的柑橘直接证据与可迁移工艺参考。",
         "Search direct citrus evidence and transferable processing references",
     )
@@ -1434,7 +1434,7 @@ def _render_run_trend(daily_rows: list[dict[str, Any]]) -> None:
 def render_analytics_page() -> None:
     _render_page_header(
         "CITRUS AI · ANALYTICS",
-        "分析",
+        "运行分析",
         "基于当前账户实际运行记录汇总使用情况与执行状态。",
         "Usage and execution status derived from your recorded runs",
     )
@@ -2015,9 +2015,408 @@ def render_settings_page() -> None:
                 st.rerun()
 
 
+def _go_view(view: str) -> None:
+    """Navigate inside the existing Streamlit session without discarding state."""
+    st.session_state.product_view = view
+    st.session_state.reset_main_scroll_position = True
+    try:
+        st.query_params["view"] = view
+    except Exception:
+        pass
+    rerun = getattr(st, "rerun", None)
+    if callable(rerun):
+        rerun()
+
+
+def _current_result() -> dict[str, Any]:
+    value = st.session_state.get("last_result")
+    return value if isinstance(value, dict) else {}
+
+
+def _result_value(item: Any, key: str, default: Any = "") -> Any:
+    if isinstance(item, dict):
+        return item.get(key, default)
+    return getattr(item, key, default)
+
+
+def _scoped_workspace_data() -> dict[str, Any] | None:
+    scope = _current_scope()
+    if scope is None:
+        return None
+    try:
+        return _load_workspace(_memory_db_path(), scope)
+    except (FileNotFoundError, OSError, sqlite3.Error, ValueError):
+        return None
+
+
+def render_identity_page() -> None:
+    ui_components.render_page_header(
+        "CITRUS AI · IDENTITY",
+        "身份选择",
+        "先确认组织与角色，再加载对应的数据范围、任务模板和审批权限。",
+    )
+    st.markdown(
+        """
+        <div class="identity-hero">
+            <div class="identity-kicker">CITRUS AI</div>
+            <h2>选择你的工作身份</h2>
+            <p>不同身份对应不同的数据范围、任务入口和审批边界。</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    roles = {
+        "研发工作者": "实验设计、工艺开发、数据分析与报告撰写",
+        "质量管理": "质量控制、检测分析、证据复核与合规审核",
+        "管理决策者": "项目进度、资源配置、路线确认与最终审批",
+    }
+    selected = st.radio(
+        "工作身份",
+        list(roles),
+        horizontal=True,
+        key="citrus_workbench_role",
+        label_visibility="collapsed",
+    )
+    cards = "".join(
+        f'<article class="identity-card{" is-selected" if role == selected else ""}">'
+        f'<span>{index:02d}</span><h3>{html.escape(role)}</h3>'
+        f'<p>{html.escape(description)}</p></article>'
+        for index, (role, description) in enumerate(roles.items(), 1)
+    )
+    st.markdown(f'<div class="identity-card-grid">{cards}</div>', unsafe_allow_html=True)
+    with st.container(key="identity_quick_task"):
+        st.markdown('<h3 class="section-title">快速创建任务</h3>', unsafe_allow_html=True)
+        task_col, project_col = st.columns([1.4, 1])
+        task_name = task_col.text_input(
+            "任务名称", placeholder="例如：沃柑 NFC 果汁工艺优化"
+        )
+        project_col.text_input("所属项目", placeholder="选择项目（可选）")
+        if st.button(
+            "创建任务并进入资料确认",
+            type="primary",
+            disabled=not task_name.strip(),
+        ):
+            st.session_state.workbench_task_name = task_name.strip()
+            _go_view("intake")
+
+
+def render_task_dashboard_page() -> None:
+    ui_components.render_page_header(
+        "WORKSPACE",
+        "工作台",
+        "以任务为中心，聚合进行中事项、风险待办和下一步动作。",
+    )
+    data = _scoped_workspace_data()
+    counts = (data or {}).get("counts", {})
+    sessions = list((data or {}).get("sessions", []))
+    metric_columns = st.columns(4)
+    metric_columns[0].metric("进行中任务", int(counts.get("sessions") or 0))
+    metric_columns[1].metric("待补资料", int(counts.get("review_samples") or 0))
+    metric_columns[2].metric("已完成运行", int(counts.get("completed_runs") or 0))
+    total_runs = int(counts.get("runs") or 0)
+    completed = int(counts.get("completed_runs") or 0)
+    metric_columns[3].metric(
+        "Agent 完成率", f"{completed / total_runs * 100:.0f}%" if total_runs else "—"
+    )
+    left, right = st.columns([1.15, 0.85])
+    with left:
+        st.subheader("优先处理")
+        if sessions:
+            rows = [_workspace_session_row(row) for row in sessions[:4]]
+            _render_table(rows, "当前没有待处理任务。", height=280, variant="priority")
+        else:
+            ui_components.render_empty_state(
+                "暂无进行中任务",
+                "创建首个业务任务后，进度与风险会集中显示在这里。",
+                icon="layout-grid",
+            )
+    with right:
+        st.subheader("我的任务流")
+        st.markdown(
+            """
+            <section class="task-flow-card">
+                <ol>
+                    <li><strong>导入或确认原始资料</strong><span>复用已有批次，也可在任务内直接上传</span></li>
+                    <li><strong>Agent 分析与提问</strong><span>给出证据等级、路线比较与风险边界</span></li>
+                    <li><strong>确认方案并提交</strong><span>生成报告，完成审核与归档</span></li>
+                </ol>
+            </section>
+            """,
+            unsafe_allow_html=True,
+        )
+    if st.button("新建业务任务", type="primary"):
+        _go_view("identity")
+
+
+def _render_industry_task_page(
+    view: str, industry_view: str, title: str, subtitle: str
+) -> None:
+    ui_components.render_page_header(f"TASK · {view.upper()}", title, subtitle)
+    ui_components.render_process_stepper(view)
+    st.session_state.industry_workspace_view = industry_view
+    try:
+        st.query_params["industry"] = industry_view
+    except Exception:
+        pass
+    ui_industry_pages.render_industry_workspace()
+
+
+def render_intake_page() -> None:
+    _render_industry_task_page(
+        "intake",
+        "data",
+        "资料确认",
+        "在任务内录入、复用和补充批次数据，确认后进入证据分析。",
+    )
+
+
+def render_evidence_page() -> None:
+    ui_components.render_page_header(
+        "TASK · ANALYSIS",
+        "分析与证据",
+        "拆解证据等级、规则命中和风险缺口，确保判断可回查。",
+    )
+    ui_components.render_process_stepper("evidence")
+    result = _current_result()
+    evidence = list(result.get("evidence") or [])
+    scores = list(result.get("scores") or [])
+    risks = list(result.get("quality_risks") or [])
+    direct = sum(
+        "直接"
+        in str(_result_value(item, "grade", _result_value(item, "evidence_grade", "")))
+        for item in evidence
+    )
+    metric_columns = st.columns(4)
+    metric_columns[0].metric("证据条目", len(evidence))
+    metric_columns[1].metric("直接证据", direct)
+    metric_columns[2].metric("候选路线", len(scores))
+    metric_columns[3].metric("风险提示", len(risks))
+    if not result:
+        ui_components.render_empty_state(
+            "尚未形成分析结果",
+            "先在资料确认页补齐批次信息，或从 Agent 对话发起一次完整分析。",
+            icon="search",
+        )
+        if st.button("打开 Agent 发起分析", type="primary"):
+            _go_view("chat")
+        return
+    score_rows = [
+        {
+            "候选路线": _result_value(item, "direction", "未命名路线"),
+            "匹配等级": _result_value(item, "match_level", "待评估"),
+            "证据支持": _result_value(item, "evidence_support", "未评估"),
+            "数据置信度": _result_value(item, "data_confidence", "待评估"),
+        }
+        for item in scores[:8]
+    ]
+    st.subheader("路线证据分布")
+    _render_table(score_rows, "当前结果没有可展示的路线评分。", height=320)
+    if risks:
+        st.subheader("风险提示")
+        st.markdown(
+            '<div class="risk-list">'
+            + "".join(
+                f'<div>{ui_components.status_badge("待复核", "warning")}'
+                f'<span>{html.escape(str(risk))}</span></div>'
+                for risk in risks[:6]
+            )
+            + "</div>",
+            unsafe_allow_html=True,
+        )
+
+
+def render_decision_page() -> None:
+    ui_components.render_page_header(
+        "TASK · DECISION",
+        "路线决策",
+        "并列比较候选路线，确认前可补充约束并重新评估。",
+    )
+    ui_components.render_process_stepper("decision")
+    scores = list(_current_result().get("scores") or [])
+    if not scores:
+        ui_components.render_empty_state(
+            "暂无可确认路线",
+            "完成一次带批次信息的分析后，候选路线会按真实评分显示。",
+            icon="decision",
+        )
+        return
+    cards = []
+    for index, item in enumerate(scores[:4]):
+        title = str(_result_value(item, "direction", "未命名路线"))
+        level = str(_result_value(item, "match_level", "待评估"))
+        evidence = str(_result_value(item, "evidence_support", "未评估"))
+        confidence = str(_result_value(item, "data_confidence", "待评估"))
+        cards.append(
+            f'<article class="route-card{" is-recommended" if index == 0 else ""}">'
+            f'<header><span>{"推荐方案" if index == 0 else "候选方案"}</span>'
+            f'<h3>{html.escape(title)}</h3></header><dl>'
+            f'<div><dt>匹配等级</dt><dd>{html.escape(level)}</dd></div>'
+            f'<div><dt>证据支持</dt><dd>{html.escape(evidence)}</dd></div>'
+            f'<div><dt>数据置信度</dt><dd>{html.escape(confidence)}</dd></div>'
+            "</dl></article>"
+        )
+    st.markdown(
+        '<div class="route-card-list">' + "".join(cards) + "</div>",
+        unsafe_allow_html=True,
+    )
+    st.caption(
+        "路线排序沿用当前 Agent 结果；正式采用前仍需核对企业能力、检测结论、设备状态和小试结果。"
+    )
+
+
+def render_process_page() -> None:
+    ui_components.render_page_header(
+        "TASK · PROCESS",
+        "工艺方案",
+        "将确认路线转成可编辑、可追溯、可审核的端到端工艺草案。",
+    )
+    ui_components.render_process_stepper("process")
+    plan = _current_result().get("processing_plan") or {}
+    stages = list(plan.get("stages") or []) if isinstance(plan, dict) else []
+    if not stages:
+        ui_components.render_empty_state(
+            "尚未生成工艺方案",
+            "确认路线后，系统会展示工序、参数来源、设备、状态和风险边界。",
+            icon="factory",
+        )
+        return
+    rows = []
+    for index, stage in enumerate(stages, 1):
+        steps = stage.get("steps") if isinstance(stage, dict) else []
+        rows.append(
+            {
+                "序号": f"{index:02d}",
+                "工艺阶段": _result_value(stage, "name", "未命名阶段"),
+                "工序": " → ".join(steps or []),
+                "操作与参数": _result_value(stage, "operation", "待补充"),
+                "质控与风险": _result_value(stage, "control", "待复核"),
+                "状态": "待确认",
+            }
+        )
+    _render_table(rows, "当前方案没有可展示的工序。", height=520)
+
+
+def render_matching_page() -> None:
+    ui_components.render_page_header(
+        "TASK · MATCHING",
+        "供需匹配",
+        "按硬条件过滤，再基于真实业务字段解释综合适配度。",
+    )
+    st.session_state.industry_workspace_view = "market"
+    try:
+        st.query_params["industry"] = "market"
+    except Exception:
+        pass
+    ui_industry_pages.render_industry_workspace()
+
+
+def render_report_page() -> None:
+    _render_industry_task_page(
+        "report",
+        "reports",
+        "报告撰写",
+        "把任务资料、证据、决策和工艺自动组装成可复核的报告初稿。",
+    )
+
+
+def render_review_page() -> None:
+    ui_components.render_page_header(
+        "TASK · REVIEW",
+        "审核发布",
+        "自动检查负责定位问题，最终确认、签署与发布由授权人员完成。",
+    )
+    ui_components.render_process_stepper("review")
+    result = _current_result()
+    evidence = list(result.get("evidence") or [])
+    risks = list(result.get("quality_risks") or [])
+    plan = result.get("processing_plan") if isinstance(result.get("processing_plan"), dict) else {}
+    report_ready = bool(str(result.get("report") or "").strip())
+    checks = [
+        ("数据字段完整性", bool(result.get("batch")), "已通过" if result.get("batch") else "待补充"),
+        ("证据引用与定位", bool(evidence), "已通过" if evidence else "待补充"),
+        ("风险边界表达", bool(risks), "已检查" if risks else "待人工确认"),
+        ("工艺方案结构", bool(plan.get("stages")), "已通过" if plan.get("stages") else "待生成"),
+        ("报告初稿", report_ready, "已生成" if report_ready else "待生成"),
+    ]
+    rows = [
+        {
+            "审核项目": name,
+            "状态": status,
+            "责任边界": "自动检查" if passed else "需要人工处理",
+        }
+        for name, passed, status in checks
+    ]
+    metric_columns = st.columns(4)
+    metric_columns[0].metric(
+        "自动检查", f"{sum(passed for _name, passed, _status in checks)} / {len(checks)}"
+    )
+    metric_columns[1].metric("人工确认", sum(not passed for _name, passed, _status in checks))
+    metric_columns[2].metric("风险条目", len(risks))
+    metric_columns[3].metric("发布状态", "待审核")
+    _render_table(rows, "当前没有审核项目。", height=330, variant="settings")
+    st.info(
+        "系统不会自动对外发布、签署或形成生产放行结论。请由具备权限的人员复核并完成最终操作。"
+    )
+
+
+def render_assets_page() -> None:
+    ui_components.render_page_header(
+        "DATA ASSETS",
+        "数据资产",
+        "统一查看批次、检测、设备、SOP 与任务引用关系。",
+    )
+    data = _scoped_workspace_data()
+    counts = (data or {}).get("counts", {})
+    metric_columns = st.columns(4)
+    metric_columns[0].metric("批次样本", int(counts.get("samples") or 0))
+    metric_columns[1].metric("分析运行", int(counts.get("runs") or 0))
+    metric_columns[2].metric("会话任务", int(counts.get("sessions") or 0))
+    metric_columns[3].metric("待复核", int(counts.get("review_samples") or 0))
+    samples = [
+        _workspace_sample_row(row)
+        for row in list((data or {}).get("samples", []))
+    ]
+    _render_table(samples, "当前账号还没有可展示的数据资产。", height=480)
+
+
+def render_results_page() -> None:
+    ui_components.render_page_header(
+        "RESULT CENTER",
+        "成果中心",
+        "集中查看报告、方案和证据快照，并追溯到来源任务。",
+    )
+    data = _scoped_workspace_data()
+    runs = list((data or {}).get("runs", []))
+    counts = (data or {}).get("counts", {})
+    metric_columns = st.columns(4)
+    metric_columns[0].metric("成果运行", int(counts.get("completed_runs") or 0))
+    metric_columns[1].metric(
+        "报告草稿", sum(bool(str(row.get("final_output") or "").strip()) for row in runs)
+    )
+    metric_columns[2].metric("关联任务", int(counts.get("sessions") or 0))
+    metric_columns[3].metric("异常运行", int(counts.get("failed_runs") or 0))
+    rows = [_workspace_run_row(row) for row in runs]
+    _render_table(
+        rows,
+        "当前账号还没有可展示的成果。",
+        height=500,
+        variant="workspace",
+    )
+
+
 _PAGE_RENDERERS = {
-    "workspace": render_workspace_page,
-    "工作台": render_workspace_page,
+    "identity": render_identity_page,
+    "workspace": render_task_dashboard_page,
+    "intake": render_intake_page,
+    "evidence": render_evidence_page,
+    "decision": render_decision_page,
+    "process": render_process_page,
+    "matching": render_matching_page,
+    "report": render_report_page,
+    "review": render_review_page,
+    "assets": render_assets_page,
+    "results": render_results_page,
+    "工作台": render_task_dashboard_page,
     "knowledge": render_knowledge_page,
     "知识库": render_knowledge_page,
     "analytics": render_analytics_page,

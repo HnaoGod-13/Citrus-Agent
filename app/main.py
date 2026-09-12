@@ -1120,7 +1120,23 @@ def _memory_identity_matches_authentication(
     return bool(normalized_authenticated_id) and normalized_user_id == normalized_authenticated_id
 
 
-PRODUCT_VIEWS = {"chat", "workspace", "knowledge", "analytics", "settings"}
+PRODUCT_VIEWS = {
+    "chat",
+    "identity",
+    "workspace",
+    "intake",
+    "evidence",
+    "decision",
+    "process",
+    "matching",
+    "report",
+    "review",
+    "assets",
+    "results",
+    "knowledge",
+    "analytics",
+    "settings",
+}
 
 
 def current_product_view() -> str:
@@ -1132,7 +1148,7 @@ def current_product_view() -> str:
         view = state_view
         _set_query_value("view", view)
     else:
-        view = "chat"
+        view = "identity"
         _set_query_value("view", view)
 
     if state_view in PRODUCT_VIEWS and state_view != view:
@@ -1572,16 +1588,19 @@ def render_product_secondary_panel(view: str) -> None:
         )
 
 
-def render_sidebar(view: str = "chat") -> tuple[str, bool, bytes | None, str, str]:
+def render_sidebar(
+    view: str = "chat",
+) -> tuple[str, bool, bytes | None, str, str, str]:
     with st.sidebar:
         if view != "chat":
-            render_product_secondary_panel(view)
+            agent_prompt = ui_components.render_agent_panel(view)
             return (
                 "",
                 False,
                 None,
                 "image/jpeg",
                 normalize_retrieval_mode(st.session_state.get("retrieval_mode")),
+                agent_prompt,
             )
 
         st.markdown(
@@ -1722,6 +1741,7 @@ def render_sidebar(view: str = "chat") -> tuple[str, bool, bytes | None, str, st
         image_bytes,
         image_mime_type,
         retrieval_mode,
+        "",
     )
 
 
@@ -4563,7 +4583,21 @@ def main() -> None:
         image_bytes,
         image_mime_type,
         retrieval_mode,
+        agent_panel_prompt,
     ) = render_sidebar(active_view)
+
+    if active_view != "chat" and agent_panel_prompt:
+        st.session_state.product_view = "chat"
+        _set_query_value("view", "chat")
+        handle_prompt(
+            agent_panel_prompt,
+            api_key,
+            "",
+            False,
+            None,
+            "image/jpeg",
+            retrieval_mode=retrieval_mode,
+        )
 
     if active_view == "chat":
         if not st.session_state.agent_messages:

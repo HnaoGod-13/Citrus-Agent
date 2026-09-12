@@ -9,11 +9,29 @@ import streamlit as st
 
 
 NAV_ITEMS = (
-    ("chat", "message-circle", "对话", "Chat"),
+    ("identity", "shield", "身份选择", "Identity"),
     ("workspace", "layout-grid", "工作台", "Workspace"),
-    ("knowledge", "book-open", "知识库", "Knowledge"),
-    ("analytics", "chart-no-axes", "分析", "Analytics"),
+    ("intake", "file-text", "资料确认", "Data intake"),
+    ("evidence", "search", "分析与证据", "Evidence"),
+    ("decision", "decision", "路线决策", "Decision"),
+    ("process", "factory", "工艺方案", "Process"),
+    ("matching", "share", "供需匹配", "Matching"),
+    ("report", "file-text", "报告撰写", "Report"),
+    ("review", "shield", "审核发布", "Review"),
+    ("assets", "database", "数据资产", "Assets"),
+    ("results", "folder", "成果中心", "Results"),
+    ("knowledge", "book-open", "知识与标准", "Knowledge"),
+    ("analytics", "chart-no-axes", "运行分析", "Analytics"),
     ("settings", "settings", "设置", "Settings"),
+)
+
+WORKFLOW_STEPS = (
+    ("intake", "资料确认"),
+    ("evidence", "分析证据"),
+    ("decision", "路线决策"),
+    ("process", "工艺方案"),
+    ("report", "报告撰写"),
+    ("review", "审核发布"),
 )
 
 
@@ -153,15 +171,17 @@ def render_primary_navigation(
             f'{item_icon}<span>{html.escape(zh_label)}</span></a>'
         )
 
-    chat_href = html.escape(_view_url("chat", context_token), quote=True)
+    home_href = html.escape(_view_url("workspace", context_token), quote=True)
+    create_href = html.escape(_view_url("identity", context_token), quote=True)
     settings_href = html.escape(_view_url("settings", context_token), quote=True)
     st.markdown(
         f"""
         <nav class="citrus-primary-rail" aria-label="产品导航">
-            <a class="primary-brand" href="{chat_href}" aria-label="Citrus AI 首页"{passive_link}>
+            <a class="primary-brand" href="{home_href}" aria-label="Citrus AI 首页"{passive_link}>
                 <span class="primary-brand-mark">{icon_svg("citrus", 32)}</span>
-                <span class="primary-brand-word">CITRUS AI</span>
+                <span class="primary-brand-copy"><span class="primary-brand-word">Citrus AI</span><small>INDUSTRY AGENT</small></span>
             </a>
+            <a class="primary-create" href="{create_href}"{passive_link}>{icon_svg("plus", 18)}<span>新建业务任务</span></a>
             <div class="primary-nav-list">{"".join(items)}</div>
             <a class="primary-user" href="{settings_href}"{passive_link}>
                 <span class="primary-user-avatar">CA</span>
@@ -179,7 +199,14 @@ def render_primary_navigation(
                 "Citrus AI 首页",
                 key="product_brand_button",
                 on_click=on_view_change,
-                args=("chat",),
+                args=("workspace",),
+            )
+        with st.container(key="product_create_action"):
+            st.button(
+                "新建业务任务",
+                key="product_create_button",
+                on_click=on_view_change,
+                args=("identity",),
             )
         with st.container(key="product_nav_actions"):
             for view, _icon, zh_label, en_label in NAV_ITEMS:
@@ -221,6 +248,10 @@ def render_top_actions(
     )
     st.markdown(
         f"""
+        <div class="citrus-topbar-context">
+            <span class="topbar-context-icon">{icon_svg("factory", 19)}</span>
+            <span><strong>柑橘产业链 Agent</strong><small>智能决策与加工工作台</small></span>
+        </div>
         <div class="citrus-top-actions">
             <a class="top-icon-action" href="{settings_href}" aria-label="帮助与系统信息"{passive_link}>
                 {icon_svg("help-circle", 20)}
@@ -302,17 +333,206 @@ def render_page_header(
     *,
     icon: str = "file-text",
 ) -> None:
+    del icon
     st.markdown(
-        f"""
-        <header class="product-page-header">
-            <div class="page-header-icon">{icon_svg(icon, 20)}</div>
-            <div class="page-header-eyebrow">{html.escape(eyebrow)}</div>
-            <h1>{html.escape(title)}</h1>
-            <p>{html.escape(description)}</p>
-        </header>
-        """,
+        '<header class="product-page-header workbench-page-header">'
+        f'<div class="product-page-eyebrow">{html.escape(eyebrow)}</div>'
+        f'<h1 class="product-page-title">{html.escape(title)}</h1>'
+        f'<p class="product-page-subtitle">{html.escape(description)}</p>'
+        '</header>',
         unsafe_allow_html=True,
     )
+
+
+def render_process_stepper(current: str) -> None:
+    """Render the shared six-step task workflow."""
+    keys = [key for key, _label in WORKFLOW_STEPS]
+    try:
+        current_index = keys.index(current)
+    except ValueError:
+        current_index = 0
+    items = []
+    for index, (key, label) in enumerate(WORKFLOW_STEPS):
+        state = (
+            " is-complete"
+            if index < current_index
+            else " is-active"
+            if index == current_index
+            else ""
+        )
+        marker = icon_svg("shield", 13) if index < current_index else str(index + 1)
+        items.append(
+            f'<div class="process-step{state}" data-step="{html.escape(key)}">'
+            f'<span class="process-step-marker">{marker}</span>'
+            f'<span class="process-step-label">{html.escape(label)}</span></div>'
+        )
+    st.markdown(
+        '<nav class="process-stepper" aria-label="任务流程">'
+        + "".join(items)
+        + "</nav>",
+        unsafe_allow_html=True,
+    )
+
+
+def status_badge(label: str, tone: str = "neutral") -> str:
+    safe_tone = (
+        tone
+        if tone in {"neutral", "success", "warning", "danger", "dark"}
+        else "neutral"
+    )
+    return f'<span class="status-badge is-{safe_tone}">{html.escape(label)}</span>'
+
+
+def render_metric_cards(
+    items: list[tuple[str, str, str]], *, columns: int = 4
+) -> None:
+    safe_columns = min(max(int(columns), 1), 4)
+    cards = []
+    for label, value, note in items:
+        cards.append(
+            '<article class="workbench-metric">'
+            f'<span>{html.escape(str(label))}</span>'
+            f'<strong>{html.escape(str(value))}</strong>'
+            f'<small>{html.escape(str(note))}</small></article>'
+        )
+    st.markdown(
+        f'<section class="workbench-metrics cols-{safe_columns}">'
+        + "".join(cards)
+        + "</section>",
+        unsafe_allow_html=True,
+    )
+
+
+def section_card(
+    title: str, body: str, *, eyebrow: str = "", class_name: str = ""
+) -> str:
+    eyebrow_html = (
+        f'<span class="section-card-eyebrow">{html.escape(eyebrow)}</span>'
+        if eyebrow
+        else ""
+    )
+    safe_class = html.escape(class_name, quote=True)
+    return (
+        f'<section class="workbench-section {safe_class}"><header>{eyebrow_html}'
+        f'<h2>{html.escape(title)}</h2></header>'
+        f'<div class="workbench-section-body">{body}</div></section>'
+    )
+
+
+def render_empty_state(
+    title: str, description: str, *, icon: str = "file-text"
+) -> None:
+    st.markdown(
+        f'<section class="workbench-empty">{icon_svg(icon, 25)}'
+        f'<strong>{html.escape(title)}</strong>'
+        f'<p>{html.escape(description)}</p></section>',
+        unsafe_allow_html=True,
+    )
+
+
+def render_agent_panel(view: str) -> str:
+    """Render one contextual Agent panel and return a submitted prompt."""
+    context = {
+        "identity": (
+            "身份说明",
+            "先确认组织与角色，系统会据此限定数据范围和可执行动作。",
+            ["不同身份有什么区别？", "我应该选择哪个身份？"],
+        ),
+        "workspace": (
+            "当前重点",
+            "优先处理资料不完整或等待确认的任务，再推进后续路线与报告。",
+            ["今天最值得先做什么？", "查看需要我确认的任务"],
+        ),
+        "intake": (
+            "缺失项检查",
+            "我会检查批次字段、检测状态和附件，但不会把缺失数据推断为已确认。",
+            ["还缺哪些资料？", "这批原料可以开始分析吗？"],
+        ),
+        "evidence": (
+            "证据边界",
+            "我会区分直接证据、参考证据与证据不足，并保留可回查来源。",
+            ["解释当前证据强弱", "有哪些风险需要补证？"],
+        ),
+        "decision": (
+            "路线建议",
+            "推荐基于批次事实、规则与可核验证据；确认前仍可补充约束重新比较。",
+            ["为什么推荐首选路线？", "加入成本约束重新比较"],
+        ),
+        "process": (
+            "方案优化",
+            "我会区分企业 SOP、文献参数和待小试参数，避免把候选值写成放行参数。",
+            ["哪些参数必须小试？", "检查工艺风险点"],
+        ),
+        "matching": (
+            "匹配解释",
+            "先核验产品、质量、产能与交付硬条件，再解释综合适配度。",
+            ["解释首选匹配原因", "还有哪些条件未满足？"],
+        ),
+        "report": (
+            "撰写协作",
+            "我可以改写章节、补充证据索引并检查敏感表述，任务事实保持不变。",
+            ["检查报告证据边界", "改写执行摘要"],
+        ),
+        "review": (
+            "发布前检查",
+            "自动检查只负责定位问题；最终确认、签署和发布由具备权限的人员完成。",
+            ["列出待人工确认项", "生成审核意见草稿"],
+        ),
+        "assets": (
+            "数据复用",
+            "我会标注来源、版本、权限与关联任务，避免重复录入和越权引用。",
+            ["查找可复用数据", "哪些资产即将过期？"],
+        ),
+        "results": (
+            "成果检索",
+            "可以按任务、版本与成果类型查找，并追溯到生成它的原始任务。",
+            ["汇总最近成果", "比较两个报告版本"],
+        ),
+        "knowledge": (
+            "知识解释",
+            "我会说明来源差异、证据等级和适用条件，不把弱证据当作确定结论。",
+            ["如何判断证据强弱？", "查找适用的行业标准"],
+        ),
+        "analytics": (
+            "运行诊断",
+            "我会基于实际运行记录解释完成率、耗时与异常，不虚构成本或 Token 数据。",
+            ["解释最近的运行瓶颈", "有哪些可执行改进？"],
+        ),
+        "settings": (
+            "设置影响",
+            "模型、权限和数据生命周期设置会影响可见范围、能力状态与系统安全。",
+            ["当前启用了哪些模型？", "数据如何隔离与保存？"],
+        ),
+    }.get(
+        view,
+        ("当前上下文", "我会沿用当前任务上下文继续协作。", ["总结当前任务", "推荐下一步"]),
+    )
+    title, summary, questions = context
+    st.markdown(
+        '<div class="agent-panel-brand"><span class="agent-panel-mark">'
+        + icon_svg("citrus", 19)
+        + '</span><strong>Citrus Agent</strong><span class="agent-online">在线</span></div>'
+        f'<div class="agent-panel-message">你好，我已理解当前页面。{html.escape(summary)}</div>'
+        f'<section class="agent-context-card"><div>{icon_svg("activity", 17)}'
+        f'<strong>{html.escape(title)}</strong></div><p>{html.escape(summary)}</p></section>',
+        unsafe_allow_html=True,
+    )
+    pending = ""
+    for index, question in enumerate(questions):
+        if st.button(
+            question,
+            key=f"agent_quick_{view}_{index}",
+            width="stretch",
+        ):
+            pending = question
+    with st.form(key=f"agent_panel_form_{view}", border=False):
+        prompt = st.text_input(
+            "询问当前页面或继续任务",
+            placeholder="询问当前页面或继续任务…",
+            label_visibility="collapsed",
+        )
+        submitted = st.form_submit_button("发送给 Agent", width="stretch")
+    return prompt.strip() if submitted and prompt.strip() else pending
 
 
 def render_empty_panel(title: str, description: str, *, icon: str = "folder") -> None:
