@@ -5644,7 +5644,7 @@ div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label)
     max-width: var(--secondary-panel-width) !important;
     height: calc(100vh - 80px) !important;
     margin-left: 0 !important;
-    background: #fbfbfb !important;
+    background: #fafafa !important;
     border-right: 0 !important;
     border-left: 1px solid var(--border) !important;
     box-shadow: none !important;
@@ -5652,9 +5652,35 @@ div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label)
 
 [data-testid="stSidebar"] > div,
 [data-testid="stSidebarContent"] {
-    height: 100%;
-    padding: 16px 16px 20px !important;
+    box-sizing: border-box;
+    width: calc(100% - 28px) !important;
+    height: calc(100% - 28px) !important;
+    margin: 14px !important;
+    padding: 15px 14px 14px !important;
+    overflow: hidden !important;
+    background: var(--surface) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: 14px !important;
+    box-shadow: 0 8px 26px rgba(17, 17, 17, 0.035) !important;
+}
+
+[data-testid="stSidebarContent"] {
+    display: flex !important;
+    flex-direction: column;
+}
+
+[data-testid="stSidebarContent"] > [data-testid="stSidebarUserContent"] {
+    flex: 1 1 auto;
+    min-height: 0;
+    padding: 0 !important;
+    overflow-x: hidden !important;
     overflow-y: auto !important;
+}
+
+[data-testid="stSidebarUserContent"] > div,
+[data-testid="stSidebarUserContent"] > div > [data-testid="stVerticalBlock"] {
+    height: 100% !important;
+    min-height: 100% !important;
 }
 
 [data-testid="stMain"] {
@@ -5672,13 +5698,13 @@ div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label)
     position: fixed;
     top: 0;
     left: var(--primary-rail-width);
-    right: var(--secondary-panel-width);
+    right: 0;
     z-index: 985;
     display: flex;
     height: 80px;
     align-items: center;
     gap: 11px;
-    padding: 0 28px;
+    padding: 0 calc(var(--secondary-panel-width) + 28px) 0 28px;
     background: rgba(252, 252, 252, 0.96);
     border-bottom: 1px solid var(--border);
     backdrop-filter: blur(12px);
@@ -5804,14 +5830,101 @@ div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label)
     text-align: left;
 }
 
-[data-testid="stSidebar"] [class*="st-key-agent_panel_form_"] {
+[data-testid="stSidebar"] [class*="st-key-agent_quick_"] button::after {
+    content: "\2192";
+    margin-left: auto;
+    color: var(--text-tertiary);
+    font-size: 15px;
+    line-height: 1;
+}
+
+[data-testid="stSidebar"] [class*="st-key-agent_composer_"] {
+    flex: 0 0 auto !important;
     margin-top: auto;
     padding-top: 14px;
 }
 
-[data-testid="stSidebar"] [class*="st-key-agent_panel_form_"] [data-testid="stForm"] {
+[data-testid="stSidebar"] [data-testid="stLayoutWrapper"]:has(> [class*="st-key-agent_composer_"]) {
+    flex: 0 0 auto !important;
+    margin-top: auto !important;
+}
+
+[data-testid="stSidebar"] [class*="st-key-agent_composer_"] [data-testid="stForm"] {
     padding: 0 !important;
     border: 0 !important;
+    border-radius: 12px !important;
+    background: transparent !important;
+}
+
+[data-testid="stSidebar"] [class*="st-key-agent_composer_"] [data-testid="stForm"] > [data-testid="stVerticalBlock"] {
+    position: relative;
+    display: block !important;
+    min-height: 56px;
+}
+
+[data-testid="stSidebar"] [class*="st-key-agent_composer_"] [data-testid="stTextInputRootElement"] {
+    min-height: 56px;
+    padding: 0 58px 0 14px;
+    background: var(--surface) !important;
+    border: 1px solid var(--border-strong) !important;
+    border-radius: 12px !important;
+    box-shadow: 0 1px 2px rgba(17, 17, 17, 0.02) !important;
+}
+
+[data-testid="stSidebar"] [class*="st-key-agent_composer_"] [data-testid="stTextInputRootElement"]:focus-within {
+    border-color: #a6aaa8 !important;
+    box-shadow: 0 0 0 3px rgba(28, 28, 28, 0.055) !important;
+}
+
+[data-testid="stSidebar"] [class*="st-key-agent_composer_"] input {
+    height: 54px !important;
+    padding: 0 !important;
+    color: var(--text-primary) !important;
+    background: transparent !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    font-size: 13px !important;
+}
+
+[data-testid="stSidebar"] [class*="st-key-agent_composer_"] [data-testid="stForm"] > [data-testid="stVerticalBlock"] > [data-testid="stElementContainer"]:last-child {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    z-index: 2;
+    width: 44px !important;
+    height: 44px !important;
+}
+
+[data-testid="stSidebar"] [class*="st-key-agent_composer_"] [data-testid="stFormSubmitButton"],
+[data-testid="stSidebar"] [class*="st-key-agent_composer_"] [data-testid="stFormSubmitButton"] button {
+    width: 44px !important;
+    height: 44px !important;
+}
+
+[data-testid="stSidebar"] [class*="st-key-agent_composer_"] [data-testid="stFormSubmitButton"] button {
+    min-height: 44px !important;
+    padding: 0 !important;
+    color: #ffffff !important;
+    background: #111111 !important;
+    border: 1px solid #111111 !important;
+    border-radius: 10px !important;
+    box-shadow: 0 3px 10px rgba(17, 17, 17, 0.15) !important;
+}
+
+[data-testid="stSidebar"] [class*="st-key-agent_composer_"] [data-testid="stFormSubmitButton"] button:hover {
+    background: #2a2a2a !important;
+    border-color: #2a2a2a !important;
+    transform: translateY(-1px);
+}
+
+[data-testid="stSidebar"] [class*="st-key-agent_composer_"] [data-testid="stFormSubmitButton"] button p {
+    display: none !important;
+}
+
+[data-testid="stSidebar"] [class*="st-key-agent_composer_"] [data-testid="stFormSubmitButton"] [data-testid="stIconMaterial"] {
+    margin: 0 !important;
+    color: #ffffff !important;
+    font-size: 21px !important;
 }
 
 [class*="st-key-product_page_shell"] > div[data-testid="stVerticalBlock"] {

@@ -525,13 +525,19 @@ def render_agent_panel(view: str) -> str:
             width="stretch",
         ):
             pending = question
-    with st.form(key=f"agent_panel_form_{view}", border=False):
-        prompt = st.text_input(
-            "询问当前页面或继续任务",
-            placeholder="询问当前页面或继续任务…",
-            label_visibility="collapsed",
-        )
-        submitted = st.form_submit_button("发送给 Agent", width="stretch")
+    with st.container(key=f"agent_composer_{view}"):
+        with st.form(key=f"agent_panel_form_{view}", border=False):
+            prompt = st.text_input(
+                "询问当前页面或继续任务",
+                placeholder="有问题尽管问我…",
+                label_visibility="collapsed",
+            )
+            submitted = st.form_submit_button(
+                "发送",
+                icon=":material/arrow_upward:",
+                help="发送给 Agent",
+                width="content",
+            )
     return prompt.strip() if submitted and prompt.strip() else pending
 
 
