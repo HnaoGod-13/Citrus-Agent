@@ -5542,6 +5542,7 @@ div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label)
     padding: 7px 11px 5px;
     color: var(--text-tertiary);
     font-size: 11px;
+    line-height: 18px;
 }
 
 .primary-nav-item {
@@ -5617,7 +5618,8 @@ div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label)
 }
 
 [class*="st-key-product_nav_actions"] {
-    top: 147px;
+    top: 172px;
+    width: calc(var(--primary-rail-width) - 33px);
     gap: 2px;
 }
 

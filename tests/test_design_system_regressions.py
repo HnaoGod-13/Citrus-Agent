@@ -305,6 +305,21 @@ class DesignSystemRegressionTests(unittest.TestCase):
         )
         self.assertIn("position: absolute !important;", css)
 
+    def test_compact_navigation_overlay_starts_after_section_label(self) -> None:
+        css = CSS_PATH.read_text(encoding="utf-8-sig")
+        label_start = css.rindex(".primary-nav-list::before {")
+        label_rule = css[label_start : css.index("}", label_start) + 1]
+        overlay_selector = '[class*="st-key-product_nav_actions"] {'
+        overlay_start = css.rindex(overlay_selector)
+        overlay_rule = css[overlay_start : css.index("}", overlay_start) + 1]
+
+        self.assertIn("line-height: 18px;", label_rule)
+        self.assertIn("top: 172px;", overlay_rule)
+        self.assertIn(
+            "width: calc(var(--primary-rail-width) - 33px);",
+            overlay_rule,
+        )
+
     def test_compact_desktop_stacks_task_cards_before_they_overflow(self) -> None:
         css = CSS_PATH.read_text(encoding="utf-8-sig")
         compact_start = css.index("@media (min-width: 900px) and (max-width: 1099px) {")
