@@ -6372,3 +6372,14 @@ div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label)
         min-width: 78px;
     }
 }
+
+@media (min-width: 761px) and (max-width: 1480px) {
+    .citrus-top-actions .top-share-action {
+        width: 124px;
+        padding: 0 14px;
+    }
+
+    .citrus-top-actions .top-share-action span {
+        display: inline;
+    }
+}
