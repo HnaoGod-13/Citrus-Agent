@@ -430,8 +430,8 @@ def render_empty_state(
     )
 
 
-def render_agent_panel(view: str) -> str:
-    """Render one contextual Agent panel and return a submitted prompt."""
+def render_agent_panel(view: str) -> tuple[str, Any | None]:
+    """Render one contextual Agent panel and return prompt plus optional image."""
     context = {
         "identity": (
             "身份说明",
@@ -512,7 +512,6 @@ def render_agent_panel(view: str) -> str:
         '<div class="agent-panel-brand"><span class="agent-panel-mark">'
         + icon_svg("citrus", 19)
         + '</span><strong>Citrus Agent</strong><span class="agent-online">在线</span></div>'
-        f'<div class="agent-panel-message">你好，我已理解当前页面。{html.escape(summary)}</div>'
         f'<section class="agent-context-card"><div>{icon_svg("activity", 17)}'
         f'<strong>{html.escape(title)}</strong></div><p>{html.escape(summary)}</p></section>',
         unsafe_allow_html=True,
@@ -526,6 +525,26 @@ def render_agent_panel(view: str) -> str:
         ):
             pending = question
     with st.container(key=f"agent_composer_{view}"):
+        uploaded_image = st.file_uploader(
+            "添加图片",
+            type=(
+                "jpg",
+                "jpeg",
+                "jpe",
+                "jfif",
+                "png",
+                "webp",
+                "bmp",
+                "tif",
+                "tiff",
+                "heic",
+                "heif",
+                "avif",
+            ),
+            key=f"agent_panel_upload_{view}",
+            label_visibility="collapsed",
+            help="上传柑橘图片，发送后由视觉模型进行识别",
+        )
         with st.form(key=f"agent_panel_form_{view}", border=False):
             prompt = st.text_input(
                 "询问当前页面或继续任务",
@@ -538,7 +557,7 @@ def render_agent_panel(view: str) -> str:
                 help="发送给 Agent",
                 width="content",
             )
-    return prompt.strip() if submitted and prompt.strip() else pending
+    return (prompt.strip() if submitted and prompt.strip() else pending), uploaded_image
 
 
 def render_empty_panel(title: str, description: str, *, icon: str = "folder") -> None:

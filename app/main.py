@@ -1590,10 +1590,10 @@ def render_product_secondary_panel(view: str) -> None:
 
 def render_sidebar(
     view: str = "chat",
-) -> tuple[str, bool, bytes | None, str, str, str]:
+) -> tuple[str, bool, bytes | None, str, str, str, Any | None]:
     with st.sidebar:
         if view != "chat":
-            agent_prompt = ui_components.render_agent_panel(view)
+            agent_prompt, agent_upload = ui_components.render_agent_panel(view)
             return (
                 "",
                 False,
@@ -1601,6 +1601,7 @@ def render_sidebar(
                 "image/jpeg",
                 normalize_retrieval_mode(st.session_state.get("retrieval_mode")),
                 agent_prompt,
+                agent_upload,
             )
 
         st.markdown(
@@ -1742,6 +1743,7 @@ def render_sidebar(
         image_mime_type,
         retrieval_mode,
         "",
+        None,
     )
 
 
@@ -4584,18 +4586,33 @@ def main() -> None:
         image_mime_type,
         retrieval_mode,
         agent_panel_prompt,
+        agent_panel_upload,
     ) = render_sidebar(active_view)
 
     if active_view != "chat" and agent_panel_prompt:
+        panel_image_bytes: bytes | None = None
+        panel_image_mime_type = "image/jpeg"
+        if agent_panel_upload is not None:
+            try:
+                prepared_panel_image = prepare_image_for_vision(
+                    agent_panel_upload.getvalue(),
+                    filename=getattr(agent_panel_upload, "name", "uploaded-image"),
+                    mime_type=getattr(agent_panel_upload, "type", ""),
+                )
+            except vision_client.VisionAPIError as error:
+                st.error(str(error))
+            else:
+                panel_image_bytes = prepared_panel_image.data
+                panel_image_mime_type = prepared_panel_image.mime_type
         st.session_state.product_view = "chat"
         _set_query_value("view", "chat")
         handle_prompt(
             agent_panel_prompt,
             api_key,
             "",
-            False,
-            None,
-            "image/jpeg",
+            panel_image_bytes is not None,
+            panel_image_bytes,
+            panel_image_mime_type,
             retrieval_mode=retrieval_mode,
         )
 

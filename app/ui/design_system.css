@@ -5740,7 +5740,7 @@ div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label)
 
 .citrus-top-actions {
     top: 17px;
-    right: calc(var(--secondary-panel-width) + 24px);
+    right: 24px;
 }
 
 .citrus-top-actions a {
@@ -5762,11 +5762,14 @@ div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label)
 }
 
 .agent-panel-brand {
+    position: relative;
     display: flex;
     min-height: 44px;
     align-items: center;
     gap: 10px;
     padding: 2px 2px 13px;
+    margin-bottom: -6px;
+    transform: translateY(-6px);
     border-bottom: 1px solid var(--border);
 }
 
@@ -5829,7 +5832,28 @@ div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label)
     background: var(--surface) !important;
     border: 1px solid var(--border) !important;
     border-radius: 9px !important;
-    text-align: left;
+    text-align: left !important;
+}
+
+[data-testid="stSidebar"] [class*="st-key-agent_quick_"] button > div,
+[data-testid="stSidebar"] [class*="st-key-agent_quick_"] button p {
+    width: 100% !important;
+    text-align: left !important;
+}
+
+[data-testid="stSidebar"] [class*="st-key-agent_quick_"] button > div {
+    flex: 1 1 auto !important;
+    justify-content: flex-start !important;
+}
+
+[data-testid="stSidebar"] [class*="st-key-agent_quick_"] button > div > span {
+    width: 100% !important;
+    flex: 1 1 auto !important;
+}
+
+[data-testid="stSidebar"] [class*="st-key-agent_quick_"] button [data-testid="stMarkdownContainer"] {
+    width: 100% !important;
+    text-align: left !important;
 }
 
 [data-testid="stSidebar"] [class*="st-key-agent_quick_"] button::after {
@@ -5841,6 +5865,7 @@ div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label)
 }
 
 [data-testid="stSidebar"] [class*="st-key-agent_composer_"] {
+    position: relative;
     flex: 0 0 auto !important;
     margin-top: auto;
     padding-top: 14px;
@@ -5880,7 +5905,7 @@ div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label)
 
 [data-testid="stSidebar"] [class*="st-key-agent_composer_"] input {
     height: 54px !important;
-    padding: 0 !important;
+    padding: 0 0 0 38px !important;
     color: var(--text-primary) !important;
     background: transparent !important;
     border: 0 !important;
@@ -5904,8 +5929,12 @@ div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label)
 }
 
 [data-testid="stSidebar"] [class*="st-key-agent_composer_"] [data-testid="stFormSubmitButton"] button {
+    display: flex !important;
     min-height: 44px !important;
+    align-items: center !important;
+    justify-content: center !important;
     padding: 0 !important;
+    line-height: 1 !important;
     color: #ffffff !important;
     background: #111111 !important;
     border: 1px solid #111111 !important;
@@ -5924,9 +5953,74 @@ div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label)
 }
 
 [data-testid="stSidebar"] [class*="st-key-agent_composer_"] [data-testid="stFormSubmitButton"] [data-testid="stIconMaterial"] {
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
     margin: 0 !important;
     color: #ffffff !important;
     font-size: 21px !important;
+    line-height: 1 !important;
+}
+
+[data-testid="stSidebar"] [class*="st-key-agent_composer_"] [data-testid="stFileUploader"] {
+    position: absolute !important;
+    top: 6px;
+    left: 6px;
+    z-index: 3;
+    width: 40px !important;
+    height: 44px !important;
+    margin: 0 !important;
+}
+
+[data-testid="stSidebar"] [class*="st-key-agent_composer_"] [data-testid="stFileUploader"] section {
+    position: relative;
+    display: flex !important;
+    width: 40px !important;
+    height: 44px !important;
+    min-height: 44px !important;
+    box-sizing: border-box;
+    align-items: center;
+    justify-content: center;
+    padding: 0 !important;
+    overflow: hidden;
+    background: transparent !important;
+    border: 0 !important;
+}
+
+[data-testid="stSidebar"] [class*="st-key-agent_composer_"] [data-testid="stFileUploader"] section::before {
+    content: "+";
+    display: inline-flex;
+    width: 30px;
+    height: 30px;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-secondary);
+    border: 1px solid var(--border-strong);
+    border-radius: 50%;
+    font-size: 22px;
+    font-weight: 400;
+    line-height: 1;
+}
+
+[data-testid="stSidebar"] [class*="st-key-agent_composer_"] [data-testid="stFileUploader"] section:hover::before {
+    color: var(--text-primary);
+    background: var(--hover);
+    border-color: var(--text-primary);
+}
+
+[data-testid="stSidebar"] [class*="st-key-agent_composer_"] [data-testid="stFileUploaderDropzoneInstructions"],
+[data-testid="stSidebar"] [class*="st-key-agent_composer_"] [data-testid="stFileUploader"] small,
+[data-testid="stSidebar"] [class*="st-key-agent_composer_"] [data-testid="stFileUploader"] button {
+    display: none !important;
+}
+
+[data-testid="stSidebar"] [class*="st-key-agent_composer_"] [data-testid="stFileUploader"] input[type="file"] {
+    position: absolute !important;
+    inset: 0;
+    width: 100% !important;
+    height: 100% !important;
+    cursor: pointer;
+    opacity: 0 !important;
 }
 
 [class*="st-key-product_page_shell"] > div[data-testid="stVerticalBlock"] {
@@ -6215,7 +6309,15 @@ div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label)
     }
 
     .citrus-top-actions {
-        right: 22px;
+        right: 24px;
+    }
+
+    [class*="st-key-top_help_action"] {
+        right: 136px;
+    }
+
+    [class*="st-key-top_theme_action"] {
+        right: 80px;
     }
 
     .identity-card-grid {
