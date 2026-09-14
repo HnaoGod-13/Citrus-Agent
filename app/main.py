@@ -988,6 +988,10 @@ def render_scroll_position_manager(
                 }});
             }}
 
+            doc.documentElement.style.setProperty(
+                "--mobile-nav-platform-space",
+                host.location.hostname.endsWith(".streamlit.app") ? "128px" : "0px",
+            );
             const mobileNav = doc.querySelector(".citrus-mobile-nav");
             const activeItem = mobileNav && mobileNav.querySelector(".is-active");
             if (mobileNav && activeItem && mobileNav.clientWidth > 0) {{

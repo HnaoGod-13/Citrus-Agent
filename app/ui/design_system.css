@@ -6529,8 +6529,20 @@ section[data-testid="stAppScrollToBottomContainer"] [data-testid="stBottomBlockC
 
     .citrus-mobile-nav {
         display: flex;
+        right: var(--mobile-nav-platform-space, 0px);
         overflow-x: auto;
         scrollbar-width: none;
+    }
+
+    .citrus-mobile-nav::before {
+        content: "";
+        position: fixed;
+        inset: auto 0 0;
+        height: 66px;
+        z-index: -1;
+        background: var(--surface);
+        border-top: 1px solid var(--border);
+        pointer-events: none;
     }
 
     .mobile-nav-item {
