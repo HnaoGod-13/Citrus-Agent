@@ -169,7 +169,7 @@ def render_primary_navigation(
             f'<small>{html.escape(en_label)}</small></span></a>'
         )
         mobile_items.append(
-            f'<a class="mobile-nav-item{active}" href="{href}"{current}>'
+            f'<a class="mobile-nav-item{active}" href="{href}" target="_self"{current}>'
             f'{item_icon}<span>{html.escape(zh_label)}</span></a>'
         )
 
