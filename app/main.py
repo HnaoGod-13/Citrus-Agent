@@ -4539,6 +4539,33 @@ def handle_prompt(
     st.rerun()
 
 
+def submit_agent_panel_prompt(
+    prompt: str, uploaded_image: Any | None, api_key: str, retrieval_mode: str
+) -> None:
+    """Validate attachments before switching pages or starting an Agent request."""
+    image_bytes: bytes | None = None
+    image_mime_type = "image/jpeg"
+    if uploaded_image is not None:
+        try:
+            prepared = prepare_image_for_vision(
+                uploaded_image.getvalue(),
+                filename=getattr(uploaded_image, "name", "uploaded-image"),
+                mime_type=getattr(uploaded_image, "type", ""),
+            )
+        except vision_client.VisionAPIError as error:
+            with st.sidebar:
+                st.error(str(error))
+            return
+        image_bytes = prepared.data
+        image_mime_type = prepared.mime_type
+    st.session_state.product_view = "chat"
+    _set_query_value("view", "chat")
+    handle_prompt(
+        prompt, api_key, "", image_bytes is not None, image_bytes,
+        image_mime_type, retrieval_mode=retrieval_mode,
+    )
+
+
 def main() -> None:
     st.set_page_config(
         page_title="Citrus AI · 柑橘产业链决策",
@@ -4590,30 +4617,8 @@ def main() -> None:
     ) = render_sidebar(active_view)
 
     if active_view != "chat" and agent_panel_prompt:
-        panel_image_bytes: bytes | None = None
-        panel_image_mime_type = "image/jpeg"
-        if agent_panel_upload is not None:
-            try:
-                prepared_panel_image = prepare_image_for_vision(
-                    agent_panel_upload.getvalue(),
-                    filename=getattr(agent_panel_upload, "name", "uploaded-image"),
-                    mime_type=getattr(agent_panel_upload, "type", ""),
-                )
-            except vision_client.VisionAPIError as error:
-                st.error(str(error))
-            else:
-                panel_image_bytes = prepared_panel_image.data
-                panel_image_mime_type = prepared_panel_image.mime_type
-        st.session_state.product_view = "chat"
-        _set_query_value("view", "chat")
-        handle_prompt(
-            agent_panel_prompt,
-            api_key,
-            "",
-            panel_image_bytes is not None,
-            panel_image_bytes,
-            panel_image_mime_type,
-            retrieval_mode=retrieval_mode,
+        submit_agent_panel_prompt(
+            agent_panel_prompt, agent_panel_upload, api_key, retrieval_mode,
         )
 
     if active_view == "chat":

@@ -1055,10 +1055,11 @@ def render_knowledge_page() -> None:
         )
 
     stats = facets["stats"]
-    metric_columns = st.columns(3)
-    metric_columns[0].metric("参考文献", int(stats.get("documents") or 0))
-    metric_columns[1].metric("证据片段", int(stats.get("chunks") or 0))
-    metric_columns[2].metric("分类", len(categories))
+    ui_components.render_metric_cards([
+        ("参考文献", int(stats.get("documents") or 0), ""),
+        ("证据片段", int(stats.get("chunks") or 0), ""),
+        ("分类", len(categories), ""),
+    ], columns=3)
 
     st.caption(f"找到 {total} 篇参考文献")
     if page_count > 1:
@@ -1454,11 +1455,12 @@ def render_analytics_page() -> None:
     successful_runs = int(counts.get("successful_runs") or 0)
     success_rate = f"{successful_runs / total_runs * 100:.0f}%" if total_runs else "—"
 
-    metric_columns = st.columns(4)
-    metric_columns[0].metric("会话", int(counts.get("sessions") or 0))
-    metric_columns[1].metric("分析运行", total_runs)
-    metric_columns[2].metric("运行完成率", success_rate)
-    metric_columns[3].metric("批次样本", int(counts.get("samples") or 0))
+    ui_components.render_metric_cards([
+        ("会话", int(counts.get("sessions") or 0), ""),
+        ("分析运行", total_runs, ""),
+        ("运行完成率", success_rate, ""),
+        ("批次样本", int(counts.get("samples") or 0), ""),
+    ])
 
     st.subheader("运行趋势")
     _render_run_trend(data["daily"])
@@ -2109,15 +2111,14 @@ def render_task_dashboard_page() -> None:
     data = _scoped_workspace_data()
     counts = (data or {}).get("counts", {})
     sessions = list((data or {}).get("sessions", []))
-    metric_columns = st.columns(4)
-    metric_columns[0].metric("进行中任务", int(counts.get("sessions") or 0))
-    metric_columns[1].metric("待补资料", int(counts.get("review_samples") or 0))
-    metric_columns[2].metric("已完成运行", int(counts.get("completed_runs") or 0))
     total_runs = int(counts.get("runs") or 0)
     completed = int(counts.get("completed_runs") or 0)
-    metric_columns[3].metric(
-        "Agent 完成率", f"{completed / total_runs * 100:.0f}%" if total_runs else "—"
-    )
+    ui_components.render_metric_cards([
+        ("进行中任务", int(counts.get("sessions") or 0), ""),
+        ("待补资料", int(counts.get("review_samples") or 0), ""),
+        ("已完成运行", completed, ""),
+        ("Agent 完成率", f"{completed / total_runs * 100:.0f}%" if total_runs else "—", ""),
+    ])
     left, right = st.columns([1.15, 0.85])
     with left:
         st.subheader("优先处理")
@@ -2186,11 +2187,12 @@ def render_evidence_page() -> None:
         in str(_result_value(item, "grade", _result_value(item, "evidence_grade", "")))
         for item in evidence
     )
-    metric_columns = st.columns(4)
-    metric_columns[0].metric("证据条目", len(evidence))
-    metric_columns[1].metric("直接证据", direct)
-    metric_columns[2].metric("候选路线", len(scores))
-    metric_columns[3].metric("风险提示", len(risks))
+    ui_components.render_metric_cards([
+        ("证据条目", len(evidence), ""),
+        ("直接证据", direct, ""),
+        ("候选路线", len(scores), ""),
+        ("风险提示", len(risks), ""),
+    ])
     if not result:
         ui_components.render_empty_state(
             "尚未形成分析结果",
@@ -2346,13 +2348,12 @@ def render_review_page() -> None:
         }
         for name, passed, status in checks
     ]
-    metric_columns = st.columns(4)
-    metric_columns[0].metric(
-        "自动检查", f"{sum(passed for _name, passed, _status in checks)} / {len(checks)}"
-    )
-    metric_columns[1].metric("人工确认", sum(not passed for _name, passed, _status in checks))
-    metric_columns[2].metric("风险条目", len(risks))
-    metric_columns[3].metric("发布状态", "待审核")
+    ui_components.render_metric_cards([
+        ("自动检查", f"{sum(passed for _name, passed, _status in checks)} / {len(checks)}", ""),
+        ("人工确认", sum(not passed for _name, passed, _status in checks), ""),
+        ("风险条目", len(risks), ""),
+        ("发布状态", "待审核", ""),
+    ])
     _render_table(rows, "当前没有审核项目。", height=330, variant="settings")
     st.info(
         "系统不会自动对外发布、签署或形成生产放行结论。请由具备权限的人员复核并完成最终操作。"
@@ -2367,11 +2368,12 @@ def render_assets_page() -> None:
     )
     data = _scoped_workspace_data()
     counts = (data or {}).get("counts", {})
-    metric_columns = st.columns(4)
-    metric_columns[0].metric("批次样本", int(counts.get("samples") or 0))
-    metric_columns[1].metric("分析运行", int(counts.get("runs") or 0))
-    metric_columns[2].metric("会话任务", int(counts.get("sessions") or 0))
-    metric_columns[3].metric("待复核", int(counts.get("review_samples") or 0))
+    ui_components.render_metric_cards([
+        ("批次样本", int(counts.get("samples") or 0), ""),
+        ("分析运行", int(counts.get("runs") or 0), ""),
+        ("会话任务", int(counts.get("sessions") or 0), ""),
+        ("待复核", int(counts.get("review_samples") or 0), ""),
+    ])
     samples = [
         _workspace_sample_row(row)
         for row in list((data or {}).get("samples", []))
@@ -2388,13 +2390,12 @@ def render_results_page() -> None:
     data = _scoped_workspace_data()
     runs = list((data or {}).get("runs", []))
     counts = (data or {}).get("counts", {})
-    metric_columns = st.columns(4)
-    metric_columns[0].metric("成果运行", int(counts.get("completed_runs") or 0))
-    metric_columns[1].metric(
-        "报告草稿", sum(bool(str(row.get("final_output") or "").strip()) for row in runs)
-    )
-    metric_columns[2].metric("关联任务", int(counts.get("sessions") or 0))
-    metric_columns[3].metric("异常运行", int(counts.get("failed_runs") or 0))
+    ui_components.render_metric_cards([
+        ("成果运行", int(counts.get("completed_runs") or 0), ""),
+        ("报告草稿", sum(bool(str(row.get("final_output") or "").strip()) for row in runs), ""),
+        ("关联任务", int(counts.get("sessions") or 0), ""),
+        ("异常运行", int(counts.get("failed_runs") or 0), ""),
+    ])
     rows = [_workspace_run_row(row) for row in runs]
     _render_table(
         rows,

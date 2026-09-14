@@ -333,10 +333,16 @@ with (
         return AppTest.from_string(source, default_timeout=30).run()
 
     def test_product_page_dispatch_renders_every_supported_view(self) -> None:
-        for view in ("workspace", "knowledge", "analytics", "settings"):
+        for view in (
+            "identity", "workspace", "intake", "evidence", "decision", "process",
+            "matching", "report", "review", "assets", "results", "knowledge",
+            "analytics", "settings",
+        ):
             with self.subTest(view=view):
                 app = self._render_page(view)
                 self.assertEqual([], list(app.exception))
+                # Summary cards must not depend on the lazy Metric chart bundle.
+                self.assertEqual([], list(app.metric))
 
     def test_product_page_dispatch_leaves_chat_and_unknown_views_unhandled(self) -> None:
         self.assertFalse(product_pages.render_product_page("chat"))

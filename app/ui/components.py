@@ -7,6 +7,8 @@ from urllib.parse import urlencode
 
 import streamlit as st
 
+from agent.vision_client import MAX_UPLOAD_BYTES, SUPPORTED_UPLOAD_EXTENSIONS
+
 
 NAV_ITEMS = (
     ("identity", "shield", "身份选择", "Identity"),
@@ -167,7 +169,7 @@ def render_primary_navigation(
             f'<small>{html.escape(en_label)}</small></span></a>'
         )
         mobile_items.append(
-            f'<a class="mobile-nav-item{active}" href="{href}"{current}{passive_link}>'
+            f'<a class="mobile-nav-item{active}" href="{href}"{current}>'
             f'{item_icon}<span>{html.escape(zh_label)}</span></a>'
         )
 
@@ -299,6 +301,7 @@ def render_mobile_panel_toggle(
         st.button(
             "关闭功能面板" if is_open else "打开功能面板",
             key="mobile_panel_toggle_button",
+            icon=":material/chat:",
             on_click=on_toggle,
         )
     if is_open:
@@ -384,16 +387,17 @@ def status_badge(label: str, tone: str = "neutral") -> str:
 
 
 def render_metric_cards(
-    items: list[tuple[str, str, str]], *, columns: int = 4
+    items: list[tuple[str, Any, str]], *, columns: int = 4
 ) -> None:
     safe_columns = min(max(int(columns), 1), 4)
     cards = []
     for label, value, note in items:
+        note_html = f'<small>{html.escape(str(note))}</small>' if note else ""
         cards.append(
             '<article class="workbench-metric">'
             f'<span>{html.escape(str(label))}</span>'
             f'<strong>{html.escape(str(value))}</strong>'
-            f'<small>{html.escape(str(note))}</small></article>'
+            f'{note_html}</article>'
         )
     st.markdown(
         f'<section class="workbench-metrics cols-{safe_columns}">'
@@ -527,20 +531,8 @@ def render_agent_panel(view: str) -> tuple[str, Any | None]:
     with st.container(key=f"agent_composer_{view}"):
         uploaded_image = st.file_uploader(
             "添加图片",
-            type=(
-                "jpg",
-                "jpeg",
-                "jpe",
-                "jfif",
-                "png",
-                "webp",
-                "bmp",
-                "tif",
-                "tiff",
-                "heic",
-                "heif",
-                "avif",
-            ),
+            type=SUPPORTED_UPLOAD_EXTENSIONS,
+            max_upload_size=MAX_UPLOAD_BYTES // (1024 * 1024),
             key=f"agent_panel_upload_{view}",
             label_visibility="collapsed",
             help="上传柑橘图片，发送后由视觉模型进行识别",
@@ -557,7 +549,11 @@ def render_agent_panel(view: str) -> tuple[str, Any | None]:
                 help="发送给 Agent",
                 width="content",
             )
-    return (prompt.strip() if submitted and prompt.strip() else pending), uploaded_image
+    if submitted:
+        pending = prompt.strip()
+        if not pending and uploaded_image is not None:
+            pending = "请识别这张图片，并说明可见特征和需要进一步确认的信息。"
+    return pending, uploaded_image
 
 
 def render_empty_panel(title: str, description: str, *, icon: str = "folder") -> None:
