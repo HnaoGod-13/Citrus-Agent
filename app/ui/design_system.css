@@ -689,7 +689,9 @@ header[data-testid="stHeader"] {
     }
 
     body:has([data-testid="stSidebar"][aria-expanded="false"]) [data-testid="stMain"] {
-        margin-left: 0 !important;
+        /* The fixed product navigation remains visible even when Streamlit
+           retains its native collapsed-sidebar state after a resize. */
+        margin-left: var(--primary-rail-width) !important;
     }
 }
 
@@ -1743,8 +1745,15 @@ section[data-testid="stBottom"],
     justify-content: flex-end;
 }
 
+.message-bubble {
+    min-width: 0;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+}
+
 .message-row.user .message-bubble {
-    flex: 0 1 720px;
+    flex: 0 1 auto;
+    max-width: min(720px, 88%);
     margin-left: auto;
     padding: 12px 16px;
     color: var(--text-primary);
@@ -4335,9 +4344,13 @@ div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label)
     }
 
     div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label)
-        > div[data-testid="stColumn"] {
+        > div[data-testid="stColumn"]:first-child,
+    div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label)
+        > div[data-testid="stColumn"]:last-child {
         width: 100% !important;
-        flex: 1 1 auto !important;
+        max-width: 100%;
+        min-width: 0;
+        flex: 0 1 auto !important;
     }
 }
 
@@ -5714,11 +5727,23 @@ div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label)
     padding: 14px 16px !important;
 }
 
-[data-testid="stMain"] {
+/* Streamlit switches the main section's test id when a chat input is present.
+   Both sections must reserve the same space for the fixed navigation/panel. */
+[data-testid="stMain"],
+section[data-testid="stAppScrollToBottomContainer"] {
     width: calc(100vw - var(--primary-rail-width) - var(--secondary-panel-width)) !important;
     min-width: 0 !important;
     margin-left: var(--primary-rail-width) !important;
     margin-right: var(--secondary-panel-width) !important;
+}
+
+section[data-testid="stAppScrollToBottomContainer"] {
+    --chat-gutter: clamp(16px, 2.4vw, 32px);
+}
+
+section[data-testid="stAppScrollToBottomContainer"] .block-container,
+section[data-testid="stAppScrollToBottomContainer"] [data-testid="stBottomBlockContainer"] {
+    padding-inline: var(--chat-gutter) !important;
 }
 
 .block-container {
@@ -6412,7 +6437,8 @@ div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label)
         transform: translateX(0) !important;
     }
 
-    [data-testid="stMain"] {
+    [data-testid="stMain"],
+    section[data-testid="stAppScrollToBottomContainer"] {
         width: calc(100vw - var(--primary-rail-width)) !important;
         margin-right: 0 !important;
     }
@@ -6438,7 +6464,8 @@ div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label)
     }
 }
 
-@media (max-width: 760px) {
+/* Match the existing mobile navigation and fixed chat composer breakpoint. */
+@media (max-width: 899px) {
     :root {
         --primary-rail-width: 0px;
     }
@@ -6462,13 +6489,25 @@ div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label)
         display: none !important;
     }
 
-    [data-testid="stMain"] {
+    [data-testid="stMain"],
+    section[data-testid="stAppScrollToBottomContainer"] {
         width: 100vw !important;
         margin-left: 0 !important;
     }
 
     .block-container {
         padding: 78px 16px 92px !important;
+    }
+
+    .citrus-top-actions::before {
+        content: "";
+        position: fixed;
+        inset: 0 0 auto;
+        height: 80px;
+        z-index: -1;
+        background: var(--background);
+        border-bottom: 1px solid var(--border);
+        pointer-events: none;
     }
 
     .process-stepper {

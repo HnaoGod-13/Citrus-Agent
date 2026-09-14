@@ -239,7 +239,7 @@ class DesignSystemRegressionTests(unittest.TestCase):
         ordinary_analysis_rule = css[analysis_start:analysis_end]
         self.assertIn("font-size: 15px;", ordinary_analysis_rule)
 
-    def test_desktop_main_content_is_not_double_offset_when_sidebar_is_open(self) -> None:
+    def test_desktop_main_keeps_navigation_space_after_sidebar_collapse(self) -> None:
         css = CSS_PATH.read_text(encoding="utf-8-sig")
         selector = (
             'body:has([data-testid="stSidebar"][aria-expanded="false"]) '
@@ -248,7 +248,7 @@ class DesignSystemRegressionTests(unittest.TestCase):
         start = css.index(selector)
         rule = css[start : css.index("}", start) + 1]
 
-        self.assertIn("margin-left: 0 !important;", rule)
+        self.assertIn("margin-left: var(--primary-rail-width) !important;", rule)
         self.assertNotIn("secondary-panel-width", rule)
         self.assertIn("--main-pad-start: 36px;", css)
         self.assertIn("--main-pad-end: 36px;", css)
