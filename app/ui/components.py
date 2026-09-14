@@ -12,7 +12,6 @@ from agent.vision_client import MAX_UPLOAD_BYTES, SUPPORTED_UPLOAD_EXTENSIONS
 
 NAV_ITEMS = (
     ("identity", "shield", "身份选择", "Identity"),
-    ("workspace", "layout-grid", "工作台", "Workspace"),
     ("intake", "file-text", "资料确认", "Data intake"),
     ("evidence", "search", "分析与证据", "Evidence"),
     ("decision", "decision", "路线决策", "Decision"),
@@ -173,7 +172,7 @@ def render_primary_navigation(
             f'{item_icon}<span>{html.escape(zh_label)}</span></a>'
         )
 
-    home_href = html.escape(_view_url("workspace", context_token), quote=True)
+    home_href = html.escape(_view_url("identity", context_token), quote=True)
     create_href = html.escape(_view_url("identity", context_token), quote=True)
     settings_href = html.escape(_view_url("settings", context_token), quote=True)
     st.markdown(
@@ -201,7 +200,7 @@ def render_primary_navigation(
                 "Citrus AI 首页",
                 key="product_brand_button",
                 on_click=on_view_change,
-                args=("workspace",),
+                args=("identity",),
             )
         with st.container(key="product_create_action"):
             st.button(
@@ -441,11 +440,6 @@ def render_agent_panel(view: str) -> tuple[str, Any | None]:
             "身份说明",
             "先确认组织与角色，系统会据此限定数据范围和可执行动作。",
             ["不同身份有什么区别？", "我应该选择哪个身份？"],
-        ),
-        "workspace": (
-            "当前重点",
-            "优先处理资料不完整或等待确认的任务，再推进后续路线与报告。",
-            ["今天最值得先做什么？", "查看需要我确认的任务"],
         ),
         "intake": (
             "缺失项检查",

@@ -5490,6 +5490,8 @@ div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label)
 :root {
     --primary-rail-width: 238px;
     --secondary-panel-width: 348px;
+    --primary-nav-row-height: clamp(32px, 4.4vh, 40px);
+    --primary-nav-row-gap: 3px;
     --page-content-max: 1180px;
     --radius-card: 12px;
     --shadow-subtle: 0 1px 2px rgba(17, 17, 17, 0.025);
@@ -5542,7 +5544,7 @@ div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label)
 }
 
 .primary-nav-list {
-    gap: 2px;
+    gap: var(--primary-nav-row-gap);
     margin-top: 12px;
     margin-bottom: 84px;
     overflow-y: auto;
@@ -5559,9 +5561,10 @@ div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label)
 }
 
 .primary-nav-item {
-    min-height: 39px;
+    height: var(--primary-nav-row-height);
+    min-height: var(--primary-nav-row-height);
     gap: 11px;
-    padding: 7px 11px;
+    padding: 5px 11px;
     border-radius: 8px;
 }
 
@@ -5633,17 +5636,17 @@ div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label)
 [class*="st-key-product_nav_actions"] {
     top: 172px;
     width: calc(var(--primary-rail-width) - 33px);
-    gap: 2px;
+    gap: var(--primary-nav-row-gap);
 }
 
 [class*="st-key-product_nav_actions"] > [data-testid="stVerticalBlock"] {
-    gap: 2px !important;
+    gap: var(--primary-nav-row-gap) !important;
 }
 
 [class*="st-key-product_nav_actions"] [data-testid="stElementContainer"],
 [class*="st-key-product_nav_actions"] [data-testid="stButton"],
 [class*="st-key-product_nav_actions"] [data-testid="stButton"] > button {
-    height: 39px !important;
+    height: var(--primary-nav-row-height) !important;
 }
 
 [class*="st-key-product_user_action"] {
@@ -6531,7 +6534,9 @@ section[data-testid="stAppScrollToBottomContainer"] [data-testid="stBottomBlockC
     }
 
     .mobile-nav-item {
+        flex: 0 0 78px;
         min-width: 78px;
+        white-space: nowrap;
     }
 
     .workbench-metrics,

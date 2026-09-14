@@ -987,6 +987,15 @@ def render_scroll_position_manager(
                     commandId,
                 }});
             }}
+
+            const mobileNav = doc.querySelector(".citrus-mobile-nav");
+            const activeItem = mobileNav && mobileNav.querySelector(".is-active");
+            if (mobileNav && activeItem && mobileNav.clientWidth > 0) {{
+                mobileNav.scrollLeft = Math.max(
+                    0,
+                    activeItem.offsetLeft - (mobileNav.clientWidth - activeItem.offsetWidth) / 2,
+                );
+            }}
         }})();
         </script>
         """,
@@ -1123,7 +1132,6 @@ def _memory_identity_matches_authentication(
 PRODUCT_VIEWS = {
     "chat",
     "identity",
-    "workspace",
     "intake",
     "evidence",
     "decision",
@@ -1139,11 +1147,20 @@ PRODUCT_VIEWS = {
 }
 
 
+def _normalize_product_view(view: str) -> str:
+    normalized = str(view or "").strip().lower()
+    # Keep saved links and sessions usable after removing the dashboard.
+    return {"workspace": "identity"}.get(normalized, normalized)
+
+
 def current_product_view() -> str:
-    query_view = _query_value("view").lower()
-    state_view = str(st.session_state.get("product_view") or "").lower()
+    raw_query_view = _query_value("view").lower()
+    query_view = _normalize_product_view(raw_query_view)
+    state_view = _normalize_product_view(st.session_state.get("product_view"))
     if query_view in PRODUCT_VIEWS:
         view = query_view
+        if raw_query_view != query_view:
+            _set_query_value("view", view)
     elif state_view in PRODUCT_VIEWS:
         view = state_view
         _set_query_value("view", view)
@@ -1185,7 +1202,7 @@ def preserve_sidebar_draft() -> None:
 
 
 def select_product_view(view: str) -> None:
-    normalized = str(view or "").lower()
+    normalized = _normalize_product_view(view)
     if normalized not in PRODUCT_VIEWS:
         return
     preserve_sidebar_draft()
@@ -1208,7 +1225,12 @@ def select_industry_view(view: str) -> None:
     st.session_state.industry_workspace_view = normalized
     st.session_state.mobile_secondary_open = False
     st.session_state.reset_main_scroll_position = True
-    _set_query_value("view", "workspace")
+    product_view = {
+        "data": "intake", "market": "matching",
+        "visuals": "analytics", "reports": "report",
+    }[normalized]
+    st.session_state.product_view = product_view
+    _set_query_value("view", product_view)
     _set_query_value("industry", normalized)
 
 

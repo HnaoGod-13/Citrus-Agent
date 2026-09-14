@@ -2102,53 +2102,6 @@ def render_identity_page() -> None:
             _go_view("intake")
 
 
-def render_task_dashboard_page() -> None:
-    ui_components.render_page_header(
-        "WORKSPACE",
-        "工作台",
-        "以任务为中心，聚合进行中事项、风险待办和下一步动作。",
-    )
-    data = _scoped_workspace_data()
-    counts = (data or {}).get("counts", {})
-    sessions = list((data or {}).get("sessions", []))
-    total_runs = int(counts.get("runs") or 0)
-    completed = int(counts.get("completed_runs") or 0)
-    ui_components.render_metric_cards([
-        ("进行中任务", int(counts.get("sessions") or 0), ""),
-        ("待补资料", int(counts.get("review_samples") or 0), ""),
-        ("已完成运行", completed, ""),
-        ("Agent 完成率", f"{completed / total_runs * 100:.0f}%" if total_runs else "—", ""),
-    ])
-    left, right = st.columns([1.15, 0.85])
-    with left:
-        st.subheader("优先处理")
-        if sessions:
-            rows = [_workspace_session_row(row) for row in sessions[:4]]
-            _render_table(rows, "当前没有待处理任务。", height=280, variant="priority")
-        else:
-            ui_components.render_empty_state(
-                "暂无进行中任务",
-                "创建首个业务任务后，进度与风险会集中显示在这里。",
-                icon="layout-grid",
-            )
-    with right:
-        st.subheader("我的任务流")
-        st.markdown(
-            """
-            <section class="task-flow-card">
-                <ol>
-                    <li><strong>导入或确认原始资料</strong><span>复用已有批次，也可在任务内直接上传</span></li>
-                    <li><strong>Agent 分析与提问</strong><span>给出证据等级、路线比较与风险边界</span></li>
-                    <li><strong>确认方案并提交</strong><span>生成报告，完成审核与归档</span></li>
-                </ol>
-            </section>
-            """,
-            unsafe_allow_html=True,
-        )
-    if st.button("新建业务任务", type="primary"):
-        _go_view("identity")
-
-
 def _render_industry_task_page(
     view: str, industry_view: str, title: str, subtitle: str
 ) -> None:
@@ -2407,7 +2360,6 @@ def render_results_page() -> None:
 
 _PAGE_RENDERERS = {
     "identity": render_identity_page,
-    "workspace": render_task_dashboard_page,
     "intake": render_intake_page,
     "evidence": render_evidence_page,
     "decision": render_decision_page,
@@ -2417,7 +2369,6 @@ _PAGE_RENDERERS = {
     "review": render_review_page,
     "assets": render_assets_page,
     "results": render_results_page,
-    "工作台": render_task_dashboard_page,
     "knowledge": render_knowledge_page,
     "知识库": render_knowledge_page,
     "analytics": render_analytics_page,
@@ -2435,6 +2386,7 @@ def render_product_page(view: str) -> bool:
     intercepted here.
     """
     normalized = str(view or "").strip().lower().replace("-", "_").replace(" ", "_")
+    normalized = {"workspace": "identity", "工作台": "identity"}.get(normalized, normalized)
     renderer = _PAGE_RENDERERS.get(normalized)
     if renderer is None:
         return False

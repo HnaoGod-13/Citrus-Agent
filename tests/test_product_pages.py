@@ -334,7 +334,7 @@ with (
 
     def test_product_page_dispatch_renders_every_supported_view(self) -> None:
         for view in (
-            "identity", "workspace", "intake", "evidence", "decision", "process",
+            "identity", "intake", "evidence", "decision", "process",
             "matching", "report", "review", "assets", "results", "knowledge",
             "analytics", "settings",
         ):
@@ -1006,11 +1006,14 @@ with (
             product_pages._workspace_sample_row(workspace["samples"][0]),
         )
 
-    def test_workspace_page_omits_the_legacy_agent_activity_section(self) -> None:
+    def test_retired_workspace_page_resolves_to_identity(self) -> None:
         app = self._render_page("workspace")
         rendered = "\n".join(element.value for element in app.markdown)
 
         self.assertFalse(app.exception)
+        self.assertIn("选择你的工作身份", rendered)
+        self.assertNotIn("我的任务流", rendered)
+        self.assertNotIn("优先处理", rendered)
         self.assertNotIn("workspace-table", rendered)
         self.assertNotIn("Agent 数据记录", rendered)
         for internal_value in (
