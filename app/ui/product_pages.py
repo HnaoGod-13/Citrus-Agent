@@ -1,10 +1,9 @@
 """Product pages used by the Citrus AI Streamlit application.
 
-Workspace and analytics queries are always scoped by both ``memory_user_id``
-and ``memory_project_id``. The Settings page is the sole exception to the
-otherwise read-only product pages: it exposes explicit, confirmed export and
-deletion controls for that exact scope. If identity is unavailable, pages
-render a safe empty state rather than falling back to an unscoped query.
+Stored-record queries are always scoped by both ``memory_user_id`` and
+``memory_project_id``. Settings exposes explicit, confirmed export and deletion
+controls for that exact scope. If identity is unavailable, pages render a safe
+empty state rather than falling back to an unscoped query.
 """
 
 from __future__ import annotations
@@ -1432,67 +1431,6 @@ def _render_run_trend(daily_rows: list[dict[str, Any]]) -> None:
     )
 
 
-def render_analytics_page() -> None:
-    _render_page_header(
-        "CITRUS AI · ANALYTICS",
-        "运行分析",
-        "基于当前账户实际运行记录汇总使用情况与执行状态。",
-        "Usage and execution status derived from your recorded runs",
-    )
-    scope = _current_scope()
-    if scope is None:
-        _render_scope_empty()
-        return
-
-    try:
-        data = _load_analytics(_memory_db_path(), scope)
-    except (FileNotFoundError, OSError, sqlite3.Error, ValueError):
-        _render_data_unavailable("分析数据")
-        return
-
-    counts = data["counts"]
-    total_runs = int(counts.get("runs") or 0)
-    successful_runs = int(counts.get("successful_runs") or 0)
-    success_rate = f"{successful_runs / total_runs * 100:.0f}%" if total_runs else "—"
-
-    ui_components.render_metric_cards([
-        ("会话", int(counts.get("sessions") or 0), ""),
-        ("分析运行", total_runs, ""),
-        ("运行完成率", success_rate, ""),
-        ("批次样本", int(counts.get("samples") or 0), ""),
-    ])
-
-    st.subheader("运行趋势")
-    _render_run_trend(data["daily"])
-
-    st.subheader("模型使用")
-    model_rows = [
-        {
-            "模型": _compact_text(row.get("model_name"), 52),
-            "运行": int(row.get("runs") or 0),
-            "完成": int(row.get("runs") or 0) - int(row.get("failed_runs") or 0),
-            "异常": int(row.get("failed_runs") or 0),
-        }
-        for row in data["models"]
-    ]
-    _render_table(model_rows, "当前账户还没有模型运行记录。", height=240)
-
-    st.subheader("最近运行")
-    recent_rows = [
-        {
-            "运行": _short_id(row.get("run_id")),
-            "任务": _compact_text(row.get("original_input"), 92),
-            "模型": _compact_text(row.get("model_name"), 38),
-            "工具": len(_json_list(row.get("tool_calls_json"))),
-            "证据": _evidence_label(row.get("retrieved_literature_ids_json")),
-            "结果": "异常" if str(row.get("error") or "").strip() else "完成",
-            "时间": _display_time(row.get("created_at")),
-        }
-        for row in data["recent_runs"]
-    ]
-    _render_table(recent_rows, "当前账户还没有分析运行记录。")
-
-
 def _model_settings() -> list[dict[str, str]]:
     rows: list[dict[str, str]] = []
     try:
@@ -2041,16 +1979,6 @@ def _result_value(item: Any, key: str, default: Any = "") -> Any:
     return getattr(item, key, default)
 
 
-def _scoped_workspace_data() -> dict[str, Any] | None:
-    scope = _current_scope()
-    if scope is None:
-        return None
-    try:
-        return _load_workspace(_memory_db_path(), scope)
-    except (FileNotFoundError, OSError, sqlite3.Error, ValueError):
-        return None
-
-
 def render_identity_page() -> None:
     ui_components.render_page_header(
         "CITRUS AI · IDENTITY",
@@ -2313,51 +2241,6 @@ def render_review_page() -> None:
     )
 
 
-def render_assets_page() -> None:
-    ui_components.render_page_header(
-        "DATA ASSETS",
-        "数据资产",
-        "统一查看批次、检测、设备、SOP 与任务引用关系。",
-    )
-    data = _scoped_workspace_data()
-    counts = (data or {}).get("counts", {})
-    ui_components.render_metric_cards([
-        ("批次样本", int(counts.get("samples") or 0), ""),
-        ("分析运行", int(counts.get("runs") or 0), ""),
-        ("会话任务", int(counts.get("sessions") or 0), ""),
-        ("待复核", int(counts.get("review_samples") or 0), ""),
-    ])
-    samples = [
-        _workspace_sample_row(row)
-        for row in list((data or {}).get("samples", []))
-    ]
-    _render_table(samples, "当前账号还没有可展示的数据资产。", height=480)
-
-
-def render_results_page() -> None:
-    ui_components.render_page_header(
-        "RESULT CENTER",
-        "成果中心",
-        "集中查看报告、方案和证据快照，并追溯到来源任务。",
-    )
-    data = _scoped_workspace_data()
-    runs = list((data or {}).get("runs", []))
-    counts = (data or {}).get("counts", {})
-    ui_components.render_metric_cards([
-        ("成果运行", int(counts.get("completed_runs") or 0), ""),
-        ("报告草稿", sum(bool(str(row.get("final_output") or "").strip()) for row in runs), ""),
-        ("关联任务", int(counts.get("sessions") or 0), ""),
-        ("异常运行", int(counts.get("failed_runs") or 0), ""),
-    ])
-    rows = [_workspace_run_row(row) for row in runs]
-    _render_table(
-        rows,
-        "当前账号还没有可展示的成果。",
-        height=500,
-        variant="workspace",
-    )
-
-
 _PAGE_RENDERERS = {
     "identity": render_identity_page,
     "intake": render_intake_page,
@@ -2367,12 +2250,8 @@ _PAGE_RENDERERS = {
     "matching": render_matching_page,
     "report": render_report_page,
     "review": render_review_page,
-    "assets": render_assets_page,
-    "results": render_results_page,
     "knowledge": render_knowledge_page,
     "知识库": render_knowledge_page,
-    "analytics": render_analytics_page,
-    "分析": render_analytics_page,
     "settings": render_settings_page,
     "设置": render_settings_page,
 }
@@ -2385,8 +2264,7 @@ def render_product_page(view: str) -> bool:
     Chat remains owned by the existing main application and therefore is not
     intercepted here.
     """
-    normalized = str(view or "").strip().lower().replace("-", "_").replace(" ", "_")
-    normalized = {"workspace": "identity", "工作台": "identity"}.get(normalized, normalized)
+    normalized = ui_components.normalize_product_view(view)
     renderer = _PAGE_RENDERERS.get(normalized)
     if renderer is None:
         return False
@@ -2396,7 +2274,6 @@ def render_product_page(view: str) -> bool:
 
 __all__ = [
     "current_industry_view",
-    "render_analytics_page",
     "render_knowledge_page",
     "render_product_page",
     "render_settings_page",

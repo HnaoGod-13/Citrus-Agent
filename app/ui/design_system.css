@@ -5490,7 +5490,7 @@ div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label)
 :root {
     --primary-rail-width: 238px;
     --secondary-panel-width: 348px;
-    --primary-nav-row-height: clamp(32px, 4.4vh, 40px);
+    --primary-nav-row-height: clamp(36px, 4.8vh, 44px);
     --primary-nav-row-gap: 3px;
     --page-content-max: 1180px;
     --radius-card: 12px;

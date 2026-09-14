@@ -335,8 +335,7 @@ with (
     def test_product_page_dispatch_renders_every_supported_view(self) -> None:
         for view in (
             "identity", "intake", "evidence", "decision", "process",
-            "matching", "report", "review", "assets", "results", "knowledge",
-            "analytics", "settings",
+            "matching", "report", "review", "knowledge", "settings",
         ):
             with self.subTest(view=view):
                 app = self._render_page(view)
@@ -957,18 +956,22 @@ with (
         )
         self.assertEqual("质量复核", product_pages._sample_quality_status(manual_sample))
 
-    def test_analytics_uses_evidence_language_instead_of_document_counts(self) -> None:
-        app = self._render_page("analytics")
-        rendered = "\n".join(element.value for element in app.markdown)
-        self.assertIn("analytics-trend-panel", rendered)
-        self.assertIn("活跃天数", rendered)
-        self.assertIn("近 14 天完成率", rendered)
-        self.assertIn("证据", rendered)
-        self.assertIn("1 条证据", rendered)
-        self.assertNotIn("<th scope=\"col\">文献</th>", rendered)
-
-        source = Path(product_pages.__file__).read_text(encoding="utf-8")
-        self.assertNotIn("st.bar_chart", source)
+    def test_retired_overviews_open_remaining_pages_without_changing_records(self) -> None:
+        before = self.memory_db.read_bytes()
+        for retired, heading in (
+            ("assets", "资料确认"), ("数据资产", "资料确认"),
+            ("results", "报告撰写"), ("成果中心", "报告撰写"),
+            ("analytics", "选择你的工作身份"),
+            ("运行分析", "选择你的工作身份"), ("分析", "选择你的工作身份"),
+        ):
+            with self.subTest(view=retired):
+                app = self._render_page(retired)
+                self.assertFalse(app.exception)
+                rendered = "\n".join(element.value for element in app.markdown)
+                self.assertIn(heading, rendered)
+                for removed in ("DATA ASSETS", "RESULT CENTER", "analytics-trend-panel"):
+                    self.assertNotIn(removed, rendered)
+        self.assertEqual(before, self.memory_db.read_bytes())
 
     def test_workspace_rows_show_business_information_only(self) -> None:
         workspace = product_pages._load_workspace(

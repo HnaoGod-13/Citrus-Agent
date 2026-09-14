@@ -651,36 +651,46 @@ class DeepRetrievalUiStateTests(unittest.TestCase):
 
 
 class ProductRouteStateTests(unittest.TestCase):
-    def test_saved_workspace_link_moves_to_identity_without_resetting_task_data(self) -> None:
-        messages = [{"role": "user", "content": "继续分析本批次"}]
-        batch = {"variety": "沃柑"}
-        state = SessionStateStub(
-            product_view="workspace",
-            agent_messages=messages,
-            current_batch=batch,
-            memory_context_token="existing-context",
-            sidebar_draft_observation="已录入的外观描述",
-        )
-        with (
-            patch.object(app_main.st, "session_state", state),
-            patch.object(app_main, "_query_value", return_value="workspace"),
-            patch.object(app_main, "_set_query_value") as set_query,
-            patch.object(app_main, "preserve_sidebar_draft"),
+    def test_retired_links_and_sessions_keep_task_data_when_redirected(self) -> None:
+        for retired, target in (
+            ("workspace", "identity"), ("工作台", "identity"),
+            ("assets", "intake"), ("数据资产", "intake"),
+            ("results", "report"), ("成果中心", "report"),
+            ("analytics", "identity"), ("运行分析", "identity"), ("分析", "identity"),
         ):
-            view = app_main.current_product_view()
+            for query in (retired, ""):
+                with self.subTest(retired=retired, query=query):
+                    messages = [{"role": "user", "content": "继续分析本批次"}]
+                    batch = {"variety": "沃柑"}
+                    state = SessionStateStub(
+                        product_view=retired,
+                        agent_messages=messages,
+                        current_batch=batch,
+                        memory_context_token="existing-context",
+                        sidebar_draft_observation="已录入的外观描述",
+                        sidebar_draft_image_bytes=b"saved-image",
+                    )
+                    with (
+                        patch.object(app_main.st, "session_state", state),
+                        patch.object(app_main, "_query_value", return_value=query),
+                        patch.object(app_main, "_set_query_value") as set_query,
+                        patch.object(app_main, "preserve_sidebar_draft"),
+                    ):
+                        view = app_main.current_product_view()
 
-        self.assertEqual("identity", view)
-        self.assertEqual("identity", state.product_view)
-        self.assertIs(messages, state.agent_messages)
-        self.assertIs(batch, state.current_batch)
-        self.assertEqual("existing-context", state.memory_context_token)
-        self.assertEqual("已录入的外观描述", state.sidebar_draft_observation)
-        set_query.assert_called_once_with("view", "identity")
+                    self.assertEqual(target, view)
+                    self.assertEqual(target, state.product_view)
+                    self.assertIs(messages, state.agent_messages)
+                    self.assertIs(batch, state.current_batch)
+                    self.assertEqual("existing-context", state.memory_context_token)
+                    self.assertEqual("已录入的外观描述", state.sidebar_draft_observation)
+                    self.assertEqual(b"saved-image", state.sidebar_draft_image_bytes)
+                    set_query.assert_called_once_with("view", target)
 
     def test_industry_navigation_uses_the_remaining_task_pages(self) -> None:
         for industry, page in (
             ("data", "intake"), ("market", "matching"),
-            ("visuals", "analytics"), ("reports", "report"),
+            ("visuals", "identity"), ("reports", "report"),
         ):
             with self.subTest(industry=industry):
                 state = SessionStateStub(mobile_secondary_open=True)

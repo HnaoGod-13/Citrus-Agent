@@ -1143,18 +1143,13 @@ PRODUCT_VIEWS = {
     "matching",
     "report",
     "review",
-    "assets",
-    "results",
     "knowledge",
-    "analytics",
     "settings",
 }
 
 
 def _normalize_product_view(view: str) -> str:
-    normalized = str(view or "").strip().lower()
-    # Keep saved links and sessions usable after removing the dashboard.
-    return {"workspace": "identity"}.get(normalized, normalized)
+    return ui_components.normalize_product_view(view)
 
 
 def current_product_view() -> str:
@@ -1231,7 +1226,7 @@ def select_industry_view(view: str) -> None:
     st.session_state.reset_main_scroll_position = True
     product_view = {
         "data": "intake", "market": "matching",
-        "visuals": "analytics", "reports": "report",
+        "visuals": "identity", "reports": "report",
     }[normalized]
     st.session_state.product_view = product_view
     _set_query_value("view", product_view)
@@ -1552,12 +1547,6 @@ def render_product_secondary_panel(view: str) -> None:
             "title": "知识库",
             "description": "检索柑橘直接证据与可迁移工艺参考。",
             "items": (("全部文献", "All literature"), ("加工分类", "Categories"), ("索引状态", "Index status")),
-        },
-        "analytics": {
-            "eyebrow": "CITRUS AI · ANALYTICS",
-            "title": "分析",
-            "description": "基于真实运行与文献索引的决策概览。",
-            "items": (("使用概览", "Usage overview"), ("知识覆盖", "Knowledge coverage"), ("运行质量", "Run quality")),
         },
         "settings": {
             "eyebrow": "CITRUS AI · SETTINGS",

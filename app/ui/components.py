@@ -19,12 +19,26 @@ NAV_ITEMS = (
     ("matching", "share", "供需匹配", "Matching"),
     ("report", "file-text", "报告撰写", "Report"),
     ("review", "shield", "审核发布", "Review"),
-    ("assets", "database", "数据资产", "Assets"),
-    ("results", "folder", "成果中心", "Results"),
     ("knowledge", "book-open", "知识与标准", "Knowledge"),
-    ("analytics", "chart-no-axes", "运行分析", "Analytics"),
     ("settings", "settings", "设置", "Settings"),
 )
+
+
+def normalize_product_view(view: str) -> str:
+    """Keep saved links and sessions usable after retiring overview pages."""
+    normalized = str(view or "").strip().lower().replace("-", "_").replace(" ", "_")
+    return {
+        "workspace": "identity",
+        "工作台": "identity",
+        "assets": "intake",
+        "数据资产": "intake",
+        "results": "report",
+        "成果中心": "report",
+        "analytics": "identity",
+        "运行分析": "identity",
+        "分析": "identity",
+    }.get(normalized, normalized)
+
 
 WORKFLOW_STEPS = (
     ("intake", "资料确认"),
@@ -476,25 +490,10 @@ def render_agent_panel(view: str) -> tuple[str, Any | None]:
             "自动检查只负责定位问题；最终确认、签署和发布由具备权限的人员完成。",
             ["列出待人工确认项", "生成审核意见草稿"],
         ),
-        "assets": (
-            "数据复用",
-            "我会标注来源、版本、权限与关联任务，避免重复录入和越权引用。",
-            ["查找可复用数据", "哪些资产即将过期？"],
-        ),
-        "results": (
-            "成果检索",
-            "可以按任务、版本与成果类型查找，并追溯到生成它的原始任务。",
-            ["汇总最近成果", "比较两个报告版本"],
-        ),
         "knowledge": (
             "知识解释",
             "我会说明来源差异、证据等级和适用条件，不把弱证据当作确定结论。",
             ["如何判断证据强弱？", "查找适用的行业标准"],
-        ),
-        "analytics": (
-            "运行诊断",
-            "我会基于实际运行记录解释完成率、耗时与异常，不虚构成本或 Token 数据。",
-            ["解释最近的运行瓶颈", "有哪些可执行改进？"],
         ),
         "settings": (
             "设置影响",
