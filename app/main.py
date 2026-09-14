@@ -1688,7 +1688,7 @@ def render_sidebar(
                 "如：果皮完整、无霉斑腐烂。\n"
                 "e.g. Intact, no mold or rot."
             ),
-            height=110,
+            height=132,
             key="manual_observation",
             label_visibility="collapsed",
         )

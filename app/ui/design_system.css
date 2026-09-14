@@ -5685,6 +5685,34 @@ div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label)
     min-height: 100% !important;
 }
 
+/* The conversation sidebar scrolls at its natural height; its controls must
+   not shrink to fit the shorter contextual Agent panel. */
+[data-testid="stSidebarUserContent"]:has(.sidebar-brand) > div,
+[data-testid="stSidebarUserContent"]:has(.sidebar-brand) > div > [data-testid="stVerticalBlock"] {
+    height: auto !important;
+}
+
+[data-testid="stSidebarUserContent"]:has(.sidebar-brand) > div > [data-testid="stVerticalBlock"] > * {
+    flex: 0 0 auto !important;
+}
+
+[data-testid="stSidebar"] .st-key-manual_observation {
+    min-height: 132px;
+    overflow: visible !important;
+}
+
+[data-testid="stSidebar"] .st-key-manual_observation [data-testid="stTextArea"],
+[data-testid="stSidebar"] .st-key-manual_observation [data-testid="stTextAreaRootElement"] {
+    height: 132px !important;
+    min-height: 132px !important;
+}
+
+[data-testid="stSidebar"] .st-key-manual_observation textarea {
+    height: 130px !important;
+    min-height: 130px !important;
+    padding: 14px 16px !important;
+}
+
 [data-testid="stMain"] {
     width: calc(100vw - var(--primary-rail-width) - var(--secondary-panel-width)) !important;
     min-width: 0 !important;
@@ -5934,6 +5962,7 @@ div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label)
 }
 
 [data-testid="stSidebar"] [class*="st-key-agent_composer_"] [data-testid="stFormSubmitButton"] button {
+    position: relative;
     display: flex !important;
     min-height: 44px !important;
     align-items: center !important;
@@ -5954,17 +5983,25 @@ div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label)
 }
 
 [data-testid="stSidebar"] [class*="st-key-agent_composer_"] [data-testid="stFormSubmitButton"] button p {
-    display: none !important;
+    position: absolute !important;
+    width: 1px !important;
+    height: 1px !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+    clip-path: inset(50%);
+    white-space: nowrap;
 }
 
-[data-testid="stSidebar"] [class*="st-key-agent_composer_"] [data-testid="stFormSubmitButton"] [data-testid="stIconMaterial"] {
-    display: inline-flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-    margin: 0 !important;
-    color: #ffffff !important;
-    font-size: 21px !important;
-    line-height: 1 !important;
+[data-testid="stSidebar"] [class*="st-key-agent_composer_"] [data-testid="stFormSubmitButton"] button::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 22px;
+    height: 22px;
+    transform: translate(-50%, -50%);
+    background: center / contain no-repeat url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 19V5m-7 7 7-7 7 7'/%3E%3C/svg%3E");
+    pointer-events: none;
 }
 
 [data-testid="stSidebar"] [class*="st-key-agent_composer_"] [data-testid="stFileUploader"] {
@@ -5990,6 +6027,7 @@ div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label)
     box-sizing: border-box;
     align-items: center;
     justify-content: center;
+    gap: 0 !important;
     padding: 0 !important;
     overflow: hidden;
     background: transparent !important;
@@ -5997,24 +6035,20 @@ div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label)
 }
 
 [data-testid="stSidebar"] [class*="st-key-agent_composer_"] [data-testid="stFileUploader"] section::before {
-    content: "+";
-    display: inline-flex;
-    width: 30px;
-    height: 30px;
-    align-items: center;
-    justify-content: center;
-    color: var(--text-secondary);
-    border: 1px solid var(--border-strong);
+    content: "";
+    display: block;
+    flex: 0 0 36px;
+    width: 36px;
+    height: 36px;
+    border: 0;
     border-radius: 50%;
-    font-size: 22px;
-    font-weight: 400;
-    line-height: 1;
+    background: center / 22px 22px no-repeat url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23424242' stroke-width='1.8' stroke-linecap='round'%3E%3Cpath d='M12 5v14M5 12h14'/%3E%3C/svg%3E");
+    transition: background-color 120ms ease;
+    pointer-events: none;
 }
 
 [data-testid="stSidebar"] [class*="st-key-agent_composer_"] [data-testid="stFileUploader"] section:hover::before {
-    color: var(--text-primary);
-    background: var(--hover);
-    border-color: var(--text-primary);
+    background-color: var(--hover);
 }
 
 [data-testid="stSidebar"] [class*="st-key-agent_composer_"] [data-testid="stFileUploaderDropzoneInstructions"],
@@ -6045,8 +6079,8 @@ div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label)
 
 [data-testid="stSidebar"] [class*="st-key-agent_composer_"] section:has([data-testid="stFileChip"])::before {
     position: absolute;
-    bottom: -51px;
-    left: 11px;
+    bottom: -54px;
+    left: 8px;
 }
 
 [data-testid="stSidebar"] [class*="st-key-agent_composer_"] section:has([data-testid="stFileChip"]) input[type="file"] {
@@ -6406,6 +6440,11 @@ div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label)
 @media (max-width: 760px) {
     :root {
         --primary-rail-width: 0px;
+    }
+
+    [data-testid="stSidebar"] {
+        inset: 80px 0 66px auto !important;
+        height: calc(100dvh - 146px) !important;
     }
 
     .citrus-primary-rail,

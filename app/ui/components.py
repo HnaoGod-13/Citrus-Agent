@@ -547,7 +547,6 @@ def render_agent_panel(view: str) -> tuple[str, Any | None]:
             )
             submitted = st.form_submit_button(
                 "发送",
-                icon=":material/arrow_upward:",
                 help="发送给 Agent",
                 width="content",
             )
