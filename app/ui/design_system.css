@@ -5658,7 +5658,8 @@ div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label)
     width: calc(100% - 28px) !important;
     height: calc(100% - 28px) !important;
     margin: 14px !important;
-    padding: 15px 14px 14px !important;
+    /* Reserve space above the deployment platform's bottom-right badges. */
+    padding: 15px 14px 40px !important;
     overflow: hidden !important;
     background: var(--surface) !important;
     border: 1px solid var(--border) !important;
@@ -6445,6 +6446,11 @@ div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label)
     [data-testid="stSidebar"] {
         inset: 80px 0 66px auto !important;
         height: calc(100dvh - 146px) !important;
+    }
+
+    [data-testid="stSidebar"] > div,
+    [data-testid="stSidebarContent"] {
+        padding-bottom: 14px !important;
     }
 
     .citrus-primary-rail,
