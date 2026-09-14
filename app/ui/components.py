@@ -529,15 +529,17 @@ def render_agent_panel(view: str) -> tuple[str, Any | None]:
         ):
             pending = question
     with st.container(key=f"agent_composer_{view}"):
-        uploaded_image = st.file_uploader(
-            "添加图片",
-            type=SUPPORTED_UPLOAD_EXTENSIONS,
-            max_upload_size=MAX_UPLOAD_BYTES // (1024 * 1024),
-            key=f"agent_panel_upload_{view}",
-            label_visibility="collapsed",
-            help="上传柑橘图片，发送后由视觉模型进行识别",
-        )
         with st.form(key=f"agent_panel_form_{view}", border=False):
+            # Submit the image and text as one form state, including image-only
+            # messages. A separate uploader rerun can race with form submission.
+            uploaded_image = st.file_uploader(
+                "添加图片",
+                type=SUPPORTED_UPLOAD_EXTENSIONS,
+                max_upload_size=MAX_UPLOAD_BYTES // (1024 * 1024),
+                key=f"agent_panel_upload_{view}",
+                label_visibility="collapsed",
+                help="上传柑橘图片，发送后由视觉模型进行识别",
+            )
             prompt = st.text_input(
                 "询问当前页面或继续任务",
                 placeholder="有问题尽管问我…",
