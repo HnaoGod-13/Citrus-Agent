@@ -184,8 +184,7 @@ def render_primary_navigation(
             )
         items.append(
             f'<section class="primary-nav-group primary-nav-group-{html.escape(group_key)}">'
-            f'<div class="primary-nav-group-label"><span>{html.escape(group_zh)}</span>'
-            f'<small>{html.escape(group_en)}</small></div>{"".join(group_links)}</section>'
+            f'{"".join(group_links)}</section>'
         )
 
     home_href = html.escape(_view_url("intake", context_token), quote=True)

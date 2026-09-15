@@ -5584,7 +5584,9 @@ div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label)
 
 .primary-nav-list {
     gap: var(--primary-nav-row-gap);
-    margin-top: 12px;
+    /* Keep the rail aligned with the transparent Streamlit hit layer after
+       removing the non-interactive section headings. */
+    margin-top: 42px;
     margin-bottom: 84px;
     overflow-y: auto;
     scrollbar-width: none;
@@ -5592,12 +5594,8 @@ div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label)
 }
 
 .primary-nav-list::before {
-    content: "任务空间";
-    display: block;
-    padding: 7px 11px 5px;
-    color: var(--text-tertiary);
-    font-size: 11px;
-    line-height: 18px;
+    display: none;
+    content: none;
 }
 
 .primary-nav-item {
@@ -5676,8 +5674,8 @@ div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label)
 }
 
 [class*="st-key-product_nav_actions"] {
-    top: 172px;
-    width: calc(var(--primary-rail-width) - 33px);
+    top: 170px;
+    width: calc(var(--primary-rail-width) - 32px);
     gap: var(--primary-nav-row-gap);
 }
 
@@ -5689,6 +5687,17 @@ div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label)
 [class*="st-key-product_nav_actions"] [data-testid="stButton"],
 [class*="st-key-product_nav_actions"] [data-testid="stButton"] > button {
     height: var(--primary-nav-row-height) !important;
+    margin: 0 !important;
+}
+
+/* The Streamlit buttons are an invisible click layer over the rendered links.
+   Keep their hover paint identical to the link rectangle so the grey state
+   never extends beyond the label or icon. */
+[class*="st-key-product_nav_actions"] [data-testid="stButton"] > button:hover {
+    background: var(--hover) !important;
+    border: 0 !important;
+    border-radius: 8px !important;
+    transform: none !important;
 }
 
 [class*="st-key-product_user_action"] {
