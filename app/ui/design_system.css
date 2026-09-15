@@ -6299,6 +6299,49 @@ section[data-testid="stAppScrollToBottomContainer"] [data-testid="stBottomBlockC
     line-height: 1.65;
 }
 
+.identity-role-label {
+    margin: 0 0 10px;
+    color: var(--text-tertiary);
+    font-size: 12px;
+    letter-spacing: 0.04em;
+}
+
+[class*="st-key-identity_role_picker"] {
+    margin-top: 4px;
+}
+
+[class*="st-key-identity_role_picker"] [class*="st-key-identity_role_"] button {
+    min-height: 164px;
+    padding: 22px 20px;
+    border-radius: 12px;
+    text-align: left;
+    white-space: pre-line;
+    line-height: 1.55;
+    box-shadow: none;
+    transition: border-color .18s ease, background-color .18s ease, transform .18s ease;
+}
+
+[class*="st-key-identity_role_picker"] [class*="st-key-identity_role_"] button:hover {
+    transform: translateY(-1px);
+}
+
+[class*="st-key-identity_role_picker"] [class*="st-key-identity_role_"] button p {
+    white-space: pre-line;
+}
+
+[class*="st-key-identity_role_picker"] [class*="st-key-identity_role_"] button[kind="primary"] {
+    background: var(--surface) !important;
+    color: var(--text-primary) !important;
+    border: 1px solid var(--text-primary) !important;
+    box-shadow: inset 3px 0 0 var(--text-primary);
+}
+
+[class*="st-key-identity_role_picker"] [class*="st-key-identity_role_"] button[kind="secondary"] {
+    background: var(--surface) !important;
+    color: var(--text-primary) !important;
+    border: 1px solid var(--border) !important;
+}
+
 [class*="st-key-identity_quick_task"] {
     margin-top: 14px;
 }

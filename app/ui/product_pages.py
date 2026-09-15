@@ -1973,6 +1973,11 @@ def _current_result() -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def _select_identity_role(role: str) -> None:
+    """Persist the role selected from an identity card."""
+    st.session_state.citrus_workbench_role = role
+
+
 def _result_value(item: Any, key: str, default: Any = "") -> Any:
     if isinstance(item, dict):
         return item.get(key, default)
@@ -2000,20 +2005,20 @@ def render_identity_page() -> None:
         "质量管理": "质量控制、检测分析、证据复核与合规审核",
         "管理决策者": "项目进度、资源配置、路线确认与最终审批",
     }
-    selected = st.radio(
-        "工作身份",
-        list(roles),
-        horizontal=True,
-        key="citrus_workbench_role",
-        label_visibility="collapsed",
-    )
-    cards = "".join(
-        f'<article class="identity-card{" is-selected" if role == selected else ""}">'
-        f'<span>{index:02d}</span><h3>{html.escape(role)}</h3>'
-        f'<p>{html.escape(description)}</p></article>'
-        for index, (role, description) in enumerate(roles.items(), 1)
-    )
-    st.markdown(f'<div class="identity-card-grid">{cards}</div>', unsafe_allow_html=True)
+    selected = st.session_state.get("citrus_workbench_role") or next(iter(roles))
+    with st.container(key="identity_role_picker"):
+        st.markdown('<div class="identity-role-label">工作身份</div>', unsafe_allow_html=True)
+        role_columns = st.columns(3, gap="small")
+        for index, (role, description) in enumerate(roles.items(), 1):
+            with role_columns[index - 1]:
+                st.button(
+                    f"{index:02d}\n{role}\n{description}",
+                    key=f"identity_role_{index}",
+                    width="stretch",
+                    type="primary" if selected == role else "secondary",
+                    on_click=_select_identity_role,
+                    args=(role,),
+                )
     with st.container(key="identity_quick_task"):
         st.markdown('<h3 class="section-title">快速创建任务</h3>', unsafe_allow_html=True)
         task_col, project_col = st.columns([1.4, 1])
