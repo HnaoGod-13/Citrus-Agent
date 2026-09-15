@@ -1136,6 +1136,8 @@ def _memory_identity_matches_authentication(
 PRODUCT_VIEWS = {
     "chat",
     "identity",
+    "assets",
+    "analytics",
     "intake",
     "evidence",
     "decision",
@@ -1164,7 +1166,12 @@ def current_product_view() -> str:
         view = state_view
         _set_query_value("view", view)
     else:
-        view = "identity"
+        view = "intake"
+        _set_query_value("view", view)
+
+    if view == "identity":
+        view = "intake"
+        st.session_state.product_view = view
         _set_query_value("view", view)
 
     if state_view in PRODUCT_VIEWS and state_view != view:

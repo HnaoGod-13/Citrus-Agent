@@ -2216,6 +2216,18 @@ def render_report_page() -> None:
     )
 
 
+def render_assets_page() -> None:
+    _render_industry_task_page(
+        "assets", "data", "数据清洗", "统一检查缺失项、异常值和批次资料，形成可复核的数据底稿。"
+    )
+
+
+def render_analytics_page() -> None:
+    _render_industry_task_page(
+        "analytics", "visuals", "数据看板", "查看供应、产量、质量和区域流向等任务指标。"
+    )
+
+
 def render_review_page() -> None:
     ui_components.render_page_header(
         "TASK · REVIEW",
@@ -2263,6 +2275,8 @@ _PAGE_RENDERERS = {
     "process": render_process_page,
     "matching": render_matching_page,
     "report": render_report_page,
+    "assets": render_assets_page,
+    "analytics": render_analytics_page,
     "review": render_review_page,
     "knowledge": render_knowledge_page,
     "知识库": render_knowledge_page,

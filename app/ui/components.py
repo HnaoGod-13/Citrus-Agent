@@ -10,33 +10,28 @@ import streamlit as st
 from agent.vision_client import MAX_UPLOAD_BYTES, SUPPORTED_UPLOAD_EXTENSIONS
 
 
-NAV_ITEMS = (
-    ("identity", "shield", "身份选择", "Identity"),
-    ("intake", "file-text", "资料确认", "Data intake"),
-    ("evidence", "search", "分析与证据", "Evidence"),
-    ("decision", "decision", "路线决策", "Decision"),
-    ("process", "factory", "工艺方案", "Process"),
-    ("matching", "share", "供需匹配", "Matching"),
-    ("report", "file-text", "报告撰写", "Report"),
-    ("review", "shield", "审核发布", "Review"),
-    ("knowledge", "book-open", "知识与标准", "Knowledge"),
-    ("settings", "settings", "设置", "Settings"),
+NAV_GROUPS = (
+    ("data", "资料与数据", "Data & records", (("intake", "file-text", "资料确认", "Data intake"), ("assets", "database", "数据清洗", "Data cleaning"))),
+    ("process", "路线与工艺", "Routes & process", (("decision", "decision", "路线决策", "Decision"), ("process", "factory", "工艺方案", "Process"))),
+    ("matching", "供需匹配", "Supply & demand", (("matching", "share", "供需匹配", "Matching"),)),
+    ("insights", "可视化与报告", "Insights & reports", (("analytics", "chart-no-axes", "数据看板", "Data board"), ("report", "file-text", "报告撰写", "Report"))),
+    ("review", "审核发布", "Review & publish", (("review", "shield", "审核发布", "Review"),)),
+    ("knowledge", "知识与标准", "Knowledge & standards", (("knowledge", "book-open", "知识与标准", "Knowledge"),)),
 )
+NAV_ITEMS = tuple(item for _key, _zh, _en, items in NAV_GROUPS for item in items)
 
 
 def normalize_product_view(view: str) -> str:
     """Keep saved links and sessions usable after retiring overview pages."""
     normalized = str(view or "").strip().lower().replace("-", "_").replace(" ", "_")
     return {
-        "workspace": "identity",
-        "工作台": "identity",
-        "assets": "intake",
-        "数据资产": "intake",
+        "workspace": "intake",
+        "工作台": "intake",
+        "数据资产": "assets",
         "results": "report",
         "成果中心": "report",
-        "analytics": "identity",
-        "运行分析": "identity",
-        "分析": "identity",
+        "运行分析": "analytics",
+        "分析": "analytics",
     }.get(normalized, normalized)
 
 
@@ -170,24 +165,31 @@ def render_primary_navigation(
     passive_link = ' tabindex="-1" aria-hidden="true"' if on_view_change else ""
     items = []
     mobile_items = []
-    for view, icon, zh_label, en_label in NAV_ITEMS:
-        active = " is-active" if view == active_view else ""
-        current = ' aria-current="page"' if view == active_view else ""
-        href = html.escape(_view_url(view, context_token), quote=True)
-        item_icon = icon_svg(icon, 24)
+    for group_key, group_zh, group_en, group_items in NAV_GROUPS:
+        group_links = []
+        for view, icon, zh_label, en_label in group_items:
+            active = " is-active" if view == active_view else ""
+            current = ' aria-current="page"' if view == active_view else ""
+            href = html.escape(_view_url(view, context_token), quote=True)
+            item_icon = icon_svg(icon, 22)
+            group_links.append(
+                f'<a class="primary-nav-item{active}" href="{href}"{current}{passive_link}>'
+                f'<span class="primary-nav-icon">{item_icon}</span>'
+                f'<span class="primary-nav-copy"><span>{html.escape(zh_label)}</span>'
+                f'<small>{html.escape(en_label)}</small></span></a>'
+            )
+            mobile_items.append(
+                f'<a class="mobile-nav-item{active}" href="{href}" target="_self"{current}>'
+                f'{item_icon}<span>{html.escape(zh_label)}</span></a>'
+            )
         items.append(
-            f'<a class="primary-nav-item{active}" href="{href}"{current}{passive_link}>'
-            f'<span class="primary-nav-icon">{item_icon}</span>'
-            f'<span class="primary-nav-copy"><span>{html.escape(zh_label)}</span>'
-            f'<small>{html.escape(en_label)}</small></span></a>'
-        )
-        mobile_items.append(
-            f'<a class="mobile-nav-item{active}" href="{href}" target="_self"{current}>'
-            f'{item_icon}<span>{html.escape(zh_label)}</span></a>'
+            f'<section class="primary-nav-group primary-nav-group-{html.escape(group_key)}">'
+            f'<div class="primary-nav-group-label"><span>{html.escape(group_zh)}</span>'
+            f'<small>{html.escape(group_en)}</small></div>{"".join(group_links)}</section>'
         )
 
-    home_href = html.escape(_view_url("identity", context_token), quote=True)
-    create_href = html.escape(_view_url("identity", context_token), quote=True)
+    home_href = html.escape(_view_url("intake", context_token), quote=True)
+    create_href = html.escape(_view_url("intake", context_token), quote=True)
     settings_href = html.escape(_view_url("settings", context_token), quote=True)
     st.markdown(
         f"""
@@ -214,14 +216,14 @@ def render_primary_navigation(
                 "Citrus AI 首页",
                 key="product_brand_button",
                 on_click=on_view_change,
-                args=("identity",),
+                args=("intake",),
             )
         with st.container(key="product_create_action"):
             st.button(
                 "新建业务任务",
                 key="product_create_button",
                 on_click=on_view_change,
-                args=("identity",),
+                args=("intake",),
             )
         with st.container(key="product_nav_actions"):
             for view, _icon, zh_label, en_label in NAV_ITEMS:
