@@ -5690,11 +5690,10 @@ div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label)
     margin: 0 !important;
 }
 
-/* The Streamlit buttons are an invisible click layer over the rendered links.
-   Keep their hover paint identical to the link rectangle so the grey state
-   never extends beyond the label or icon. */
+/* These buttons sit above the rendered labels and icons. Keep the hover
+   background translucent so the click layer never obscures the visible link. */
 [class*="st-key-product_nav_actions"] [data-testid="stButton"] > button:hover {
-    background: var(--hover) !important;
+    background: var(--overlay-hover) !important;
     border: 0 !important;
     border-radius: 8px !important;
     transform: none !important;
