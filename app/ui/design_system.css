@@ -6288,15 +6288,16 @@ section[data-testid="stAppScrollToBottomContainer"] [data-testid="stBottomBlockC
 
 .identity-card h3,
 .route-card h3 {
-    margin: 20px 0 8px;
-    font-size: 16px;
+    margin: 18px 0 10px;
+    font-size: 21px !important;
+    letter-spacing: -0.02em;
 }
 
 .identity-card p {
     margin: 0;
     color: var(--text-secondary);
-    font-size: 13px;
-    line-height: 1.65;
+    font-size: 14px;
+    line-height: 1.75;
 }
 
 .identity-role-label {
@@ -6310,36 +6311,58 @@ section[data-testid="stAppScrollToBottomContainer"] [data-testid="stBottomBlockC
     margin-top: 4px;
 }
 
-[class*="st-key-identity_role_picker"] [class*="st-key-identity_role_"] button {
-    min-height: 164px;
-    padding: 22px 20px;
-    border-radius: 12px;
-    text-align: left;
-    white-space: pre-line;
-    line-height: 1.55;
+[class*="st-key-identity_role_card_"] {
+    position: relative;
+    min-height: 206px;
+}
+
+[class*="st-key-identity_role_card_"] .identity-card {
+    min-height: 206px;
+    padding: 28px;
     box-shadow: none;
-    transition: border-color .18s ease, background-color .18s ease, transform .18s ease;
 }
 
-[class*="st-key-identity_role_picker"] [class*="st-key-identity_role_"] button:hover {
-    transform: translateY(-1px);
+[class*="st-key-identity_role_card_"] .identity-card-number {
+    display: block;
+    font-size: 12px;
+    letter-spacing: .08em;
 }
 
-[class*="st-key-identity_role_picker"] [class*="st-key-identity_role_"] button p {
-    white-space: pre-line;
+[class*="st-key-identity_role_card_"] [class*="st-key-identity_role_button_"] {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    margin: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
 }
 
-[class*="st-key-identity_role_picker"] [class*="st-key-identity_role_"] button[kind="primary"] {
-    background: var(--surface) !important;
-    color: var(--text-primary) !important;
-    border: 1px solid var(--text-primary) !important;
-    box-shadow: inset 3px 0 0 var(--text-primary);
+[class*="st-key-identity_role_card_"] [class*="st-key-identity_role_button_"] .stButton {
+    width: 100%;
+    height: 100%;
+    margin: 0;
 }
 
-[class*="st-key-identity_role_picker"] [class*="st-key-identity_role_"] button[kind="secondary"] {
-    background: var(--surface) !important;
-    color: var(--text-primary) !important;
-    border: 1px solid var(--border) !important;
+[class*="st-key-identity_role_card_"] [class*="st-key-identity_role_button_"] button {
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    padding: 0;
+    border: 0 !important;
+    background: transparent !important;
+    color: transparent !important;
+    box-shadow: none !important;
+    pointer-events: auto;
+    cursor: pointer;
+}
+
+[class*="st-key-identity_role_card_"] [class*="st-key-identity_role_button_"] button:hover {
+    background: rgba(17, 17, 17, 0.025) !important;
+}
+
+[class*="st-key-identity_role_card_"] [class*="st-key-identity_role_button_"] button p {
+    color: transparent !important;
 }
 
 [class*="st-key-identity_quick_task"] {

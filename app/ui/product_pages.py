@@ -2011,14 +2011,23 @@ def render_identity_page() -> None:
         role_columns = st.columns(3, gap="small")
         for index, (role, description) in enumerate(roles.items(), 1):
             with role_columns[index - 1]:
-                st.button(
-                    f"{index:02d}\n{role}\n{description}",
-                    key=f"identity_role_{index}",
-                    width="stretch",
-                    type="primary" if selected == role else "secondary",
-                    on_click=_select_identity_role,
-                    args=(role,),
-                )
+                state = "selected" if selected == role else "idle"
+                with st.container(key=f"identity_role_card_{index}_{state}"):
+                    st.markdown(
+                        f'<article class="identity-card{" is-selected" if selected == role else ""}">'
+                        f'<span class="identity-card-number">{index:02d}</span>'
+                        f'<h3>{html.escape(role)}</h3>'
+                        f'<p>{html.escape(description)}</p></article>',
+                        unsafe_allow_html=True,
+                    )
+                    st.button(
+                        f"选择{role}",
+                        key=f"identity_role_button_{index}",
+                        width="stretch",
+                        type="secondary",
+                        on_click=_select_identity_role,
+                        args=(role,),
+                    )
     with st.container(key="identity_quick_task"):
         st.markdown('<h3 class="section-title">快速创建任务</h3>', unsafe_allow_html=True)
         task_col, project_col = st.columns([1.4, 1])
