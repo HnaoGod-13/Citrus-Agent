@@ -98,6 +98,7 @@ def _intake_action():
                 model["analysis"] = analysis
                 model["taskContext"] = analysis.get("task_context", {})
                 model["activeIntakeReport"] = document
+                st.session_state.industry_task_context = dict(analysis.get("task_context") or {})
             collection.pop("undo", None)
             if operation == "load":
                 collection["panel"] = "form"
