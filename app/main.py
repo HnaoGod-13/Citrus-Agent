@@ -1157,7 +1157,6 @@ def _memory_identity_matches_authentication(
 PRODUCT_VIEWS = {
     "chat",
     "identity",
-    "assets",
     "analytics",
     "intake",
     "evidence",

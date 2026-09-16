@@ -2062,7 +2062,7 @@ def render_intake_page() -> None:
         "intake",
         "data",
         "资料确认",
-        "在任务内录入、复用和补充批次数据，确认后进入证据分析。",
+        "在任务内录入、复用和补充批次数据；保存时系统会自动完成字段校验、缺失项和异常值检查。",
     )
 
 
@@ -2216,12 +2216,6 @@ def render_report_page() -> None:
     )
 
 
-def render_assets_page() -> None:
-    _render_industry_task_page(
-        "assets", "data", "数据清洗", "统一检查缺失项、异常值和批次资料，形成可复核的数据底稿。"
-    )
-
-
 def render_analytics_page() -> None:
     _render_industry_task_page(
         "analytics", "visuals", "数据看板", "查看供应、产量、质量和区域流向等任务指标。"
@@ -2275,7 +2269,6 @@ _PAGE_RENDERERS = {
     "process": render_process_page,
     "matching": render_matching_page,
     "report": render_report_page,
-    "assets": render_assets_page,
     "analytics": render_analytics_page,
     "review": render_review_page,
     "knowledge": render_knowledge_page,

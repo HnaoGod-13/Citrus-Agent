@@ -11,7 +11,7 @@ from agent.vision_client import MAX_UPLOAD_BYTES, SUPPORTED_UPLOAD_EXTENSIONS
 
 
 NAV_GROUPS = (
-    ("data", "资料与数据", "Data & records", (("intake", "file-text", "资料确认", "Data intake"), ("assets", "database", "数据清洗", "Data cleaning"))),
+    ("data", "资料与数据", "Data & records", (("intake", "file-text", "资料确认", "Data intake"),)),
     ("process", "路线与工艺", "Routes & process", (("decision", "decision", "路线决策", "Decision"), ("process", "factory", "工艺方案", "Process"))),
     ("matching", "供需匹配", "Supply & demand", (("matching", "share", "供需匹配", "Matching"),)),
     ("insights", "可视化与报告", "Insights & reports", (("analytics", "chart-no-axes", "数据看板", "Data board"), ("report", "file-text", "报告撰写", "Report"))),
@@ -27,7 +27,13 @@ def normalize_product_view(view: str) -> str:
     return {
         "workspace": "intake",
         "工作台": "intake",
-        "数据资产": "assets",
+        # Data cleaning is an automatic intake pipeline step, not a separate
+        # user-facing workspace. Keep old links usable by opening intake.
+        "assets": "intake",
+        "data_assets": "intake",
+        "data_cleaning": "intake",
+        "数据资产": "intake",
+        "数据清洗": "intake",
         "results": "report",
         "成果中心": "report",
         "运行分析": "analytics",
