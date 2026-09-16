@@ -17,3 +17,4 @@ zstandard>=0.23.0
 # Explicit-target processing alignment full-redeploy marker (2026-08-23).
 # Complete peel-extraction flow full-redeploy marker (2026-08-23).
 # Task-bound intake pipeline and report enrichment redeploy marker (2026-09-16).
+# Force hosted app rebuild after the task-bound workbench update (2026-09-16).
