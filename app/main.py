@@ -360,6 +360,10 @@ def restore_ui_messages(
             "message_type": message_type,
             "run_id": metadata.get("run_id"),
             "audit_trace": metadata.get("audit_trace"),
+            "contextual": bool(metadata.get("contextual")),
+            "task_id": str(metadata.get("task_id") or ""),
+            "record_id": str(metadata.get("record_id") or ""),
+            "context_view": str(metadata.get("context_view") or ""),
         }
         if role == "user" and bool(metadata.get("has_image")):
             restored_image = (
@@ -389,6 +393,23 @@ def restore_ui_messages(
                 message["content"] = restore_flattened_markdown(message["content"])
         restored.append(message)
     return restored
+
+
+def sync_industry_context_messages() -> list[dict[str, Any]]:
+    """Keep the right-side assistant scoped to the active batch context."""
+    context = st.session_state.get("industry_task_context") or {}
+    task_id = str(context.get("task_id") or "")
+    record_id = str(context.get("record_id") or "")
+    messages = [
+        message
+        for message in (st.session_state.get("agent_messages") or [])
+        if message.get("contextual")
+        and (task_id or record_id or (not message.get("task_id") and not message.get("record_id")))
+        and (not task_id or str(message.get("task_id") or "") == task_id)
+        and (not record_id or str(message.get("record_id") or "") == record_id)
+    ]
+    st.session_state.industry_context_messages = messages
+    return messages
 
 
 def recover_legacy_analysis_payload(
@@ -1443,6 +1464,7 @@ def initialize_memory_identity() -> None:
             st.session_state.current_batch = current_batch
             st.session_state.last_result = last_result
             st.session_state.last_vision_context = last_vision_context
+            sync_industry_context_messages()
         st.session_state.memory_restored_session = session_id
 
 
@@ -1453,6 +1475,10 @@ def clear_active_conversation_state(*, clear_sidebar: bool = False) -> None:
     st.session_state.last_vision_context = None
     st.session_state.memory_restored_session = None
     st.session_state.pending_agent_persistence = {}
+    st.session_state.industry_context_messages = []
+    st.session_state.industry_inline_answer = ""
+    st.session_state.industry_task_context = {}
+    st.session_state.industry_active_record_id = ""
     if clear_sidebar:
         reset_sidebar_inputs()
 
@@ -1495,6 +1521,7 @@ def start_new_conversation() -> None:
     )
     st.session_state.memory_context_token = context_token
     _set_query_value("ctx", context_token)
+    _delete_query_value("record_id")
     _delete_query_value("uid")
     _delete_query_value("sid")
     try:
@@ -1532,6 +1559,10 @@ def init_state() -> None:
     st.session_state.setdefault("memory_context_token", "")
     st.session_state.setdefault("memory_privacy_event_marker", "")
     st.session_state.setdefault("retrieval_mode", "quick")
+    st.session_state.setdefault("industry_context_messages", [])
+    st.session_state.setdefault("industry_task_context", {})
+    st.session_state.setdefault("industry_active_record_id", "")
+    st.session_state.setdefault("industry_inline_answer", "")
     st.session_state.retrieval_mode = normalize_retrieval_mode(
         st.session_state.retrieval_mode
     )
@@ -4588,25 +4619,91 @@ def submit_agent_panel_prompt(
     )
 
 
-def submit_contextual_panel_prompt(prompt: str, api_key: str) -> None:
-    """Keep workspace follow-ups in the workbench and skip workflow execution."""
+def submit_contextual_panel_prompt(
+    prompt: str, api_key: str, *, active_view: str = ""
+) -> None:
+    """Answer in the current workbench while keeping the batch context bound."""
+    prompt = str(prompt or "").strip()
+    if not prompt:
+        return
     context = st.session_state.get("industry_task_context") or {}
     model = st.session_state.get("industry_ui_model") or {}
     analysis = model.get("analysis") if isinstance(model, dict) else {}
     facts = (analysis or {}).get("batch_summary") or {}
+    task_id = str(context.get("task_id") or "")
+    record_id = str(context.get("record_id") or "")
     bound = (
-        f"任务 task_id={context.get('task_id') or '待生成'}、record_id={context.get('record_id') or '待生成'}。"
+        f"任务 task_id={task_id or '待生成'}、record_id={record_id or '待生成'}。"
         f"当前批次事实：{facts}。路线与工艺已由工作台自动完成。只解释当前任务，不检索新输入、不启动流程。用户问题：{prompt}"
     )
+    history = [
+        {"role": item.get("role"), "content": item.get("content", "")}
+        for item in (st.session_state.get("industry_context_messages") or [])
+        if item.get("role") in {"user", "assistant"}
+    ]
     if api_key:
         try:
-            answer = chat_with_deepseek(api_key, build_general_chat_messages([], bound, memory_context=context))
+            answer = chat_with_deepseek(
+                api_key,
+                build_general_chat_messages(
+                    history,
+                    bound,
+                    memory_context={**context, "batch_summary": facts},
+                    evidence=[],
+                ),
+            )
         except DeepSeekAPIError as error:
             answer = f"当前任务助手暂时无法回答：{error}"
     else:
         route = (analysis or {}).get("recommended_route") or {}
-        answer = f"已绑定当前批次（task_id：{context.get('task_id') or '待生成'}，record_id：{context.get('record_id') or '待生成'}）。当前推荐路线：{route.get('label') or '待补充'}。配置大模型 Key 后可继续自然语言解释。"
+        answer = f"已绑定当前批次（task_id：{task_id or '待生成'}，record_id：{record_id or '待生成'}）。当前推荐路线：{route.get('label') or '待补充'}。配置大模型 Key 后可继续自然语言解释。"
+    metadata = {
+        "contextual": True,
+        "task_id": task_id,
+        "record_id": record_id,
+        "context_view": str(active_view or ""),
+    }
+    manager = get_memory_manager()
+    user_id = str(st.session_state.get("memory_user_id") or "")
+    session_id = str(st.session_state.get("memory_session_id") or "")
+    project_id = str(st.session_state.get("memory_project_id") or "")
+    user_message = {
+        "role": "user",
+        "content": prompt,
+        "message_id": f"msg_{uuid4().hex}",
+        **metadata,
+    }
+    assistant_message = {
+        "role": "assistant",
+        "content": str(answer or "").strip(),
+        "message_id": f"msg_{uuid4().hex}",
+        **metadata,
+    }
+    st.session_state.agent_messages.extend([user_message, assistant_message])
+    if user_id and session_id and project_id:
+        try:
+            manager.record_message(
+                user_id,
+                session_id,
+                project_id,
+                "user",
+                prompt,
+                message_id=user_message["message_id"],
+                metadata=metadata,
+            )
+            manager.record_message(
+                user_id,
+                session_id,
+                project_id,
+                "assistant",
+                assistant_message["content"],
+                message_id=assistant_message["message_id"],
+                metadata=metadata,
+            )
+        except agent_memory.MemoryManagerError:
+            pass
     st.session_state.industry_inline_answer = answer
+    sync_industry_context_messages()
 
 
 def main() -> None:
@@ -4621,6 +4718,8 @@ def main() -> None:
     init_state()
     sync_active_agent_job()
     active_view = current_product_view()
+    ui_industry_pages.restore_active_context(_query_value("record_id"))
+    sync_industry_context_messages()
     render_navigation_history_sync()
     restore_scroll_position = bool(st.session_state.pop("restore_main_scroll_position", False))
     reset_scroll_position = bool(st.session_state.pop("reset_main_scroll_position", False))
@@ -4660,10 +4759,12 @@ def main() -> None:
     ) = render_sidebar(active_view)
 
     if active_view != "chat" and agent_panel_prompt:
-        if active_view == "workspace":
-            submit_contextual_panel_prompt(agent_panel_prompt, api_key)
-        else:
-            submit_agent_panel_prompt(agent_panel_prompt, agent_panel_upload, api_key, retrieval_mode)
+        submit_contextual_panel_prompt(
+            agent_panel_prompt,
+            api_key,
+            active_view=active_view,
+        )
+        st.rerun()
 
     if active_view == "chat":
         if not st.session_state.agent_messages:
@@ -4673,6 +4774,8 @@ def main() -> None:
             progress_slot = None
             st.markdown('<div class="chat-transcript-start"></div>', unsafe_allow_html=True)
             for message in st.session_state.agent_messages:
+                if message.get("contextual"):
+                    continue
                 render_message(message)
 
     active_job = _active_agent_job_snapshot()

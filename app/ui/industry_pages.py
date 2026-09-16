@@ -52,6 +52,53 @@ def _scope():
             str(st.session_state.get("memory_project_id") or ""))
 
 
+def _enrich_report(document: dict) -> dict:
+    """Use the packaged literature index when building a report context."""
+    try:
+        from agent import rag as agent_rag
+
+        return enrich_report_context(document, searcher=agent_rag.search_knowledge)
+    except (ImportError, AttributeError, OSError, TypeError, ValueError):
+        return enrich_report_context(document)
+
+
+def restore_active_context(record_id: str = "") -> bool:
+    """Restore the selected saved batch before the sidebar is rendered."""
+    requested = str(record_id or st.session_state.get("industry_active_record_id") or "").strip()
+    scope = _scope()
+    if not requested or not all(scope):
+        return False
+    current = st.session_state.get("industry_task_context") or {}
+    if str(current.get("record_id") or "") == requested:
+        return True
+    try:
+        document = _intake_store().load(*scope, requested)
+        analysis = run_intake_pipeline(
+            document,
+            str(document.get("id") or requested),
+            document.get("revision") or 1,
+        )
+        analysis["report_enrichment"] = _enrich_report(document)
+    except (ValueError, TypeError, KeyError, sqlite3.Error, OSError):
+        return False
+    model = deepcopy(st.session_state.get("industry_ui_model", {}))
+    model.update(
+        analysis=analysis,
+        taskContext=analysis.get("task_context", {}),
+        activeIntakeReport=document,
+    )
+    collection = model.setdefault("collection", {})
+    collection.setdefault("documents", {})[document["side"]] = document
+    collection["side"] = document["side"]
+    collection["panel"] = "form"
+    collection.setdefault("steps", {})[document["side"]] = 0
+    collection.setdefault("dirty", {})[document["side"]] = False
+    st.session_state.industry_ui_model = model
+    st.session_state.industry_task_context = dict(analysis.get("task_context") or {})
+    st.session_state.industry_active_record_id = requested
+    return True
+
+
 def _intake_action():
     action = st.session_state.get("industry_workspace_canvas", {}).get("intake_action")
     if not isinstance(action, dict) or not isinstance(action.get("requestId"), str):
@@ -67,14 +114,18 @@ def _intake_action():
             if result.get("ok") and result.get("document"):
                 document = result["document"]
                 result["analysis"] = run_intake_pipeline(document, str(document.get("id") or ""), document.get("revision") or 1)
-                result["analysis"]["report_enrichment"] = enrich_report_context(document)
+                result["analysis"]["report_enrichment"] = _enrich_report(document)
+                st.session_state.industry_active_record_id = str(document.get("id") or "")
+                st.query_params["record_id"] = st.session_state.industry_active_record_id
         elif operation in ("load", "link"):
             document = store.load(*scope, action.get("id"))
             if operation == "link" and document["side"] != "supplier":
                 raise ValueError("请选择供应端采集记录。")
             result = dict(ok=True, document=document, message="已带入原料来源，请补齐到货验收信息。") if operation == "link" else dict(ok=True, document=document, message="已打开保存的采集记录。", analysis=run_intake_pipeline(document, str(document.get("id") or ""), document.get("revision") or 1))
             if operation == "load":
-                result["analysis"]["report_enrichment"] = enrich_report_context(document)
+                result["analysis"]["report_enrichment"] = _enrich_report(document)
+                st.session_state.industry_active_record_id = str(document.get("id") or "")
+                st.query_params["record_id"] = st.session_state.industry_active_record_id
         else:
             raise ValueError("不支持此采集操作。")
     except (ValueError, TypeError, KeyError, sqlite3.Error, OSError) as error:
@@ -158,4 +209,4 @@ def render_industry_workspace() -> None:
     )
 
 
-__all__ = ["current_industry_view", "render_industry_workspace"]
+__all__ = ["current_industry_view", "render_industry_workspace", "restore_active_context"]

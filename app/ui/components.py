@@ -141,16 +141,6 @@ def render_light_table(
         """,
         unsafe_allow_html=True,
     )
-    if view == "workspace":
-        context = st.session_state.get("industry_task_context") or {}
-        task_id, record_id = str(context.get("task_id") or ""), str(context.get("record_id") or "")
-        if task_id or record_id:
-            st.markdown(f'<div class="agent-task-binding"><span>当前任务</span><code>{html.escape(task_id or "待生成")}</code><small>批次记录：{html.escape(record_id or "待生成")}</small></div>', unsafe_allow_html=True)
-        answer = str(st.session_state.get("industry_inline_answer") or "").strip()
-        if answer:
-            st.markdown(f'<div class="agent-inline-message"><b>任务助手</b><p>{html.escape(answer)}</p></div>', unsafe_allow_html=True)
-
-
 def _view_url(
     view: str,
     context_token: str = "",
@@ -458,6 +448,30 @@ def render_empty_state(
 
 def render_agent_panel(view: str) -> tuple[str, Any | None]:
     """Render one contextual Agent panel and return prompt plus optional image."""
+    task_context = st.session_state.get("industry_task_context") or {}
+    task_id = str(task_context.get("task_id") or "")
+    record_id = str(task_context.get("record_id") or "")
+    if task_id or record_id:
+        st.markdown(
+            f'<div class="agent-task-binding"><span>当前任务</span>'
+            f'<code>{html.escape(task_id or "待生成")}</code>'
+            f'<small>批次记录：{html.escape(record_id or "待生成")}</small></div>',
+            unsafe_allow_html=True,
+        )
+    contextual_messages = st.session_state.get("industry_context_messages") or []
+    if contextual_messages:
+        st.markdown('<div class="agent-inline-history">', unsafe_allow_html=True)
+        for message in contextual_messages[-8:]:
+            role = "你" if message.get("role") == "user" else "任务助手"
+            content = str(message.get("content") or "").strip()
+            if not content:
+                continue
+            st.markdown(
+                f'<div class="agent-inline-message"><b>{html.escape(role)}</b>'
+                f'<p>{html.escape(content)}</p></div>',
+                unsafe_allow_html=True,
+            )
+        st.markdown('</div>', unsafe_allow_html=True)
     context = {
         "identity": (
             "身份说明",
