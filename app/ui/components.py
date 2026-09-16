@@ -141,6 +141,14 @@ def render_light_table(
         """,
         unsafe_allow_html=True,
     )
+    if view == "workspace":
+        context = st.session_state.get("industry_task_context") or {}
+        task_id, record_id = str(context.get("task_id") or ""), str(context.get("record_id") or "")
+        if task_id or record_id:
+            st.markdown(f'<div class="agent-task-binding"><span>当前任务</span><code>{html.escape(task_id or "待生成")}</code><small>批次记录：{html.escape(record_id or "待生成")}</small></div>', unsafe_allow_html=True)
+        answer = str(st.session_state.get("industry_inline_answer") or "").strip()
+        if answer:
+            st.markdown(f'<div class="agent-inline-message"><b>任务助手</b><p>{html.escape(answer)}</p></div>', unsafe_allow_html=True)
 
 
 def _view_url(

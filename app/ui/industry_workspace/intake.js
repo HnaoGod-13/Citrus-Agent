@@ -49,6 +49,8 @@ export function createIntakeController({root, model, data, setStateValue, render
   if (!schema) return null;
   const e = intakeEscape;
   const state = model.collection ||= {side:'', panel:'form', steps:{supplier:0,processor:0}, documents:{}, dirty:{}};
+  state.analysis ||= model.analysis || null;
+  state.taskContext ||= model.taskContext || null;
   const current = () => state.documents[state.side] ||= intakeNewDocument(state.side);
   const docs = data.intakeRecords || [];
   const result = data.intakeResult;
@@ -70,6 +72,12 @@ export function createIntakeController({root, model, data, setStateValue, render
         state.dirty[state.side] = false;
         delete state.undo;
         if (result.operation === 'load') {state.panel='form'; state.steps[state.side]=0;}
+      }
+      if (result.analysis) {
+        state.analysis = structuredClone(result.analysis);
+        state.taskContext = structuredClone(result.analysis.task_context || {});
+        model.analysis = structuredClone(result.analysis);
+        model.taskContext = structuredClone(result.analysis.task_context || {});
       }
     }
     if (!result.ok && state.errors.length) state.panel='check';
@@ -111,6 +119,12 @@ export function createIntakeController({root, model, data, setStateValue, render
     const raw=Number(document.fields['output.rawMass']), product=Number(document.fields['output.productMass']);
     return `<div class="collection-score"><span>必填内容完整度</span><strong>${audit.score}%</strong><div class="meter"><i style="width:${audit.score}%"></i></div><p>${audit.completed} / ${audit.required} 项已填写</p></div><dl class="ic-summary"><div><dt>明细记录</dt><dd>${rows} 条</dd></div><div><dt>证据附件</dt><dd>${document.attachments.length} 个</dd></div><div><dt>记录状态</dt><dd>${state.dirty[state.side]?'有未保存修改':document.status==='submitted'?'已提交 · 待复核':document.id?'已保存草稿':'未保存'}</dd></div>${document.fields['output.productMass']!==undefined && String(document.fields['output.productMass']).trim() && raw>0 && Number.isFinite(product)?`<div><dt>质量口径得率</dt><dd>${(product/raw*100).toFixed(2)}%</dd></div>`:''}</dl><p class="ic-hint">完整度仅衡量填写情况；检测、工艺适用性及质量结论由原始资料和企业复核确认。</p>`;
   }
+  function autoDecisionPanel() {
+    const analysis=state.analysis || model.analysis;if (!analysis) return '';
+    const cleaning=analysis.cleaning||{}, route=analysis.recommended_route||{}, context=analysis.task_context||state.taskContext||{};
+    const routeRows=(analysis.routes||[]).slice(0,3).map(r=>`<div class="ic-route-row"><span>${e(r.tier||'候选')} · ${e(r.label||r.route)}</span><strong>${e(r.score)}/100</strong></div>`).join('');
+    return `<section class="panel ic-auto-panel"><div class="section-heading"><h2>自动决策与工艺</h2><small>任务 ${e(context.task_id||'待生成')}</small></div><div class="ic-auto-score"><strong>${e(cleaning.weighted_score??0)}</strong><span>加权数据质量分</span><em class="${cleaning.decision_ready?'ok':'warn'}">${cleaning.decision_ready?'可进入路线评审':'待补资料 / 复核'}</em></div><p class="ic-hint">数据已按字段重要性清洗并自动生成路线排序；右侧助手只解释当前任务。</p><div class="ic-route-list">${routeRows||'<p class="ic-empty-row">填写并保存批次信息后自动生成路线。</p>'}</div><div class="ic-task-meta"><span>task_id：${e(context.task_id||'—')}</span><span>record_id：${e(context.record_id||'—')}</span></div></section>`;
+  }
   function recordList() {
     return `<section class="panel intake-section"><div class="section-heading"><h2>已保存的采集记录</h2><small>当前访问身份下的记录，可继续填写或关联批次</small></div>${docs.length?`<div class="table-wrap"><table><thead><tr><th>主体 / 批次</th><th>类型</th><th>状态</th><th>更新时间</th><th>操作</th></tr></thead><tbody>${docs.map(d=>`<tr><td>${e(d.title)}</td><td>${d.side==='supplier'?'供应端':'生产端'}</td><td>${d.status==='submitted'?'待复核':'草稿'}</td><td>${e(new Date(d.updated_at).toLocaleString('zh-CN'))}</td><td>${button('打开',`load-${d.id}`)}</td></tr>`).join('')}</tbody></table></div>`:'<p class="empty">保存第一份采集表后，记录会显示在这里。</p>'}</section>`;
   }
@@ -130,7 +144,7 @@ export function createIntakeController({root, model, data, setStateValue, render
     if (state.panel==='standards') return headline+nav+status+standards();
     if (!side) return headline+nav+status+`<div class="ic-entry-grid">${Object.entries(schema.sides).map(([key,s])=>`<button type="button" class="panel ic-entry ic-entry-${key}" data-action="ic-side-${key}"><span class="ic-entry-symbol">${key==='supplier'?'01':'02'}</span><h2>${e(s.title)}</h2><p>${e(s.subtitle)}</p><div class="ic-entry-tags">${(key==='supplier'?['种植基地','农业投入品','原料品质','采收供应']:['批次接收','实际加工参数','成品质检','产出追溯']).map(t=>`<span>${t}</span>`).join('')}</div><b>进入采集 <span aria-hidden="true">→</span></b></button>`).join('')}</div>`;
     const form=state.panel==='check'?checkPanel():`<form id="dual-intake-form"><div class="ic-step-heading"><div><span>STEP ${String(step+1).padStart(2,'0')} / ${side.steps.length}</span><h2>${e(side.steps[step].title)}</h2></div>${button(state.side==='supplier'?'切换到生产端':'切换到供应端',`side-${state.side==='supplier'?'processor':'supplier'}`)}</div>${side.steps[step].groups.map(groupMarkup).join('')}${step===side.steps.length-1?attachments():''}<div class="ic-step-actions">${button('上一步',`step-${Math.max(0,step-1)}`,false,step===0?'disabled':'')}${button(step===side.steps.length-1?'检查并提交':'下一步',step===side.steps.length-1?'check':`step-${step+1}`,true)}</div></form>`;
-    return headline+nav+status+`<nav class="ic-steps" aria-label="采集环节">${side.steps.map((s,i)=>`<button type="button" data-action="ic-step-${i}" class="${step===i&&state.panel==='form'?'active':''}" ${step===i&&state.panel==='form'?'aria-current="step"':''}><span>${String(i+1).padStart(2,'0')}</span>${e(s.title)}</button>`).join('')}</nav><div class="ic-intake-layout"><div>${form}</div><aside class="panel collection-summary"><h2>采集状态</h2><div id="ic-progress">${progress()}</div><div class="ic-side-actions">${button('检查完整度','check')}${button('导出完整备份','backup')}${button('用于业务报告','report')}${button('新建另一批次','new')}</div></aside></div>`;
+    return headline+nav+status+`<nav class="ic-steps" aria-label="采集环节">${side.steps.map((s,i)=>`<button type="button" data-action="ic-step-${i}" class="${step===i&&state.panel==='form'?'active':''}" ${step===i&&state.panel==='form'?'aria-current="step"':''}><span>${String(i+1).padStart(2,'0')}</span>${e(s.title)}</button>`).join('')}</nav><div class="ic-intake-layout"><div>${form}</div><aside class="panel collection-summary"><h2>采集状态</h2><div id="ic-progress">${progress()}</div>${autoDecisionPanel()}<div class="ic-side-actions">${button('检查完整度','check')}${button('导出完整备份','backup')}${button('用于业务报告','report')}${button('新建另一批次','new')}</div></aside></div>`;
   }
   function handleClick(el) {
     const action=el.dataset.action;

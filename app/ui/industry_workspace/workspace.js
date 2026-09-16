@@ -216,6 +216,7 @@ export default function(component) {
   }
 
   function reportWorkSummary() {
+    const analysis=model.analysis||{},route=analysis.recommended_route||{},cleaning=analysis.cleaning||{},enrichment=analysis.report_enrichment||{};
     if(model.activeIntakeReport){
       const d=model.activeIntakeReport,f=d.fields,r=d.rows.materials?.[0]||{};
       const supplier=d.side==='supplier';
@@ -226,7 +227,7 @@ export default function(component) {
         quality:supplier?`${f['quality.brix']||'糖度待补充'} °Brix · ${f['quality.testStatus']||'检测待补充'}`:`${f['release.conclusion']||'待检'} · ${f['release.reportNo']||'报告待补充'}`,
         processing:supplier?'本记录为供应端种植与采收档案':`${f['product.name']||'产品待补充'} · ${f['product.batch']||'成品批次待补充'} · ${f['process.sop']||'SOP待补充'}`,
         demand:'本次采集未关联采购需求',matches:'未执行匹配',connections:'未发起对接',dataScore:`必填完整度 ${audit.score}%（非质量合格评分）`,
-        issues:[...audit.errors.map(x=>x.message),'记录为用户填报，检测和工艺结论尚需单位复核。']};
+        issues:[...audit.errors.map(x=>x.message),'记录为用户填报，检测和工艺结论尚需单位复核。'],route:route.label||'待补充',routeScore:route.score??'—',dataQuality:cleaning.weighted_score??audit.score,researchStatus:enrichment.research_status||'待补充',varietyInsight:enrichment.variety_insight||'待补充'};
     }
     const intake=model.intake||defaultIntake;
     const audit=model.intakeAudit||cleanIntake(intake);
@@ -245,14 +246,14 @@ export default function(component) {
       matches:`${fitCount+tradeCount} 个`,
       connections:`${(model.connections||[]).length+(model.tradeConnections||[]).length} 个`,
       dataScore:`${audit.score}/100`,
-      issues
+      issues,route:route.label||'待补充',routeScore:route.score??'—',dataQuality:cleaning.weighted_score??audit.score,researchStatus:enrichment.research_status||'待补充',varietyInsight:enrichment.variety_insight||'待补充'
     };
   }
 
   function reportPreview() {
     const r=model.report;
     const s=reportWorkSummary();
-    return `<div class="report-paper"><div class="report-cover"><span>${esc(r.agency)} · ${esc(r.department||'')}</span><h2>${esc(r.title)}</h2><p>${esc(r.period)} · ${esc(r.region)} · ${esc(r.reportType||'业务工作报告')}</p>${r.generated?'<b class="report-generated-mark">已生成工作报告初稿</b>':''}</div><div class="report-body"><h3>报告摘要</h3><p>本报告汇总本次 Agent 工作过程中形成的原料批次、加工过程、供需需求、匹配结果及图表成果，供单位内部复核、会议汇报和后续流转使用。</p><h3>本次工作完成情况</h3><div class="report-summary-list"><div><span>批次</span><b>${esc(s.batch)}</b></div><div><span>原料与数量</span><b>${esc(s.material)} · ${esc(s.quantity)}</b></div><div><span>加工任务</span><b>${esc(s.processing)}</b></div><div><span>供需匹配</span><b>${esc(s.matches)} · 对接草稿 ${esc(s.connections)}</b></div></div><h3>报告结构</h3><ol><li>报告说明与工作范围</li><li>本次工作完成情况与数据底稿</li><li>业务分析结果与图表</li><li>风险待办、行动计划与附录</li></ol><small>正式定稿前须由使用单位复核事实、检测原件、统计口径和审批意见。</small></div></div>`;
+    return `<div class="report-paper"><div class="report-cover"><span>${esc(r.agency)} · ${esc(r.department||'')}</span><h2>${esc(r.title)}</h2><p>${esc(r.period)} · ${esc(r.region)} · ${esc(r.reportType||'业务工作报告')}</p>${r.generated?'<b class="report-generated-mark">已生成工作报告初稿</b>':''}</div><div class="report-body"><h3>报告摘要</h3><p>本报告自动汇总当前批次收集信息，并根据产地、品种和目标产品检索知识证据，形成项目评审与投资沟通初稿。推荐路线：${esc(s.route)}（${esc(s.routeScore)}/100）；加权数据质量：${esc(s.dataQuality)}/100；研究状态：${esc(s.researchStatus)}。品种与产业概览：${esc(s.varietyInsight)}。</p><h3>本次工作完成情况</h3><div class="report-summary-list"><div><span>批次</span><b>${esc(s.batch)}</b></div><div><span>原料与数量</span><b>${esc(s.material)} · ${esc(s.quantity)}</b></div><div><span>加工任务</span><b>${esc(s.processing)}</b></div><div><span>供需匹配</span><b>${esc(s.matches)} · 对接草稿 ${esc(s.connections)}</b></div></div><h3>报告结构</h3><ol><li>报告说明与工作范围</li><li>本次工作完成情况与数据底稿</li><li>业务分析结果与图表</li><li>风险待办、行动计划与附录</li></ol><small>正式定稿前须由使用单位复核事实、检测原件、统计口径和审批意见。</small></div></div>`;
   }
   function reports() {
     const r=model.report;
@@ -370,3 +371,4 @@ export default function(component) {
   if(root._view!==view||!root.querySelector('.page')||intakeController?.refreshed)render();
   return bindWorkspaceEvents(root,{click:onClick,input:onInput,change:onChange,submit:onSubmit});
 }
+

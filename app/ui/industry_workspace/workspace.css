@@ -620,3 +620,4 @@
     .iw .viz-origin-row header { grid-template-columns:30px minmax(0,1fr) auto; gap:9px; }
     .iw .viz-origin-row>i { margin-left:39px; }
 }
+.ic-auto-panel{margin-top:16px;background:linear-gradient(180deg,#fbfdfb,#f5faf6);border-color:#d6e7d9}.ic-auto-score{display:flex;align-items:baseline;gap:8px;margin:12px 0 8px}.ic-auto-score strong{font-size:34px}.ic-auto-score span{color:#637066;font-size:12px}.ic-auto-score em{margin-left:auto;font-style:normal;font-size:12px;padding:5px 8px;border-radius:999px;background:#e4f3e7;color:#28733d}.ic-auto-score em.warn{background:#fff1db;color:#9b5b00}.ic-route-list{display:grid;gap:7px;margin:12px 0}.ic-route-row{display:flex;justify-content:space-between;border:1px solid #e0ebe2;border-radius:10px;padding:9px 10px;background:#fff;font-size:13px}.ic-task-meta{display:grid;gap:3px;color:#879188;font-size:10px;word-break:break-all;margin-top:12px}

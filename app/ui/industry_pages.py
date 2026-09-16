@@ -13,6 +13,8 @@ from copy import deepcopy
 import streamlit as st
 from app.intake_schema import intake_schema
 from app.intake_store import IntakeStore
+from app.intake_pipeline import run_intake_pipeline
+from app.report_enrichment import enrich_report_context
 
 _ASSETS = Path(__file__).parent / "industry_workspace"
 
@@ -35,6 +37,9 @@ def _save_snapshot() -> None:
     snapshot = st.session_state.get("industry_workspace_canvas", {}).get("snapshot")
     if isinstance(snapshot, dict):
         st.session_state.industry_ui_model = snapshot
+        context = snapshot.get("taskContext") or snapshot.get("task_context")
+        if isinstance(context, dict):
+            st.session_state.industry_task_context = dict(context)
 
 
 def _intake_store():
@@ -59,11 +64,17 @@ def _intake_action():
         store, scope = _intake_store(), _scope()
         if operation in ("save", "submit"):
             result = store.save(*scope, action.get("document"), submit=operation == "submit")
+            if result.get("ok") and result.get("document"):
+                document = result["document"]
+                result["analysis"] = run_intake_pipeline(document, str(document.get("id") or ""), document.get("revision") or 1)
+                result["analysis"]["report_enrichment"] = enrich_report_context(document)
         elif operation in ("load", "link"):
             document = store.load(*scope, action.get("id"))
             if operation == "link" and document["side"] != "supplier":
                 raise ValueError("请选择供应端采集记录。")
-            result = dict(ok=True, document=document, message="已带入原料来源，请补齐到货验收信息。" if operation == "link" else "已打开保存的采集记录。")
+            result = dict(ok=True, document=document, message="已带入原料来源，请补齐到货验收信息。") if operation == "link" else dict(ok=True, document=document, message="已打开保存的采集记录。", analysis=run_intake_pipeline(document, str(document.get("id") or ""), document.get("revision") or 1))
+            if operation == "load":
+                result["analysis"]["report_enrichment"] = enrich_report_context(document)
         else:
             raise ValueError("不支持此采集操作。")
     except (ValueError, TypeError, KeyError, sqlite3.Error, OSError) as error:
@@ -82,6 +93,11 @@ def _intake_action():
             collection.setdefault("documents", {})[document["side"]] = document
             collection.setdefault("dirty", {})[document["side"]] = False
             collection["side"] = document["side"]
+            if result.get("analysis"):
+                analysis = result["analysis"]
+                model["analysis"] = analysis
+                model["taskContext"] = analysis.get("task_context", {})
+                model["activeIntakeReport"] = document
             collection.pop("undo", None)
             if operation == "load":
                 collection["panel"] = "form"

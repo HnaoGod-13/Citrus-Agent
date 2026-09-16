@@ -4588,6 +4588,27 @@ def submit_agent_panel_prompt(
     )
 
 
+def submit_contextual_panel_prompt(prompt: str, api_key: str) -> None:
+    """Keep workspace follow-ups in the workbench and skip workflow execution."""
+    context = st.session_state.get("industry_task_context") or {}
+    model = st.session_state.get("industry_ui_model") or {}
+    analysis = model.get("analysis") if isinstance(model, dict) else {}
+    facts = (analysis or {}).get("batch_summary") or {}
+    bound = (
+        f"任务 task_id={context.get('task_id') or '待生成'}、record_id={context.get('record_id') or '待生成'}。"
+        f"当前批次事实：{facts}。路线与工艺已由工作台自动完成。只解释当前任务，不检索新输入、不启动流程。用户问题：{prompt}"
+    )
+    if api_key:
+        try:
+            answer = chat_with_deepseek(api_key, build_general_chat_messages([], bound, memory_context=context))
+        except DeepSeekAPIError as error:
+            answer = f"当前任务助手暂时无法回答：{error}"
+    else:
+        route = (analysis or {}).get("recommended_route") or {}
+        answer = f"已绑定当前批次（task_id：{context.get('task_id') or '待生成'}，record_id：{context.get('record_id') or '待生成'}）。当前推荐路线：{route.get('label') or '待补充'}。配置大模型 Key 后可继续自然语言解释。"
+    st.session_state.industry_inline_answer = answer
+
+
 def main() -> None:
     st.set_page_config(
         page_title="Citrus AI · 柑橘产业链决策",
@@ -4639,9 +4660,10 @@ def main() -> None:
     ) = render_sidebar(active_view)
 
     if active_view != "chat" and agent_panel_prompt:
-        submit_agent_panel_prompt(
-            agent_panel_prompt, agent_panel_upload, api_key, retrieval_mode,
-        )
+        if active_view == "workspace":
+            submit_contextual_panel_prompt(agent_panel_prompt, api_key)
+        else:
+            submit_agent_panel_prompt(agent_panel_prompt, agent_panel_upload, api_key, retrieval_mode)
 
     if active_view == "chat":
         if not st.session_state.agent_messages:
