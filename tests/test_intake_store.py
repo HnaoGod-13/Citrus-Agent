@@ -70,6 +70,8 @@ def test_server_save_restore_is_private_and_revision_checked(tmp_path):
     saved = store.save("u1", "p1", supplier(), submit=True)
     assert saved["ok"] and saved["document"]["status"] == "submitted"
     doc = saved["document"]
+    original_task_id = doc["task_id"]
+    assert original_task_id.startswith("task_")
     assert IntakeStore(store.path).load("u1", "p1", doc["id"])["fields"]["base.variety"] == "脐橙"
     assert store.list("u2", "p1") == []
     assert store.list("u1", "p2") == []
@@ -80,6 +82,9 @@ def test_server_save_restore_is_private_and_revision_checked(tmp_path):
             store.save(*scope, doc)
     updated = store.save("u1", "p1", doc)["document"]
     assert updated["revision"] == 2 and updated["status"] == "draft"
+    assert updated["task_id"] == original_task_id
+    resubmitted = store.save("u1", "p1", updated, submit=True)["document"]
+    assert resubmitted["task_id"] == original_task_id
     with pytest.raises(ValueError, match="其他页面更新"):
         store.save("u1", "p1", doc)
 

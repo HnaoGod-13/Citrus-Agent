@@ -3,7 +3,7 @@ import test from 'node:test';
 import {readFile} from 'node:fs/promises';
 
 const source=await readFile(new URL('../app/ui/industry_workspace/workspace.js',import.meta.url),'utf8');
-const {esc,quantityRange,evaluateCandidate,bindWorkspaceEvents,cleanIntake,buildReportDocument}=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
+const {esc,quantityRange,evaluateCandidate,bindWorkspaceEvents,cleanIntake,renderReportMarkdown}=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
 const request={material:'沃柑鲜果',region:'广西及周边',quantity:'15—25',brix:'12.0',delivery:'2026-09-10',report:true,preferences:['完整投入品记录','可寄样','稳定供货']};
 const candidate={quantity:20,brix:12.8,arrival:'2026-09-08',report:true,preferences:['完整投入品记录','可寄样']};
 
@@ -59,39 +59,21 @@ test('industry intake cleaning normalizes useful records and blocks unusable one
   assert.ok(invalid.missing.length>0);
   assert.ok(invalid.issues.length>=2);
 });
-test('generated report escapes organization text and keeps review caveat',()=>{
-  const report=buildReportDocument({agency:'<img onerror=alert(1)>',title:'产业报告',region:'广西',period:'2026'});
-  assert.doesNotMatch(report,/<img onerror/);
-  assert.match(report,/&lt;img onerror=alert\(1\)&gt;/);
-  assert.doesNotMatch(report,/采集<br>16/);
-  assert.match(report,/须由使用单位复核后定稿/);
+test('report center only exposes the server generated editable Word flow',()=>{
+  assert.match(source,/联网检索并调用大模型生成项目报告/);
+  assert.match(source,/result\.docx_base64/);
+  assert.match(source,/accept="\.docx"/);
+  assert.match(source,/\['项目报告'\]/);
+  assert.doesNotMatch(source,/downloadFile\(`\$\{fileName\}\.html`/);
+  assert.doesNotMatch(source,/export function buildReportDocument/);
 });
-
-test('business report carries unit template metadata and completed work summary',()=>{
-  const report=buildReportDocument({
-    agency:'某县农业农村局',
-    department:'产业发展科',
-    preparedBy:'张三',
-    title:'柑橘产业工作报告',
-    reportType:'业务工作报告',
-    templateFile:'单位模板.docx',
-    period:'2026年9月',
-    region:'重庆',
-  },{
-    batch:'B-0905-001',
-    material:'脐橙 · 重庆奉节',
-    quantity:'30 吨',
-    processing:'NFC 柑橘汁 · 榨汁线 A · SOP v3.0',
-    demand:'NFC 果汁原料采购',
-    matches:'2 个',
-    connections:'1 个',
-    dataScore:'96/100',
-    issues:['检测报告待复核']
-  });
-  assert.match(report,/单位模板：单位模板\.docx/);
-  assert.match(report,/B-0905-001/);
-  assert.match(report,/NFC 柑橘汁 · 榨汁线 A · SOP v3\.0/);
-  assert.match(report,/检测报告待复核/);
+test('generated project report preview safely renders headings, lists and tables',()=>{
+  const html=renderReportMarkdown('## 项目摘要\n\n**重点** <script>alert(1)</script>\n\n| 项目 | 内容 |\n|---|---|\n| 批次 | B-01 |\n\n- 待复核');
+  assert.match(html,/<h3>项目摘要<\/h3>/);
+  assert.match(html,/<strong>重点<\/strong>/);
+  assert.match(html,/<table>/);
+  assert.match(html,/<ul><li>待复核<\/li><\/ul>/);
+  assert.doesNotMatch(html,/<script>/);
 });
 
 test('operational workspace omits prototype boundary and session explanation strips',()=>{

@@ -183,8 +183,12 @@ class IntakeStore:
         db.execute("""CREATE TABLE IF NOT EXISTS intake_records (
             id TEXT PRIMARY KEY, user_id TEXT NOT NULL, project_id TEXT NOT NULL,
             side TEXT NOT NULL, title TEXT NOT NULL, status TEXT NOT NULL,
-            revision INTEGER NOT NULL, updated_at TEXT NOT NULL, payload TEXT NOT NULL
+            revision INTEGER NOT NULL, updated_at TEXT NOT NULL, payload TEXT NOT NULL,
+            task_id TEXT NOT NULL DEFAULT ''
         )""")
+        columns = {row[1] for row in db.execute("PRAGMA table_info(intake_records)").fetchall()}
+        if "task_id" not in columns:
+            db.execute("ALTER TABLE intake_records ADD COLUMN task_id TEXT NOT NULL DEFAULT ''")
         db.execute("CREATE INDEX IF NOT EXISTS intake_scope ON intake_records(user_id, project_id, updated_at)")
         return db
 
@@ -197,7 +201,7 @@ class IntakeStore:
         self.scope(user, project)
         with self.connect() as db:
             return [dict(r) for r in db.execute(
-                "SELECT id,side,title,status,revision,updated_at FROM intake_records WHERE user_id=? AND project_id=? ORDER BY updated_at DESC LIMIT 100",
+                "SELECT id,side,title,status,revision,updated_at,task_id FROM intake_records WHERE user_id=? AND project_id=? ORDER BY updated_at DESC LIMIT 100",
                 (user, project))]
 
     def analytics(self, user, project):
@@ -295,7 +299,7 @@ class IntakeStore:
             row = db.execute("SELECT * FROM intake_records WHERE id=? AND user_id=? AND project_id=?", (record_id, user, project)).fetchone()
         if row is None:
             raise ValueError("未找到此采集记录，或当前访问身份无权读取。")
-        return {**json.loads(row["payload"]), **{k: row[k] for k in ("id", "status", "revision", "updated_at")}}
+        return {**json.loads(row["payload"]), **{k: row[k] for k in ("id", "status", "revision", "updated_at", "task_id")}}
 
     def save(self, user, project, value, submit=False):
         self.scope(user, project)
@@ -317,7 +321,7 @@ class IntakeStore:
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             if identifier:
-                row = db.execute("SELECT user_id,project_id,revision,side FROM intake_records WHERE id=?", (identifier,)).fetchone()
+                row = db.execute("SELECT user_id,project_id,revision,side,task_id,status FROM intake_records WHERE id=?", (identifier,)).fetchone()
                 if row is None or (row["user_id"], row["project_id"]) != (user, project):
                     raise ValueError("无权修改此采集记录。")
                 if value.get("revision") != row["revision"]:
@@ -325,12 +329,16 @@ class IntakeStore:
                 if clean["side"] != row["side"]:
                     raise ValueError("已保存记录不能改为另一端，请新建对应端的记录。")
                 revision = row["revision"] + 1
-                db.execute("UPDATE intake_records SET title=?,status=?,revision=?,updated_at=?,payload=? WHERE id=?", (title, status, revision, now, payload, identifier))
+                task_id = str(row["task_id"] or "")
+                if submit and not task_id:
+                    task_id = "task_" + uuid4().hex[:24]
+                db.execute("UPDATE intake_records SET title=?,status=?,revision=?,updated_at=?,payload=?,task_id=? WHERE id=?", (title, status, revision, now, payload, task_id, identifier))
             else:
                 count, size = db.execute("SELECT COUNT(*),COALESCE(SUM(LENGTH(payload)),0) FROM intake_records WHERE user_id=? AND project_id=?", (user, project)).fetchone()
                 if count >= 100 or size + len(payload) > 250 * 1024 * 1024:
                     raise ValueError("当前访问身份的采集容量已达上限，请联系平台维护人员。")
                 identifier, revision = "ic_" + uuid4().hex, 1
-                db.execute("INSERT INTO intake_records VALUES (?,?,?,?,?,?,?,?,?)", (identifier, user, project, clean["side"], title, status, revision, now, payload))
-        document = dict(clean, id=identifier, status=status, revision=revision, updated_at=now)
+                task_id = "task_" + uuid4().hex[:24] if submit else ""
+                db.execute("INSERT INTO intake_records VALUES (?,?,?,?,?,?,?,?,?,?)", (identifier, user, project, clean["side"], title, status, revision, now, payload, task_id))
+        document = dict(clean, id=identifier, status=status, revision=revision, updated_at=now, task_id=task_id)
         return dict(ok=True, message="已提交采集记录，当前状态：待复核。" if submit else "采集草稿已保存。", document=document, audit=audit)

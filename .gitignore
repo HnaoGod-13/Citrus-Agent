@@ -4,6 +4,8 @@ __pycache__/
 .env
 logs/
 outputs/
+output/
+.playwright-cli/
 data/memory/*.db
 data/memory/*.db-*
 data/memory/files/

@@ -75,9 +75,14 @@ export function createIntakeController({root, model, data, setStateValue, render
       }
       if (result.analysis) {
         state.analysis = structuredClone(result.analysis);
-        state.taskContext = structuredClone(result.analysis.task_context || {});
         model.analysis = structuredClone(result.analysis);
-        model.taskContext = structuredClone(result.analysis.task_context || {});
+      } else if (result.operation !== 'link') {
+        state.analysis = null;
+        model.analysis = null;
+      }
+      if (result.operation !== 'link') {
+        state.taskContext = structuredClone(result.taskContext || result.analysis?.task_context || {});
+        model.taskContext = structuredClone(state.taskContext);
       }
     }
     if (!result.ok && state.errors.length) state.panel='check';

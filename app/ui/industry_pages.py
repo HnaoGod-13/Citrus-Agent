@@ -8,13 +8,18 @@ from __future__ import annotations
 from pathlib import Path
 import hashlib
 import sqlite3
+import base64
+import binascii
+import tempfile
 from copy import deepcopy
 
 import streamlit as st
 from app.intake_schema import intake_schema
 from app.intake_store import IntakeStore
-from app.intake_pipeline import run_intake_pipeline
+from app.intake_pipeline import build_task_context, run_intake_pipeline
 from app.report_enrichment import enrich_report_context
+from app.reporting import generate_project_report
+from agent.llm_client import DeepSeekAPIError
 
 _ASSETS = Path(__file__).parent / "industry_workspace"
 
@@ -62,6 +67,18 @@ def _enrich_report(document: dict) -> dict:
         return enrich_report_context(document)
 
 
+def _document_task_context(document: dict) -> dict:
+    """Return the batch identity without running any draft analysis."""
+    task_id = str(document.get("task_id") or "").strip()
+    if not task_id:
+        return {}
+    return build_task_context(
+        str(document.get("id") or ""),
+        document.get("revision") or 1,
+        task_id,
+    )
+
+
 def restore_active_context(record_id: str = "") -> bool:
     """Restore the selected saved batch before the sidebar is rendered."""
     requested = str(record_id or st.session_state.get("industry_active_record_id") or "").strip()
@@ -73,20 +90,28 @@ def restore_active_context(record_id: str = "") -> bool:
         return True
     try:
         document = _intake_store().load(*scope, requested)
-        analysis = run_intake_pipeline(
-            document,
-            str(document.get("id") or requested),
-            document.get("revision") or 1,
-        )
-        analysis["report_enrichment"] = _enrich_report(document)
+        analysis = None
+        if document.get("status") == "submitted":
+            analysis = run_intake_pipeline(
+                document,
+                str(document.get("id") or requested),
+                document.get("revision") or 1,
+                document.get("task_id") or None,
+            )
+            analysis["report_enrichment"] = _enrich_report(document)
     except (ValueError, TypeError, KeyError, sqlite3.Error, OSError):
         return False
     model = deepcopy(st.session_state.get("industry_ui_model", {}))
-    model.update(
-        analysis=analysis,
-        taskContext=analysis.get("task_context", {}),
-        activeIntakeReport=document,
-    )
+    model.update(activeIntakeReport=document)
+    context = (analysis or {}).get("task_context") or _document_task_context(document)
+    if analysis:
+        model["analysis"] = analysis
+    else:
+        model.pop("analysis", None)
+    if context:
+        model["taskContext"] = context
+    else:
+        model.pop("taskContext", None)
     collection = model.setdefault("collection", {})
     collection.setdefault("documents", {})[document["side"]] = document
     collection["side"] = document["side"]
@@ -94,7 +119,7 @@ def restore_active_context(record_id: str = "") -> bool:
     collection.setdefault("steps", {})[document["side"]] = 0
     collection.setdefault("dirty", {})[document["side"]] = False
     st.session_state.industry_ui_model = model
-    st.session_state.industry_task_context = dict(analysis.get("task_context") or {})
+    st.session_state.industry_task_context = dict(context)
     st.session_state.industry_active_record_id = requested
     return True
 
@@ -113,17 +138,40 @@ def _intake_action():
             result = store.save(*scope, action.get("document"), submit=operation == "submit")
             if result.get("ok") and result.get("document"):
                 document = result["document"]
-                result["analysis"] = run_intake_pipeline(document, str(document.get("id") or ""), document.get("revision") or 1)
-                result["analysis"]["report_enrichment"] = _enrich_report(document)
+                # Drafts are persisted only.  All cleaning, route decisions and
+                # research begin after the user explicitly submits the record.
+                if operation == "submit":
+                    result["analysis"] = run_intake_pipeline(
+                        document,
+                        str(document.get("id") or ""),
+                        document.get("revision") or 1,
+                        document.get("task_id") or None,
+                    )
+                    result["analysis"]["report_enrichment"] = _enrich_report(document)
+                result["taskContext"] = (
+                    (result.get("analysis") or {}).get("task_context")
+                    or _document_task_context(document)
+                )
                 st.session_state.industry_active_record_id = str(document.get("id") or "")
                 st.query_params["record_id"] = st.session_state.industry_active_record_id
         elif operation in ("load", "link"):
             document = store.load(*scope, action.get("id"))
             if operation == "link" and document["side"] != "supplier":
                 raise ValueError("请选择供应端采集记录。")
-            result = dict(ok=True, document=document, message="已带入原料来源，请补齐到货验收信息。") if operation == "link" else dict(ok=True, document=document, message="已打开保存的采集记录。", analysis=run_intake_pipeline(document, str(document.get("id") or ""), document.get("revision") or 1))
+            result = dict(ok=True, document=document, message="已带入原料来源，请补齐到货验收信息。") if operation == "link" else dict(ok=True, document=document, message="已打开保存的采集记录。")
             if operation == "load":
-                result["analysis"]["report_enrichment"] = _enrich_report(document)
+                if document.get("status") == "submitted":
+                    result["analysis"] = run_intake_pipeline(
+                        document,
+                        str(document.get("id") or ""),
+                        document.get("revision") or 1,
+                        document.get("task_id") or None,
+                    )
+                    result["analysis"]["report_enrichment"] = _enrich_report(document)
+                result["taskContext"] = (
+                    (result.get("analysis") or {}).get("task_context")
+                    or _document_task_context(document)
+                )
                 st.session_state.industry_active_record_id = str(document.get("id") or "")
                 st.query_params["record_id"] = st.session_state.industry_active_record_id
         else:
@@ -144,12 +192,18 @@ def _intake_action():
             collection.setdefault("documents", {})[document["side"]] = document
             collection.setdefault("dirty", {})[document["side"]] = False
             collection["side"] = document["side"]
+            model["activeIntakeReport"] = document
             if result.get("analysis"):
                 analysis = result["analysis"]
                 model["analysis"] = analysis
-                model["taskContext"] = analysis.get("task_context", {})
-                model["activeIntakeReport"] = document
-                st.session_state.industry_task_context = dict(analysis.get("task_context") or {})
+            else:
+                model.pop("analysis", None)
+            context = result.get("taskContext") or {}
+            if context:
+                model["taskContext"] = context
+            else:
+                model.pop("taskContext", None)
+            st.session_state.industry_task_context = dict(context)
             collection.pop("undo", None)
             if operation == "load":
                 collection["panel"] = "form"
@@ -159,14 +213,93 @@ def _intake_action():
         # Linking is applied by the browser; do not mark it handled prematurely.
         if operation == "link":
             collection.pop("handledRequestId", None)
-        st.session_state.industry_ui_model = model
+    st.session_state.industry_ui_model = model
+
+
+def _report_action():
+    action = st.session_state.get("industry_workspace_canvas", {}).get("report_action")
+    if not isinstance(action, dict) or not isinstance(action.get("requestId"), str):
+        return
+    if action["requestId"] == st.session_state.get("report_last_request"):
+        return
+    st.session_state.report_last_request = action["requestId"]
+    result: dict = {"ok": False, "requestId": action["requestId"]}
+    template_path = None
+    try:
+        snapshot = action.get("snapshot") or {}
+        context = action.get("taskContext") or snapshot.get("taskContext") or {}
+        record_id = str(
+            action.get("recordId")
+            or context.get("record_id")
+            or (snapshot.get("activeIntakeReport") or {}).get("id")
+            or ""
+        )
+        if not record_id:
+            raise ValueError("请先正式提交采集记录，系统才会开始分析并生成项目报告。")
+        document = _intake_store().load(*_scope(), record_id)
+        if document.get("status") != "submitted":
+            raise ValueError("当前记录仍是草稿。请先正式提交，再生成项目报告。")
+        analysis = run_intake_pipeline(
+            document,
+            record_id,
+            document.get("revision") or 1,
+            document.get("task_id") or None,
+        )
+        analysis["report_enrichment"] = _enrich_report(document)
+        server_context = analysis.get("task_context") or {}
+        report = action.get("report") or snapshot.get("report") or {}
+        template_data = str(report.get("templateData") or "")
+        template_name = str(report.get("templateFile") or "")
+        if template_data and template_name.lower().endswith(".docx"):
+            if len(template_data) > 8 * 1024 * 1024:
+                raise ValueError("Word 模板过大，请将文件控制在 6MB 以内。")
+            raw_template = base64.b64decode(template_data, validate=True)
+            if len(raw_template) > 6 * 1024 * 1024 or not raw_template.startswith(b"PK"):
+                raise ValueError("Word 模板无效，或文件超过 6MB。")
+            suffix = Path(template_name).suffix or ".docx"
+            with tempfile.NamedTemporaryFile(prefix="citrus_template_", suffix=suffix, delete=False) as handle:
+                handle.write(raw_template)
+                template_path = handle.name
+        generated = generate_project_report(
+            task_id=str(server_context.get("task_id") or ""),
+            record_id=record_id,
+            document=document,
+            analysis=analysis,
+            profile=report,
+            template_path=template_path,
+            output_dir=Path("output") / "reports",
+        )
+        result = {"ok": True, "requestId": action["requestId"], **generated}
+    except (ValueError, DeepSeekAPIError, binascii.Error) as error:
+        result["message"] = str(error)
+    except Exception:
+        result["message"] = "报告生成暂时失败，请稍后重试。"
+    finally:
+        if template_path:
+            try:
+                Path(template_path).unlink(missing_ok=True)
+            except OSError:
+                pass
+    st.session_state.report_result = result
+    model = deepcopy(st.session_state.get("industry_ui_model", {}))
+    model["reportResult"] = result
+    report = model.setdefault("report", {})
+    if result.get("ok"):
+        report.update(generated=True, generatedAt=result.get("created_at", ""), reportId=result.get("report_id", ""), generationMode=result.get("generation_mode", ""), sources=result.get("sources", []), markdown=result.get("markdown", ""))
+    else:
+        report["generated"] = False
+    model["reportActionHandled"] = action["requestId"]
+    st.session_state.industry_ui_model = model
 
 
 def render_industry_workspace() -> None:
     scope = _scope()
     previous_scope = st.session_state.get("intake_scope")
     if previous_scope is not None and previous_scope != scope:
-        for key in ("industry_ui_model", "intake_result", "intake_last_request"):
+        for key in (
+            "industry_ui_model", "industry_task_context", "industry_active_record_id",
+            "intake_result", "intake_last_request", "report_result", "report_last_request",
+        ):
             st.session_state.pop(key, None)
     st.session_state.intake_scope = scope
     records, analytics = [], {}
@@ -201,9 +334,11 @@ def render_industry_workspace() -> None:
             "intakeRecords": records,
             "intakeAnalytics": analytics,
             "intakeResult": st.session_state.get("intake_result"),
+            "reportResult": st.session_state.get("report_result"),
         },
         on_snapshot_change=_save_snapshot,
         on_intake_action_change=_intake_action,
+        on_report_action_change=_report_action,
         height="content",
         width="stretch",
     )

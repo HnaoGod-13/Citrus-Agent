@@ -189,14 +189,20 @@ def decide_routes(cleaned: dict[str, Any]) -> list[dict[str, Any]]:
 
 def build_task_context(record_id: str, revision: Any = 1, task_id: str | None = None) -> dict[str, str]:
     record_id = str(record_id or "unpersisted-record")
-    task_id = task_id or "task_" + uuid5(NAMESPACE_URL, f"citrus:{record_id}:{revision}").hex[:24]
+    # The task belongs to the business batch, not a particular edit.  Revision
+    # records change history while task_id stays stable across resubmissions.
+    task_id = task_id or "task_" + uuid5(NAMESPACE_URL, f"citrus:{record_id}").hex[:24]
     return {"task_id": task_id, "record_id": record_id, "revision": str(revision or 1)}
 
 
 def run_intake_pipeline(document: dict[str, Any], record_id: str = "", revision: Any = 1, task_id: str | None = None) -> dict[str, Any]:
     cleaned = clean_intake_record(document)
     routes = decide_routes(cleaned)
-    context = build_task_context(record_id or str(document.get("id") or "draft"), revision, task_id)
+    context = build_task_context(
+        record_id or str(document.get("id") or "draft"),
+        revision,
+        task_id or document.get("task_id") or None,
+    )
     selected = routes[0] if routes else None
     facts = cleaned["normalized"]
     return {
