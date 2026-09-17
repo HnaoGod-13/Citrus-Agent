@@ -24,6 +24,34 @@ if prompt:
 '''
 
 
+PANEL_WITH_HISTORY_APP = '''
+import streamlit as st
+from app.ui import components
+
+st.session_state.industry_context_messages = [
+    {"role": "user", "content": "还缺哪些资料？", "contextual": True},
+    {"role": "assistant", "content": "请先补充产品类型与原料信息。", "contextual": True},
+]
+with st.sidebar:
+    components.render_agent_panel("intake")
+'''
+
+
+CONTEXT_SCOPE_APP = '''
+import streamlit as st
+from app import main
+
+st.session_state.product_view = "intake"
+st.session_state.industry_task_context = {}
+st.session_state.agent_messages = [
+    {"role": "user", "content": "intake", "contextual": True, "context_view": "intake"},
+    {"role": "assistant", "content": "decision", "contextual": True, "context_view": "decision"},
+    {"role": "assistant", "content": "legacy", "contextual": True},
+]
+main.sync_industry_context_messages("intake")
+'''
+
+
 def panel():
     return AppTest.from_string(PANEL_APP, default_timeout=30).run()
 
@@ -72,3 +100,21 @@ def test_empty_submission_does_not_start_a_request():
     app = panel()
     send(app)
     assert "sent" not in app.session_state
+
+
+def test_history_is_rendered_inside_conversation_below_agent_header():
+    app = AppTest.from_string(PANEL_WITH_HISTORY_APP, default_timeout=30).run()
+    assert not app.exception
+    markup = "\n".join(str(item.value) for item in app.markdown)
+    assert markup.index("agent-panel-brand") < markup.index("agent-context-card")
+    assert markup.index("agent-context-card") < markup.index("agent-panel-conversation")
+    assert "agent-inline-history" not in markup
+    assert "agent-panel-message user" in markup
+    assert "agent-panel-message assistant" in markup
+
+
+def test_contextual_history_is_isolated_to_the_active_page():
+    app = AppTest.from_string(CONTEXT_SCOPE_APP, default_timeout=30).run()
+    assert not app.exception
+    messages = app.session_state.industry_context_messages
+    assert [message["content"] for message in messages] == ["intake"]

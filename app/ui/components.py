@@ -454,35 +454,16 @@ def render_empty_state(
 
 def render_agent_panel(view: str) -> tuple[str, Any | None]:
     """Render one contextual Agent panel and return prompt plus optional image."""
-    task_context = st.session_state.get("industry_task_context") or {}
-    task_id = str(task_context.get("task_id") or "")
-    record_id = str(task_context.get("record_id") or "")
-    if task_id or record_id:
-        st.markdown(
-            f'<div class="agent-task-binding"><span>当前任务</span>'
-            f'<code>{html.escape(task_id or "待生成")}</code>'
-            f'<small>批次记录：{html.escape(record_id or "待生成")}</small></div>',
-            unsafe_allow_html=True,
-        )
-    contextual_messages = st.session_state.get("industry_context_messages") or []
-    if contextual_messages:
-        st.markdown('<div class="agent-inline-history">', unsafe_allow_html=True)
-        for message in contextual_messages[-8:]:
-            role = "你" if message.get("role") == "user" else "任务助手"
-            content = str(message.get("content") or "").strip()
-            if not content:
-                continue
-            st.markdown(
-                f'<div class="agent-inline-message"><b>{html.escape(role)}</b>'
-                f'<p>{html.escape(content)}</p></div>',
-                unsafe_allow_html=True,
-            )
-        st.markdown('</div>', unsafe_allow_html=True)
     context = {
         "identity": (
             "身份说明",
             "先确认组织与角色，系统会据此限定数据范围和可执行动作。",
             ["不同身份有什么区别？", "我应该选择哪个身份？"],
+        ),
+        "workspace": (
+            "当前重点",
+            "优先处理资料不完整或等待确认的任务，再推进后续路线与报告。",
+            ["今天最值得先做什么？", "查看需要我确认的任务"],
         ),
         "intake": (
             "缺失项检查",
@@ -519,10 +500,25 @@ def render_agent_panel(view: str) -> tuple[str, Any | None]:
             "自动检查只负责定位问题；最终确认、签署和发布由具备权限的人员完成。",
             ["列出待人工确认项", "生成审核意见草稿"],
         ),
+        "assets": (
+            "数据复用",
+            "我会标注来源、版本、权限与关联任务，避免重复录入和越权引用。",
+            ["查找可复用数据", "哪些资产即将过期？"],
+        ),
+        "results": (
+            "成果检索",
+            "可以按任务、版本与成果类型查找，并追溯到生成它的原始任务。",
+            ["汇总最近成果", "比较两个报告版本"],
+        ),
         "knowledge": (
             "知识解释",
             "我会说明来源差异、证据等级和适用条件，不把弱证据当作确定结论。",
             ["如何判断证据强弱？", "查找适用的行业标准"],
+        ),
+        "analytics": (
+            "运行诊断",
+            "我会基于实际运行记录解释完成率、耗时与异常，不虚构成本或 Token 数据。",
+            ["解释最近的运行瓶颈", "有哪些可执行改进？"],
         ),
         "settings": (
             "设置影响",
@@ -534,44 +530,105 @@ def render_agent_panel(view: str) -> tuple[str, Any | None]:
         ("当前上下文", "我会沿用当前任务上下文继续协作。", ["总结当前任务", "推荐下一步"]),
     )
     title, summary, questions = context
-    st.markdown(
-        '<div class="agent-panel-brand"><span class="agent-panel-mark">'
-        + icon_svg("citrus", 19)
-        + '</span><strong>Citrus Agent</strong><span class="agent-online">在线</span></div>'
-        f'<section class="agent-context-card"><div>{icon_svg("activity", 17)}'
-        f'<strong>{html.escape(title)}</strong></div><p>{html.escape(summary)}</p></section>',
-        unsafe_allow_html=True,
-    )
+    task_context = st.session_state.get("industry_task_context") or {}
+    task_id = str(task_context.get("task_id") or "")
+    record_id = str(task_context.get("record_id") or "")
+    contextual_messages = st.session_state.get("industry_context_messages") or []
+
     pending = ""
-    for index, question in enumerate(questions):
-        if st.button(
-            question,
-            key=f"agent_quick_{view}_{index}",
-            width="stretch",
-        ):
-            pending = question
-    with st.container(key=f"agent_composer_{view}"):
-        with st.form(key=f"agent_panel_form_{view}", border=False):
-            # Submit the image and text as one form state, including image-only
-            # messages. A separate uploader rerun can race with form submission.
-            uploaded_image = st.file_uploader(
-                "添加图片",
-                type=SUPPORTED_UPLOAD_EXTENSIONS,
-                max_upload_size=MAX_UPLOAD_BYTES // (1024 * 1024),
-                key=f"agent_panel_upload_{view}",
-                label_visibility="collapsed",
-                help="上传柑橘图片，发送后由视觉模型进行识别",
+    prompt = ""
+    submitted = False
+    uploaded_image = None
+    with st.container(key=f"agent_panel_shell_{view}"):
+        st.markdown(
+            '<header class="agent-panel-brand"><span class="agent-panel-mark">'
+            + icon_svg("citrus", 19)
+            + '</span><span class="agent-panel-identity"><strong>Citrus Agent</strong>'
+            + '<small>页面助手</small></span><span class="agent-online">在线</span></header>',
+            unsafe_allow_html=True,
+        )
+        with st.container(key=f"agent_panel_scroll_{view}"):
+            st.markdown(
+                f'<section class="agent-context-card"><div>{icon_svg("activity", 17)}'
+                f'<strong>{html.escape(title)}</strong></div><p>{html.escape(summary)}</p></section>',
+                unsafe_allow_html=True,
             )
-            prompt = st.text_input(
-                "询问当前页面或继续任务",
-                placeholder="有问题尽管问我…",
-                label_visibility="collapsed",
-            )
-            submitted = st.form_submit_button(
-                "发送",
-                help="发送给 Agent",
-                width="content",
-            )
+            if task_id or record_id:
+                st.markdown(
+                    f'<div class="agent-task-binding"><span>当前任务</span>'
+                    f'<code>{html.escape(task_id or "待生成")}</code>'
+                    f'<small>批次记录：{html.escape(record_id or "待生成")}</small></div>',
+                    unsafe_allow_html=True,
+                )
+            if contextual_messages:
+                thread_items: list[str] = []
+                for message in contextual_messages[-8:]:
+                    content = html.escape(str(message.get("content") or "").strip()).replace(
+                        "\n", "<br>"
+                    )
+                    if not content:
+                        continue
+                    if message.get("role") == "user":
+                        thread_items.append(
+                            f'<article class="agent-panel-message user"><p>{content}</p></article>'
+                        )
+                    else:
+                        thread_items.append(
+                            '<article class="agent-panel-message assistant">'
+                            f'<span class="agent-message-mark">{icon_svg("citrus", 14)}</span>'
+                            f'<div><b>Citrus Agent</b><p>{content}</p></div></article>'
+                        )
+                if thread_items:
+                    st.markdown(
+                        '<section class="agent-panel-conversation" aria-label="当前页面对话">'
+                        '<header><strong>当前对话</strong><span>已关联此页面</span></header>'
+                        '<div class="agent-panel-thread">'
+                        + "".join(thread_items)
+                        + "</div></section>",
+                        unsafe_allow_html=True,
+                    )
+            else:
+                st.markdown(
+                    '<div class="agent-panel-suggestions-label"><strong>建议提问</strong>'
+                    '<span>选择一个问题开始</span></div>',
+                    unsafe_allow_html=True,
+                )
+                with st.container(key=f"agent_panel_suggestions_{view}"):
+                    for index, question in enumerate(questions):
+                        if st.button(
+                            question,
+                            key=f"agent_quick_{view}_{index}",
+                            width="stretch",
+                        ):
+                            pending = question
+
+        with st.container(key=f"agent_composer_{view}"):
+            with st.form(
+                key=f"agent_panel_form_{view}_{task_id or 'unbound'}",
+                border=False,
+                clear_on_submit=True,
+            ):
+                # Submit image and text as one form state, including image-only messages.
+                uploaded_image = st.file_uploader(
+                    "添加图片",
+                    type=SUPPORTED_UPLOAD_EXTENSIONS,
+                    max_upload_size=MAX_UPLOAD_BYTES // (1024 * 1024),
+                    key=f"agent_panel_upload_{view}",
+                    label_visibility="collapsed",
+                    help="上传柑橘图片，发送后由视觉模型进行识别",
+                )
+                prompt = st.text_input(
+                    "询问当前页面或继续任务",
+                    placeholder="向 Citrus Agent 提问…",
+                    label_visibility="collapsed",
+                    key=f"agent_panel_prompt_{view}",
+                )
+                submitted = st.form_submit_button(
+                    "发送",
+                    icon=":material/arrow_upward:",
+                    help="发送给 Agent",
+                    width="content",
+                )
     if submitted:
         pending = prompt.strip()
         if not pending and uploaded_image is not None:

@@ -395,15 +395,21 @@ def restore_ui_messages(
     return restored
 
 
-def sync_industry_context_messages() -> list[dict[str, Any]]:
-    """Keep the right-side assistant scoped to the active batch context."""
+def sync_industry_context_messages(active_view: str = "") -> list[dict[str, Any]]:
+    """Keep the right-side assistant scoped to the active page and batch."""
     context = st.session_state.get("industry_task_context") or {}
     task_id = str(context.get("task_id") or "")
     record_id = str(context.get("record_id") or "")
+    view = str(active_view or st.session_state.get("product_view") or "")
     messages = [
         message
         for message in (st.session_state.get("agent_messages") or [])
         if message.get("contextual")
+        and (
+            not view
+            or str(message.get("context_view") or message.get("contextual_view") or "")
+            == view
+        )
         and (task_id or record_id or (not message.get("task_id") and not message.get("record_id")))
         and (not task_id or str(message.get("task_id") or "") == task_id)
         and (not record_id or str(message.get("record_id") or "") == record_id)
@@ -4702,7 +4708,7 @@ def submit_contextual_panel_prompt(
         except agent_memory.MemoryManagerError:
             pass
     st.session_state.industry_inline_answer = answer
-    sync_industry_context_messages()
+    sync_industry_context_messages(active_view)
 
 
 def main() -> None:
@@ -4718,7 +4724,7 @@ def main() -> None:
     sync_active_agent_job()
     active_view = current_product_view()
     ui_industry_pages.restore_active_context(_query_value("record_id"))
-    sync_industry_context_messages()
+    sync_industry_context_messages(active_view)
     render_navigation_history_sync()
     restore_scroll_position = bool(st.session_state.pop("restore_main_scroll_position", False))
     reset_scroll_position = bool(st.session_state.pop("reset_main_scroll_position", False))
