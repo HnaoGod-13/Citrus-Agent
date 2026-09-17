@@ -200,7 +200,11 @@ class DesignSystemRegressionTests(unittest.TestCase):
         composer_css = css[composer_start:composer_end]
 
         self.assertIn('[data-testid="stIconMaterial"] {', composer_css)
-        self.assertNotIn("button::after", composer_css)
+        self.assertIn("display: none !important;", composer_css)
+        self.assertIn("button::after", composer_css)
+        self.assertIn("top: calc(50% + 1px);", composer_css)
+        self.assertIn("left: calc(50% + 1px);", composer_css)
+        self.assertIn("transform: translate(-50%, -50%);", composer_css)
         self.assertIn("font-family: var(--font-ui) !important;", composer_css)
         self.assertIn("body:has(.agent-panel-conversation.is-loading)", css)
         self.assertIn('[data-stale="true"] {', css)

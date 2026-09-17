@@ -1485,6 +1485,15 @@ def clear_active_conversation_state(*, clear_sidebar: bool = False) -> None:
     st.session_state.industry_inline_answer = ""
     st.session_state.industry_task_context = {}
     st.session_state.industry_active_record_id = ""
+    for key in list(st.session_state):
+        if str(key).startswith(
+            (
+                "agent_panel_conversation_started_",
+                "agent_panel_pending_prompt_",
+                "agent_panel_pending_time_",
+            )
+        ):
+            st.session_state.pop(key, None)
     if clear_sidebar:
         reset_sidebar_inputs()
 
@@ -4637,6 +4646,7 @@ def submit_contextual_panel_prompt(
     prompt = str(prompt or "").strip()
     if not prompt:
         return
+    st.session_state[f"agent_panel_conversation_started_{active_view}"] = True
     context = st.session_state.get("industry_task_context") or {}
     model = st.session_state.get("industry_ui_model") or {}
     analysis = model.get("analysis") if isinstance(model, dict) else {}

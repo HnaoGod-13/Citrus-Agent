@@ -468,6 +468,7 @@ def _queue_agent_panel_prompt(view: str, prompt: str = "") -> None:
     if not queued and uploaded is not None:
         queued = "请识别这张图片，并说明可见特征和需要进一步确认的信息。"
     if queued:
+        st.session_state[f"agent_panel_conversation_started_{view}"] = True
         st.session_state[f"agent_panel_pending_prompt_{view}"] = queued
         st.session_state[f"agent_panel_pending_time_{view}"] = datetime.now().strftime("%H:%M")
 
@@ -583,7 +584,14 @@ def render_agent_panel(view: str) -> tuple[str, Any | None]:
     task_context = st.session_state.get("industry_task_context") or {}
     task_id = str(task_context.get("task_id") or "")
     record_id = str(task_context.get("record_id") or "")
-    contextual_messages = st.session_state.get("industry_context_messages") or []
+    conversation_started = bool(
+        st.session_state.get(f"agent_panel_conversation_started_{view}", False)
+    )
+    contextual_messages = (
+        st.session_state.get("industry_context_messages") or []
+        if conversation_started
+        else []
+    )
     pending_key = f"agent_panel_pending_prompt_{view}"
     pending_time_key = f"agent_panel_pending_time_{view}"
     loading_prompt = str(st.session_state.get(pending_key) or "").strip()

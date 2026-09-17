@@ -32,6 +32,20 @@ st.session_state.industry_context_messages = [
     {"role": "user", "content": "还缺哪些资料？", "contextual": True},
     {"role": "assistant", "content": "请先补充产品类型与原料信息。", "contextual": True},
 ]
+st.session_state.agent_panel_conversation_started_intake = True
+with st.sidebar:
+    components.render_agent_panel("intake")
+'''
+
+
+PANEL_WITH_RESTORED_HISTORY_APP = '''
+import streamlit as st
+from app.ui import components
+
+st.session_state.industry_context_messages = [
+    {"role": "user", "content": "上一轮问题", "contextual": True},
+    {"role": "assistant", "content": "上一轮回答", "contextual": True},
+]
 with st.sidebar:
     components.render_agent_panel("intake")
 '''
@@ -134,6 +148,22 @@ def test_pending_prompt_renders_loading_conversation_and_disables_composer():
     assert "正在核对页面数据与批次完整性" in markup
     assert app.text_input[0].disabled is True
     assert next(button for button in app.button if button.label == "发送").disabled is True
+
+
+def test_fresh_page_shows_welcome_instead_of_restored_contextual_history():
+    app = AppTest.from_string(PANEL_WITH_RESTORED_HISTORY_APP, default_timeout=30).run()
+    assert not app.exception
+    markup = "\n".join(str(item.value) for item in app.markdown)
+    assert "agent-panel-welcome" in markup
+    assert "你好，我是 Citrus Agent" in markup
+    assert "agent-panel-conversation" not in markup
+    assert "上一轮问题" not in markup
+    assert "上一轮回答" not in markup
+
+    next(button for button in app.button if "这批原料可以开始分析吗" in button.label).click().run()
+    assert app.session_state.agent_panel_conversation_started_intake is True
+    markup = "\n".join(str(item.value) for item in app.markdown)
+    assert "agent-panel-conversation is-loading" in markup
 
 
 def test_contextual_history_is_isolated_to_the_active_page():
