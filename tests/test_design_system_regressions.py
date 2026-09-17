@@ -191,6 +191,22 @@ class DesignSystemRegressionTests(unittest.TestCase):
         self.assertNotIn("SFMono-Regular", css)
         self.assertNotIn("Consolas", css)
 
+    def test_contextual_agent_keeps_one_send_icon_and_does_not_dim_workbench(self) -> None:
+        css = CSS_PATH.read_text(encoding="utf-8-sig")
+        composer_start = css.index(
+            '[data-testid="stSidebar"] [class*="st-key-agent_composer_"] {'
+        )
+        composer_end = css.index(".agent-panel-disclaimer", composer_start)
+        composer_css = css[composer_start:composer_end]
+
+        self.assertIn('[data-testid="stIconMaterial"] {', composer_css)
+        self.assertNotIn("button::after", composer_css)
+        self.assertIn("font-family: var(--font-ui) !important;", composer_css)
+        self.assertIn("body:has(.agent-panel-conversation.is-loading)", css)
+        self.assertIn('[data-stale="true"] {', css)
+        self.assertIn("opacity: 1 !important;", css)
+        self.assertIn("filter: none !important;", css)
+
     def test_report_draft_has_scoped_document_typography_and_rule_spacing(self) -> None:
         css = CSS_PATH.read_text(encoding="utf-8-sig")
         scope = (

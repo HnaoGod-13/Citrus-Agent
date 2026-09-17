@@ -5901,6 +5901,8 @@ section[data-testid="stAppScrollToBottomContainer"] [data-testid="stBottomBlockC
     flex-direction: column !important;
     gap: 0 !important;
     overflow: hidden !important;
+    font-family: var(--font-ui) !important;
+    font-weight: var(--weight-regular) !important;
 }
 
 [data-testid="stSidebar"] [class*="st-key-agent_panel_scroll_"] {
@@ -5934,6 +5936,7 @@ section[data-testid="stAppScrollToBottomContainer"] [data-testid="stBottomBlockC
     gap: 10px;
     padding: 2px 3px 14px;
     border-bottom: 1px solid var(--border);
+    font-family: var(--font-ui) !important;
 }
 
 .agent-panel-identity {
@@ -5992,6 +5995,7 @@ section[data-testid="stAppScrollToBottomContainer"] [data-testid="stBottomBlockC
     gap: 11px;
     padding: clamp(46px, 8vh, 86px) 8px 24px;
     color: var(--text-primary);
+    font-family: var(--font-ui) !important;
     text-align: center;
 }
 
@@ -6042,6 +6046,8 @@ section[data-testid="stAppScrollToBottomContainer"] [data-testid="stBottomBlockC
     overflow: visible;
     background: transparent;
     border: 0;
+    font-family: var(--font-ui) !important;
+    font-weight: var(--weight-regular) !important;
 }
 
 .agent-panel-thread {
@@ -6054,7 +6060,9 @@ section[data-testid="stAppScrollToBottomContainer"] [data-testid="stBottomBlockC
     width: 100%;
     max-width: 100%;
     color: var(--text-secondary);
-    font-size: 11px;
+    font-family: var(--font-ui) !important;
+    font-size: 12px;
+    font-weight: var(--weight-regular) !important;
     line-height: 1.65;
 }
 
@@ -6119,7 +6127,8 @@ section[data-testid="stAppScrollToBottomContainer"] [data-testid="stBottomBlockC
 
 .agent-message-meta b {
     color: var(--text-secondary);
-    font-size: 10px;
+    font-family: var(--font-ui) !important;
+    font-size: 11px;
     font-weight: var(--weight-medium) !important;
 }
 
@@ -6154,7 +6163,8 @@ section[data-testid="stAppScrollToBottomContainer"] [data-testid="stBottomBlockC
 
 .agent-answer-title strong {
     color: var(--text-primary);
-    font-size: 12px;
+    font-family: var(--font-ui) !important;
+    font-size: 13px;
     font-weight: var(--weight-semibold) !important;
 }
 
@@ -6166,6 +6176,9 @@ section[data-testid="stAppScrollToBottomContainer"] [data-testid="stBottomBlockC
 
 .agent-answer-card > p {
     color: var(--text-secondary);
+    font-family: var(--font-ui) !important;
+    font-size: 12px;
+    font-weight: var(--weight-regular) !important;
     line-height: 1.72;
 }
 
@@ -6190,7 +6203,9 @@ section[data-testid="stAppScrollToBottomContainer"] [data-testid="stBottomBlockC
     background: #ffffff;
     border: 1px solid var(--border);
     border-radius: 7px;
-    font-size: 9px;
+    font-family: var(--font-ui) !important;
+    font-size: 10px;
+    font-weight: var(--weight-regular) !important;
     white-space: nowrap;
 }
 
@@ -6316,6 +6331,8 @@ section[data-testid="stAppScrollToBottomContainer"] [data-testid="stBottomBlockC
     background: var(--surface) !important;
     border: 1px solid var(--border) !important;
     border-radius: 10px !important;
+    font-family: var(--font-ui) !important;
+    font-weight: var(--weight-regular) !important;
     text-align: left !important;
 }
 
@@ -6329,7 +6346,9 @@ section[data-testid="stAppScrollToBottomContainer"] [data-testid="stBottomBlockC
 [data-testid="stSidebar"] [class*="st-key-agent_quick_"] button p {
     width: 100% !important;
     text-align: left !important;
-    font-size: 10px !important;
+    font-family: var(--font-ui) !important;
+    font-size: 12px !important;
+    font-weight: var(--weight-regular) !important;
     line-height: 1.45 !important;
 }
 
@@ -6404,6 +6423,8 @@ section[data-testid="stAppScrollToBottomContainer"] [data-testid="stBottomBlockC
     background: transparent !important;
     border: 0 !important;
     box-shadow: none !important;
+    font-family: var(--font-ui) !important;
+    font-weight: var(--weight-regular) !important;
     font-size: 13px !important;
 }
 
@@ -6461,16 +6482,21 @@ section[data-testid="stAppScrollToBottomContainer"] [data-testid="stBottomBlockC
     white-space: nowrap;
 }
 
-[data-testid="stSidebar"] [class*="st-key-agent_composer_"] [data-testid="stFormSubmitButton"] button::after {
-    content: "";
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    width: 22px;
-    height: 22px;
-    transform: translate(-50%, -50%);
-    background: center / contain no-repeat url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 19V5m-7 7 7-7 7 7'/%3E%3C/svg%3E");
-    pointer-events: none;
+[data-testid="stSidebar"] [class*="st-key-agent_composer_"] [data-testid="stFormSubmitButton"] button [data-testid="stIconMaterial"] {
+    margin: 0 !important;
+    color: #ffffff !important;
+    font-size: 23px !important;
+    line-height: 1 !important;
+}
+
+/* Streamlit marks the previous page tree as stale while the contextual Agent
+   waits for a response. Keep the workbench visually stable instead of dimming
+   it behind the still-open sidebar. */
+body:has(.agent-panel-conversation.is-loading)
+    :is([data-testid="stMain"], section[data-testid="stAppScrollToBottomContainer"])
+    [data-stale="true"] {
+    opacity: 1 !important;
+    filter: none !important;
 }
 
 .agent-panel-disclaimer {
