@@ -364,6 +364,7 @@ def restore_ui_messages(
             "task_id": str(metadata.get("task_id") or ""),
             "record_id": str(metadata.get("record_id") or ""),
             "context_view": str(metadata.get("context_view") or ""),
+            "context_time": str(metadata.get("context_time") or ""),
         }
         if role == "user" and bool(metadata.get("has_image")):
             restored_image = (
@@ -4601,6 +4602,7 @@ def submit_agent_panel_prompt(
     prompt: str, uploaded_image: Any | None, api_key: str, retrieval_mode: str
 ) -> None:
     """Validate attachments before switching pages or starting an Agent request."""
+    panel_view = str(st.session_state.get("product_view") or "")
     image_bytes: bytes | None = None
     image_mime_type = "image/jpeg"
     if uploaded_image is not None:
@@ -4611,12 +4613,16 @@ def submit_agent_panel_prompt(
                 mime_type=getattr(uploaded_image, "type", ""),
             )
         except vision_client.VisionAPIError as error:
+            st.session_state.pop(f"agent_panel_pending_prompt_{panel_view}", None)
+            st.session_state.pop(f"agent_panel_pending_time_{panel_view}", None)
             with st.sidebar:
                 st.error(str(error))
             return
         image_bytes = prepared.data
         image_mime_type = prepared.mime_type
     st.session_state.product_view = "chat"
+    st.session_state.pop(f"agent_panel_pending_prompt_{panel_view}", None)
+    st.session_state.pop(f"agent_panel_pending_time_{panel_view}", None)
     _set_query_value("view", "chat")
     handle_prompt(
         prompt, api_key, "", image_bytes is not None, image_bytes,
@@ -4667,6 +4673,7 @@ def submit_contextual_panel_prompt(
         "task_id": task_id,
         "record_id": record_id,
         "context_view": str(active_view or ""),
+        "context_time": time.strftime("%H:%M"),
     }
     manager = get_memory_manager()
     user_id = str(st.session_state.get("memory_user_id") or "")
@@ -4708,6 +4715,8 @@ def submit_contextual_panel_prompt(
         except agent_memory.MemoryManagerError:
             pass
     st.session_state.industry_inline_answer = answer
+    st.session_state.pop(f"agent_panel_pending_prompt_{active_view}", None)
+    st.session_state.pop(f"agent_panel_pending_time_{active_view}", None)
     sync_industry_context_messages(active_view)
 
 

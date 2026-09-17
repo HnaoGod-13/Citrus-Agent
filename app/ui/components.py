@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import html
 from collections.abc import Callable
+from datetime import datetime
 from typing import Any
 from urllib.parse import urlencode
 
@@ -75,6 +76,12 @@ _ICON_PATHS: dict[str, str] = {
     "circle-yen": '<circle cx="12" cy="12" r="10"/><path d="m8 7 4 5 4-5"/><path d="M8 13h8"/><path d="M8 16h8"/><path d="M12 12v6"/>',
     "database": '<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/><path d="M3 12c0 1.66 4.03 3 9 3s9-1.34 9-3"/>',
     "activity": '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
+    "more-vertical": '<circle cx="12" cy="5" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="19" r="1" fill="currentColor" stroke="none"/>',
+    "copy": '<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
+    "alert-circle": '<circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/>',
+    "lightbulb": '<path d="M9 18h6"/><path d="M10 22h4"/><path d="M8.5 14.5A6 6 0 1 1 15.5 14.5c-.9.65-1.5 1.55-1.5 2.5h-4c0-.95-.6-1.85-1.5-2.5Z"/>',
+    "check": '<path d="m5 12 4 4L19 6"/>',
+    "square": '<rect x="7" y="7" width="10" height="10" rx="1"/>',
     "shield": '<path d="M20 13c0 5-3.5 7.5-8 9-4.5-1.5-8-4-8-9V5l8-3 8 3z"/><path d="m9 12 2 2 4-4"/>',
     "share": '<path d="M12 15V3"/><path d="m7 8 5-5 5 5"/><path d="M5 13v7a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-7"/>',
     "chevron-down": '<path d="m6 9 6 6 6-6"/>',
@@ -452,6 +459,19 @@ def render_empty_state(
     )
 
 
+def _queue_agent_panel_prompt(view: str, prompt: str = "") -> None:
+    """Stage a prompt before the rerun so the panel can render a busy state."""
+    prompt_key = f"agent_panel_prompt_{view}"
+    upload_key = f"agent_panel_upload_{view}"
+    queued = str(prompt or st.session_state.get(prompt_key) or "").strip()
+    uploaded = st.session_state.get(upload_key)
+    if not queued and uploaded is not None:
+        queued = "请识别这张图片，并说明可见特征和需要进一步确认的信息。"
+    if queued:
+        st.session_state[f"agent_panel_pending_prompt_{view}"] = queued
+        st.session_state[f"agent_panel_pending_time_{view}"] = datetime.now().strftime("%H:%M")
+
+
 def render_agent_panel(view: str) -> tuple[str, Any | None]:
     """Render one contextual Agent panel and return prompt plus optional image."""
     context = {
@@ -529,59 +549,119 @@ def render_agent_panel(view: str) -> tuple[str, Any | None]:
         view,
         ("当前上下文", "我会沿用当前任务上下文继续协作。", ["总结当前任务", "推荐下一步"]),
     )
-    title, summary, questions = context
+    _, _, questions = context
+    suggestions = {
+        "intake": [
+            "这批原料可以开始分析吗？",
+            "查看缺失字段",
+            "查看待补充信息",
+            "根据当前页面总结风险",
+        ],
+    }.get(
+        view,
+        list(questions) + ["查看待补充信息", "根据当前页面总结风险"],
+    )[:4]
+    suggestion_icons = (
+        ":material/chat_bubble_outline:",
+        ":material/find_in_page:",
+        ":material/list_alt:",
+        ":material/bar_chart:",
+    )
+    answer_titles = {
+        "intake": "当前判断",
+        "evidence": "证据说明",
+        "decision": "路线说明",
+        "process": "方案建议",
+        "matching": "匹配说明",
+        "report": "撰写建议",
+        "review": "审核提示",
+        "knowledge": "知识解答",
+        "analytics": "运行诊断",
+        "settings": "设置说明",
+    }
+    answer_title = answer_titles.get(view, "当前回答")
     task_context = st.session_state.get("industry_task_context") or {}
     task_id = str(task_context.get("task_id") or "")
     record_id = str(task_context.get("record_id") or "")
     contextual_messages = st.session_state.get("industry_context_messages") or []
+    pending_key = f"agent_panel_pending_prompt_{view}"
+    pending_time_key = f"agent_panel_pending_time_{view}"
+    loading_prompt = str(st.session_state.get(pending_key) or "").strip()
+    loading_time = str(st.session_state.get(pending_time_key) or "")
 
-    pending = ""
-    prompt = ""
-    submitted = False
+    pending = loading_prompt
     uploaded_image = None
     with st.container(key=f"agent_panel_shell_{view}"):
         st.markdown(
             '<header class="agent-panel-brand"><span class="agent-panel-mark">'
-            + icon_svg("citrus", 19)
+            + icon_svg("citrus", 20)
             + '</span><span class="agent-panel-identity"><strong>Citrus Agent</strong>'
-            + '<small>页面助手</small></span><span class="agent-online">在线</span></header>',
+            + '<small>页面助手</small></span><span class="agent-online">在线</span>'
+            + f'<span class="agent-panel-more">{icon_svg("more-vertical", 20)}</span></header>',
             unsafe_allow_html=True,
         )
         with st.container(key=f"agent_panel_scroll_{view}"):
-            st.markdown(
-                f'<section class="agent-context-card"><div>{icon_svg("activity", 17)}'
-                f'<strong>{html.escape(title)}</strong></div><p>{html.escape(summary)}</p></section>',
-                unsafe_allow_html=True,
-            )
-            if task_id or record_id:
+            if loading_prompt:
+                safe_prompt = html.escape(loading_prompt)
+                timestamp = html.escape(loading_time)
                 st.markdown(
-                    f'<div class="agent-task-binding"><span>当前任务</span>'
-                    f'<code>{html.escape(task_id or "待生成")}</code>'
-                    f'<small>批次记录：{html.escape(record_id or "待生成")}</small></div>',
+                    '<section class="agent-panel-conversation is-loading" aria-label="当前页面对话">'
+                    '<div class="agent-panel-thread">'
+                    f'<article class="agent-panel-message user"><time>{timestamp}</time>'
+                    f'<div class="agent-user-bubble"><p>{safe_prompt}</p></div></article>'
+                    '<article class="agent-panel-message assistant">'
+                    f'<span class="agent-message-mark">{icon_svg("citrus", 16)}</span>'
+                    '<div class="agent-message-body"><div class="agent-message-meta">'
+                    f'<b>Citrus Agent</b><time>{timestamp}</time></div>'
+                    '<div class="agent-progress-card"><div class="agent-progress-heading">'
+                    '<span class="agent-progress-spinner"></span>'
+                    '<strong>正在核对页面数据与批次完整性…</strong></div>'
+                    '<p>我正在读取当前页面的资料信息，并进行相关数据的核对与分析，请稍候…</p>'
+                    '<ol class="agent-progress-steps">'
+                    '<li class="is-done"><span></span><div><b>核对批次字段</b><small>已完成 · 正在汇总页面信息</small></div></li>'
+                    '<li class="is-active"><span></span><div><b>检查样品状态</b><small>正在分析 · 匹配样品信息与状态</small></div></li>'
+                    '<li><span></span><div><b>生成页面结论</b><small>等待中</small></div></li>'
+                    '</ol><div class="agent-stop-generation">'
+                    f'{icon_svg("square", 15)}<span>正在生成</span></div></div></div></article>'
+                    '</div></section>',
                     unsafe_allow_html=True,
                 )
-            if contextual_messages:
+            elif contextual_messages:
                 thread_items: list[str] = []
-                for message in contextual_messages[-8:]:
+                visible_messages = contextual_messages[-8:]
+                for index, message in enumerate(visible_messages):
                     content = html.escape(str(message.get("content") or "").strip()).replace(
                         "\n", "<br>"
                     )
                     if not content:
                         continue
+                    timestamp = html.escape(str(message.get("context_time") or ""))
                     if message.get("role") == "user":
                         thread_items.append(
-                            f'<article class="agent-panel-message user"><p>{content}</p></article>'
+                            f'<article class="agent-panel-message user"><time>{timestamp}</time>'
+                            f'<div class="agent-user-bubble"><p>{content}</p></div></article>'
                         )
                     else:
+                        actions = ""
+                        if index == len(visible_messages) - 1:
+                            actions = (
+                                '<div class="agent-answer-actions">'
+                                f'<span>{icon_svg("copy", 14)}复制</span>'
+                                f'<span>{icon_svg("message-circle", 14)}继续追问</span>'
+                                f'<span>{icon_svg("decision", 14)}查看相关信息</span></div>'
+                            )
                         thread_items.append(
                             '<article class="agent-panel-message assistant">'
-                            f'<span class="agent-message-mark">{icon_svg("citrus", 14)}</span>'
-                            f'<div><b>Citrus Agent</b><p>{content}</p></div></article>'
+                            f'<span class="agent-message-mark">{icon_svg("citrus", 16)}</span>'
+                            '<div class="agent-message-body"><div class="agent-message-meta">'
+                            f'<b>Citrus Agent</b><time>{timestamp}</time></div>'
+                            '<div class="agent-answer-card"><div class="agent-answer-title">'
+                            f'<span>{icon_svg("decision", 17)}</span><strong>{html.escape(answer_title)}</strong>'
+                            f'</div><p>{content}</p>{actions}</div></div></article>'
                         )
                 if thread_items:
                     st.markdown(
                         '<section class="agent-panel-conversation" aria-label="当前页面对话">'
-                        '<header><strong>当前对话</strong><span>已关联此页面</span></header>'
                         '<div class="agent-panel-thread">'
                         + "".join(thread_items)
                         + "</div></section>",
@@ -589,18 +669,23 @@ def render_agent_panel(view: str) -> tuple[str, Any | None]:
                     )
             else:
                 st.markdown(
-                    '<div class="agent-panel-suggestions-label"><strong>建议提问</strong>'
-                    '<span>选择一个问题开始</span></div>',
+                    '<section class="agent-panel-welcome">'
+                    f'<span class="agent-welcome-mark">{icon_svg("citrus", 31)}</span>'
+                    '<h2>你好，我是 Citrus Agent</h2>'
+                    '<p>我可以帮助你基于当前页面的信息进行检查、<br>分析和解答相关问题。</p>'
+                    '</section>',
                     unsafe_allow_html=True,
                 )
                 with st.container(key=f"agent_panel_suggestions_{view}"):
-                    for index, question in enumerate(questions):
-                        if st.button(
+                    for index, question in enumerate(suggestions):
+                        st.button(
                             question,
                             key=f"agent_quick_{view}_{index}",
+                            icon=suggestion_icons[index],
                             width="stretch",
-                        ):
-                            pending = question
+                            on_click=_queue_agent_panel_prompt,
+                            args=(view, question),
+                        )
 
         with st.container(key=f"agent_composer_{view}"):
             with st.form(
@@ -616,23 +701,28 @@ def render_agent_panel(view: str) -> tuple[str, Any | None]:
                     key=f"agent_panel_upload_{view}",
                     label_visibility="collapsed",
                     help="上传柑橘图片，发送后由视觉模型进行识别",
+                    disabled=bool(loading_prompt),
                 )
-                prompt = st.text_input(
+                st.text_input(
                     "询问当前页面或继续任务",
                     placeholder="向 Citrus Agent 提问…",
                     label_visibility="collapsed",
                     key=f"agent_panel_prompt_{view}",
+                    disabled=bool(loading_prompt),
                 )
-                submitted = st.form_submit_button(
+                st.form_submit_button(
                     "发送",
                     icon=":material/arrow_upward:",
                     help="发送给 Agent",
                     width="content",
+                    disabled=bool(loading_prompt),
+                    on_click=_queue_agent_panel_prompt,
+                    args=(view,),
                 )
-    if submitted:
-        pending = prompt.strip()
-        if not pending and uploaded_image is not None:
-            pending = "请识别这张图片，并说明可见特征和需要进一步确认的信息。"
+            st.markdown(
+                '<p class="agent-panel-disclaimer">Citrus Agent 可能会生成不准确的信息，请注意核对重要内容。</p>',
+                unsafe_allow_html=True,
+            )
     return pending, uploaded_image
 
 
