@@ -13,24 +13,59 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING
 from docx.shared import Cm, Pt, RGBColor
 from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
+from docx.text.paragraph import Paragraph
+
+
+CHINESE_FONT = "宋体"
+LATIN_FONT = "Times New Roman"
+BODY_SIZE = 12
+HEADING_SIZE = 16
+TABLE_SIZE = 10.5
+
+
+def _typeface(r_pr, size: float) -> None:
+    fonts = r_pr.find(qn("w:rFonts"))
+    if fonts is None:
+        fonts = OxmlElement("w:rFonts")
+        r_pr.insert(0, fonts)
+    # Theme fonts can override the explicit fonts in uploaded Word templates.
+    fonts.attrib.clear()
+    for script in ("ascii", "hAnsi", "cs"):
+        fonts.set(qn(f"w:{script}"), LATIN_FONT)
+    fonts.set(qn("w:eastAsia"), CHINESE_FONT)
+    for tag in ("sz", "szCs"):
+        node = r_pr.find(qn(f"w:{tag}"))
+        if node is None:
+            node = OxmlElement(f"w:{tag}")
+            r_pr.append(node)
+        node.set(qn("w:val"), str(round(size * 2)))
+
+
+def _flush_left(paragraph: Paragraph) -> None:
+    paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    ind = paragraph._p.get_or_add_pPr().get_or_add_ind()
+    ind.attrib.clear()
+    for attr in ("left", "right", "firstLine", "leftChars", "rightChars", "firstLineChars"):
+        ind.set(qn(f"w:{attr}"), "0")
 
 
 def _set_defaults(document: Document, *, preserve_page_setup: bool = False) -> None:
     styles = document.styles
     normal = styles["Normal"]
-    normal.font.name = "Microsoft YaHei"
-    normal._element.rPr.rFonts.set(qn("w:eastAsia"), "Microsoft YaHei")
-    normal.font.size = Pt(10.5)
+    _typeface(normal.element.get_or_add_rPr(), BODY_SIZE)
     normal.paragraph_format.line_spacing_rule = WD_LINE_SPACING.ONE_POINT_FIVE
-    normal.paragraph_format.first_line_indent = Cm(0.74)
+    normal.paragraph_format.first_line_indent = Pt(BODY_SIZE * 2)
     normal.paragraph_format.space_after = Pt(6)
-    for name, size in (("Title", 22), ("Heading 1", 16), ("Heading 2", 13), ("Heading 3", 11)):
+    for name, size in [("Title", 22)] + [(f"Heading {level}", HEADING_SIZE) for level in range(1, 10)]:
         style = styles[name]
-        style.font.name = "Microsoft YaHei"
-        style._element.rPr.rFonts.set(qn("w:eastAsia"), "Microsoft YaHei")
-        style.font.size = Pt(size)
+        _typeface(style.element.get_or_add_rPr(), size)
         style.font.color.rgb = RGBColor(0, 0, 0)
         style.paragraph_format.keep_with_next = True
+        style.paragraph_format.first_line_indent = Pt(0)
+        style.paragraph_format.left_indent = Pt(0)
+        style.paragraph_format.right_indent = Pt(0)
+        if name != "Title":
+            style.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.LEFT
         borders = style.element.get_or_add_pPr().find(qn("w:pBdr"))
         if borders is not None:
             style.element.get_or_add_pPr().remove(borders)
@@ -138,7 +173,7 @@ def _add_toc(document: Document, headings: list[str]) -> None:
         paragraph.paragraph_format.first_line_indent = Cm(0)
         paragraph.paragraph_format.line_spacing = 1.15
         paragraph.paragraph_format.space_after = Pt(3)
-        paragraph.runs[0].font.size = Pt(10)
+        paragraph.runs[0].font.size = Pt(BODY_SIZE)
     document.add_page_break()
 
 
@@ -187,7 +222,7 @@ def _add_markdown_table(document: Document, rows: list[list[str]]) -> None:
         return
     columns = max(len(row) for row in rows)
     table = document.add_table(rows=len(rows), cols=columns)
-    table.style = "Table Grid"
+    table.style = "Normal Table"
     table.autofit = True
     for row_index, values in enumerate(rows):
         row_properties = table.rows[row_index]._tr.get_or_add_trPr()
@@ -206,15 +241,106 @@ def _add_markdown_table(document: Document, rows: list[list[str]]) -> None:
             paragraph.paragraph_format.first_line_indent = Cm(0)
             paragraph.paragraph_format.space_after = Pt(0)
             if row_index == 0:
-                shading = OxmlElement("w:shd"); shading.set(qn("w:fill"), "1F4E78")
-                cell._tc.get_or_add_tcPr().append(shading)
                 for run in paragraph.runs:
                     run.font.bold = True
-                    run.font.color.rgb = RGBColor(255, 255, 255)
-            elif row_index % 2 == 0:
-                shading = OxmlElement("w:shd"); shading.set(qn("w:fill"), "EAF2F8")
-                cell._tc.get_or_add_tcPr().append(shading)
     document.add_paragraph().paragraph_format.space_after = Pt(0)
+
+
+def _borders(properties, tag: str, visible: dict[str, int]) -> None:
+    for old in properties.findall(qn(f"w:{tag}")):
+        properties.remove(old)
+    borders = OxmlElement(f"w:{tag}")
+    for edge in ("top", "bottom", "left", "right", "start", "end", "insideH", "insideV"):
+        border = OxmlElement(f"w:{edge}")
+        border.set(qn("w:val"), "single" if edge in visible else "nil")
+        if edge in visible:
+            border.set(qn("w:sz"), str(visible[edge]))
+            border.set(qn("w:color"), "000000")
+            border.set(qn("w:space"), "0")
+        borders.append(border)
+    properties.append(borders)
+
+
+def _three_line_table(table) -> None:
+    properties = table.tblPr
+    for tag in ("tblStyle", "tblLook"):
+        for old in properties.findall(qn(f"w:{tag}")):
+            properties.remove(old)
+    # Clear template banding and direct fills as well as the old grid borders.
+    for node in table.xpath(".//w:shd | .//w:highlight | .//w:cnfStyle | .//w:pBdr"):
+        node.getparent().remove(node)
+    _borders(properties, "tblBorders", {"top": 12, "bottom": 12})
+    rows = table.findall(qn("w:tr"))
+    for index, row in enumerate(rows):
+        row_pr = row.get_or_add_trPr()
+        if row_pr.find(qn("w:cantSplit")) is None:
+            row_pr.append(OxmlElement("w:cantSplit"))
+        if index == 0 and row_pr.find(qn("w:tblHeader")) is None:
+            row_pr.append(OxmlElement("w:tblHeader"))
+        visible = {"top": 12, "bottom": 6} if index == 0 else {}
+        if index == len(rows) - 1:
+            visible["bottom"] = 12
+        for cell in row.findall(qn("w:tc")):
+            _borders(cell.get_or_add_tcPr(), "tcBorders", visible)
+
+
+def _paragraph_kind(paragraph: Paragraph) -> str:
+    style = paragraph.style
+    seen = set()
+    while style is not None and style.style_id not in seen:
+        seen.add(style.style_id)
+        if style.name == "Title":
+            return "title"
+        if style.name.startswith("Heading "):
+            return "heading"
+        style = style.base_style
+    outline = paragraph._p.xpath("./w:pPr/w:outlineLvl/@w:val")
+    return "heading" if outline and outline[0] in {str(i) for i in range(9)} else "body"
+
+
+def _apply_report_format(document: Document) -> None:
+    """Enforce the report format on generated text and uploaded templates alike."""
+    parts = {document.part.partname: document.element}
+    for section in document.sections:
+        for name in ("header", "first_page_header", "even_page_header", "footer", "first_page_footer", "even_page_footer"):
+            story = getattr(section, name)
+            if not story.is_linked_to_previous:
+                parts[story.part.partname] = story.part.element
+    for root in parts.values():
+        for table in root.xpath(".//w:tbl"):
+            _three_line_table(table)
+        for element in root.xpath(".//w:p"):
+            paragraph = Paragraph(element, document)
+            in_table = bool(element.xpath("ancestor::w:tc"))
+            kind = _paragraph_kind(paragraph)
+            size = TABLE_SIZE if in_table else HEADING_SIZE if kind == "heading" else 22 if kind == "title" else BODY_SIZE
+            if in_table or kind == "heading":
+                _flush_left(paragraph)
+            if kind == "heading" and not in_table:
+                paragraph.paragraph_format.keep_with_next = True
+                for text in element.xpath(".//w:t"):
+                    if text.text:
+                        text.text = text.text.lstrip(" \t\u3000")
+                        if text.text:
+                            break
+            # Include hyperlink runs and field results (page numbers), which
+            # paragraph.runs does not always expose.
+            p_pr = element.get_or_add_pPr()
+            mark = p_pr.find(qn("w:rPr"))
+            if mark is None:
+                mark = OxmlElement("w:rPr")
+                p_pr.append(mark)
+            _typeface(mark, size)
+            for run in element.xpath(".//w:r"):
+                r_pr = run.get_or_add_rPr()
+                _typeface(r_pr, size)
+                if in_table or kind in {"title", "heading"}:
+                    color = r_pr.find(qn("w:color"))
+                    if color is None:
+                        color = OxmlElement("w:color")
+                        r_pr.append(color)
+                    color.attrib.clear()
+                    color.set(qn("w:val"), "000000")
 
 
 def markdown_to_docx(markdown: str, output_path: str | Path, *, profile: dict[str, Any] | None = None, template_path: str | Path | None = None, sources: list[dict[str, Any]] | None = None) -> Path:
@@ -307,6 +433,7 @@ def markdown_to_docx(markdown: str, output_path: str | Path, *, profile: dict[st
                 paragraph.add_run(url or "本地证据")
     for section in document.sections:
         _add_page_number(section, preserve_existing=using_template)
+    _apply_report_format(document)
     out = Path(output_path)
     out.parent.mkdir(parents=True, exist_ok=True)
     document.save(out)
