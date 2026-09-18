@@ -205,11 +205,32 @@ class DesignSystemRegressionTests(unittest.TestCase):
         self.assertIn("top: calc(50% + 1px);", composer_css)
         self.assertIn("left: calc(50% + 1px);", composer_css)
         self.assertIn("transform: translate(-50%, -50%);", composer_css)
+        self.assertIn('[data-testid="InputInstructions"]', composer_css)
+        self.assertIn("display: none !important;", composer_css)
         self.assertIn("font-family: var(--font-ui) !important;", composer_css)
         self.assertIn("body:has(.agent-panel-conversation.is-loading)", css)
         self.assertIn('[data-stale="true"] {', css)
         self.assertIn("opacity: 1 !important;", css)
         self.assertIn("filter: none !important;", css)
+
+    def test_contextual_agent_header_is_compact_and_has_no_menu_slot(self) -> None:
+        css = CSS_PATH.read_text(encoding="utf-8-sig")
+        self.assertIn(
+            '[data-testid="stSidebar"] > div:has([class*="st-key-agent_panel_shell_"])',
+            css,
+        )
+        contextual_padding_start = css.index(
+            '[data-testid="stSidebar"] > div:has([class*="st-key-agent_panel_shell_"])'
+        )
+        contextual_padding = css[
+            contextual_padding_start : css.index("}", contextual_padding_start) + 1
+        ]
+        self.assertIn("padding-top: 8px !important;", contextual_padding)
+        brand_start = css.index(".agent-panel-brand {")
+        brand_rule = css[brand_start : css.index("}", brand_start) + 1]
+        self.assertIn("min-height: 50px;", brand_rule)
+        self.assertIn("align-items: center;", brand_rule)
+        self.assertIn("box-sizing: border-box;", brand_rule)
 
     def test_report_draft_has_scoped_document_typography_and_rule_spacing(self) -> None:
         css = CSS_PATH.read_text(encoding="utf-8-sig")

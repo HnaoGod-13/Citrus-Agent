@@ -5876,6 +5876,11 @@ section[data-testid="stAppScrollToBottomContainer"] [data-testid="stBottomBlockC
     overflow: hidden !important;
 }
 
+[data-testid="stSidebar"] > div:has([class*="st-key-agent_panel_shell_"]),
+[data-testid="stSidebarContent"]:has([class*="st-key-agent_panel_shell_"]) {
+    padding-top: 8px !important;
+}
+
 [data-testid="stSidebarUserContent"]:has([class*="st-key-agent_panel_shell_"]) > div,
 [data-testid="stSidebarUserContent"]:has([class*="st-key-agent_panel_shell_"]) > div > [data-testid="stVerticalBlock"],
 [data-testid="stSidebar"] [class*="st-key-agent_panel_shell_"],
@@ -5930,11 +5935,12 @@ section[data-testid="stAppScrollToBottomContainer"] [data-testid="stBottomBlockC
 .agent-panel-brand {
     position: relative;
     display: flex;
-    min-height: 58px;
+    min-height: 50px;
     flex: 0 0 auto;
     align-items: center;
     gap: 10px;
-    padding: 2px 3px 14px;
+    box-sizing: border-box;
+    padding: 0 3px 8px;
     border-bottom: 1px solid var(--border);
     font-family: var(--font-ui) !important;
 }
@@ -5978,15 +5984,6 @@ section[data-testid="stAppScrollToBottomContainer"] [data-testid="stBottomBlockC
     background: #eaf7f0;
     border-radius: 999px;
     font-size: 11px;
-}
-
-.agent-panel-more {
-    display: flex;
-    width: 24px;
-    height: 28px;
-    align-items: center;
-    justify-content: center;
-    color: var(--text-secondary);
 }
 
 .agent-panel-welcome {
@@ -6414,6 +6411,13 @@ section[data-testid="stAppScrollToBottomContainer"] [data-testid="stBottomBlockC
 [data-testid="stSidebar"] [class*="st-key-agent_composer_"] [data-testid="stTextInputRootElement"]:focus-within {
     border-color: #a6aaa8 !important;
     box-shadow: 0 0 0 3px rgba(28, 28, 28, 0.055) !important;
+}
+
+/* Streamlit adds a keyboard shortcut caption below focused form inputs.
+   The compact Agent composer already communicates submission through its
+   send button, so the caption only crowds the input surface. */
+[data-testid="stSidebar"] [class*="st-key-agent_composer_"] [data-testid="InputInstructions"] {
+    display: none !important;
 }
 
 [data-testid="stSidebar"] [class*="st-key-agent_composer_"] input {

@@ -604,8 +604,7 @@ def render_agent_panel(view: str) -> tuple[str, Any | None]:
             '<header class="agent-panel-brand"><span class="agent-panel-mark">'
             + icon_svg("citrus", 20)
             + '</span><span class="agent-panel-identity"><strong>Citrus Agent</strong>'
-            + '<small>页面助手</small></span><span class="agent-online">在线</span>'
-            + f'<span class="agent-panel-more">{icon_svg("more-vertical", 20)}</span></header>',
+            + '<small>页面助手</small></span><span class="agent-online">在线</span></header>',
             unsafe_allow_html=True,
         )
         with st.container(key=f"agent_panel_scroll_{view}"):

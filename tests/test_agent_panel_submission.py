@@ -132,6 +132,8 @@ def test_history_is_rendered_inside_conversation_below_agent_header():
     assert not app.exception
     markup = "\n".join(str(item.value) for item in app.markdown)
     assert markup.index("agent-panel-brand") < markup.index("agent-panel-conversation")
+    assert "agent-panel-more" not in markup
+    assert "agent-online" in markup
     assert "agent-panel-threadbar" not in markup
     assert "当前对话" not in markup
     assert "agent-inline-history" not in markup
