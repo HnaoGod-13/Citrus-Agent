@@ -6317,14 +6317,20 @@ section[data-testid="stAppScrollToBottomContainer"] [data-testid="stBottomBlockC
 [data-testid="stSidebar"] [class*="st-key-agent_panel_suggestions_"] {
     display: grid !important;
     grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    grid-template-rows: repeat(2, 64px) !important;
     gap: 8px !important;
+    align-items: stretch !important;
 }
 
 [data-testid="stSidebar"] [class*="st-key-agent_quick_"] button {
+    display: flex !important;
     justify-content: flex-start;
-    min-height: 56px;
-    gap: 7px;
-    padding: 10px 11px;
+    box-sizing: border-box;
+    width: 100% !important;
+    height: 64px !important;
+    min-height: 64px !important;
+    gap: 10px;
+    padding: 10px 12px;
     background: var(--surface) !important;
     border: 1px solid var(--border) !important;
     border-radius: 10px !important;
@@ -6334,9 +6340,15 @@ section[data-testid="stAppScrollToBottomContainer"] [data-testid="stBottomBlockC
 }
 
 [data-testid="stSidebar"] [class*="st-key-agent_quick_"] button [data-testid="stIconMaterial"] {
-    flex: 0 0 18px;
+    display: inline-flex !important;
+    width: 18px !important;
+    height: 18px !important;
+    flex: 0 0 18px !important;
+    align-items: center;
+    justify-content: center;
     color: var(--text-primary) !important;
     font-size: 18px !important;
+    line-height: 18px !important;
 }
 
 [data-testid="stSidebar"] [class*="st-key-agent_quick_"] button > div,
@@ -6351,17 +6363,28 @@ section[data-testid="stAppScrollToBottomContainer"] [data-testid="stBottomBlockC
 
 [data-testid="stSidebar"] [class*="st-key-agent_quick_"] button > div {
     flex: 1 1 auto !important;
+    min-width: 0 !important;
     justify-content: flex-start !important;
 }
 
 [data-testid="stSidebar"] [class*="st-key-agent_quick_"] button > div > span {
     width: 100% !important;
     flex: 1 1 auto !important;
+    min-width: 0 !important;
+    align-items: center !important;
+    gap: 10px !important;
 }
 
 [data-testid="stSidebar"] [class*="st-key-agent_quick_"] button [data-testid="stMarkdownContainer"] {
-    width: 100% !important;
+    width: auto !important;
+    min-width: 0 !important;
+    flex: 1 1 auto !important;
     text-align: left !important;
+}
+
+[data-testid="stSidebar"] [class*="st-key-agent_quick_"] button p {
+    margin: 0 !important;
+    overflow-wrap: anywhere;
 }
 
 [data-testid="stSidebar"] [class*="st-key-agent_quick_"] button::after {

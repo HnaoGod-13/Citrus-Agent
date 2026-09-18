@@ -213,6 +213,18 @@ class DesignSystemRegressionTests(unittest.TestCase):
         self.assertIn("opacity: 1 !important;", css)
         self.assertIn("filter: none !important;", css)
 
+        suggestions_start = css.index(
+            '[data-testid="stSidebar"] [class*="st-key-agent_panel_suggestions_"]'
+        )
+        suggestions_end = css.index(
+            '[data-testid="stSidebar"] [class*="st-key-agent_composer_"]',
+            suggestions_start,
+        )
+        suggestions_css = css[suggestions_start:suggestions_end]
+        self.assertIn("grid-template-rows: repeat(2, 64px) !important;", suggestions_css)
+        self.assertIn("height: 64px !important;", suggestions_css)
+        self.assertIn("gap: 10px !important;", suggestions_css)
+
     def test_contextual_agent_header_is_compact_and_has_no_menu_slot(self) -> None:
         css = CSS_PATH.read_text(encoding="utf-8-sig")
         self.assertIn(
