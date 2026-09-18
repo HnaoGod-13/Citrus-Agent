@@ -228,10 +228,6 @@ def _add_markdown_table(document: Document, rows: list[list[str]]) -> None:
         row_properties = table.rows[row_index]._tr.get_or_add_trPr()
         cannot_split = OxmlElement("w:cantSplit")
         row_properties.append(cannot_split)
-        if row_index == 0:
-            repeat = OxmlElement("w:tblHeader")
-            repeat.set(qn("w:val"), "true")
-            row_properties.append(repeat)
         for column_index in range(columns):
             cell = table.cell(row_index, column_index)
             cell.text = values[column_index].strip() if column_index < len(values) else ""
@@ -275,13 +271,23 @@ def _three_line_table(table) -> None:
         row_pr = row.get_or_add_trPr()
         if row_pr.find(qn("w:cantSplit")) is None:
             row_pr.append(OxmlElement("w:cantSplit"))
-        if index == 0 and row_pr.find(qn("w:tblHeader")) is None:
-            row_pr.append(OxmlElement("w:tblHeader"))
+        # Do not mark the first row as a repeating header.  The report format
+        # intentionally lets a table continue on the next page without
+        # printing the same heading row again.
+        for repeat_header in row_pr.findall(qn("w:tblHeader")):
+            row_pr.remove(repeat_header)
         visible = {"top": 12, "bottom": 6} if index == 0 else {}
         if index == len(rows) - 1:
             visible["bottom"] = 12
         for cell in row.findall(qn("w:tc")):
             _borders(cell.get_or_add_tcPr(), "tcBorders", visible)
+            if index == 0:
+                # Keep the first data row with the table heading when a table
+                # begins close to a page boundary.  This avoids an orphaned
+                # heading while still keeping the heading non-repeating.
+                for paragraph in cell.xpath(".//w:p"):
+                    p_pr = paragraph.get_or_add_pPr()
+                    p_pr.get_or_add_keepNext().val = True
 
 
 def _paragraph_kind(paragraph: Paragraph) -> str:

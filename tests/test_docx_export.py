@@ -59,6 +59,7 @@ def assert_typeface(element, half_points):
 
 def assert_three_line_table(table):
     assert not table._tbl.xpath(".//w:shd | .//w:highlight")
+    assert not table._tbl.xpath(".//w:tblHeader")
     visible = table._tbl.xpath("./w:tblPr/w:tblBorders/*[@w:val='single']")
     assert {node.tag for node in visible} == {qn("w:top"), qn("w:bottom")}
     for row_index, row in enumerate(table.rows):
@@ -70,6 +71,8 @@ def assert_three_line_table(table):
             for paragraph in cell.paragraphs:
                 assert paragraph.alignment == WD_ALIGN_PARAGRAPH.LEFT
                 assert paragraph.paragraph_format.first_line_indent == 0
+                if row_index == 0:
+                    assert paragraph.paragraph_format.keep_with_next is True
             assert cell._tc.xpath(".//w:rPr/w:color/@w:val") == ["000000"] * len(cell._tc.xpath(".//w:r"))
 
 
@@ -119,10 +122,14 @@ def test_uploaded_template_direct_formatting_cannot_override_report_format(tmp_p
     template.sections[0].even_page_footer.paragraphs[0].text = "偶数页 Footer"
     table = template.add_table(rows=3, cols=2)
     table.style = "Light Shading Accent 1"
+    template_header = OxmlElement("w:tblHeader")
+    template_header.set(qn("w:val"), "true")
+    table.rows[0]._tr.get_or_add_trPr().append(template_header)
     for row in table.rows:
         for cell in row.cells:
             cell.text = "中文 NFC 20"
             cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+            cell.paragraphs[0].paragraph_format.keep_with_next = False
             shading = OxmlElement("w:shd")
             shading.set(qn("w:fill"), "1F4E78")
             cell._tc.get_or_add_tcPr().append(shading)
