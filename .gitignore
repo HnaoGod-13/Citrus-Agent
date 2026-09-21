@@ -5,7 +5,10 @@ __pycache__/
 logs/
 outputs/
 output/
+tmp/
 .playwright-cli/
 data/memory/*.db
 data/memory/*.db-*
 data/memory/files/
+data/literature/*.db-shm
+data/literature/*.db-wal

@@ -79,10 +79,10 @@ def assert_three_line_table(table):
 def test_generated_report_uses_requested_fonts_sizes_and_three_line_tables(tmp_path):
     output_path = tmp_path / "formatted.docx"
     markdown_to_docx(
-        "# 示例报告\n\n## 项目摘要\n中文 NFC 12.8 °Brix 正文。\n"
+        "# 示例报告\n\n## 项目摘要\n中文 NFC 12.8 °Brix 正文。[1]\n"
         "\n### 建设建议\n第二段正文 https://example.org/reference\n"
         "\n| 结论层级 | 当前结论 | 使用边界 |\n|---|---|---|\n"
-        "| 已有批次事实 | 沃柑 20 吨 | 检测复核 |\n"
+        "| 已有批次事实 | 沃柑 20 吨 [2] | 检测复核 |\n"
         "| 系统建议 | NFC 果汁 | 需要小试 |\n"
         "| 投资决策 | 待测算 | 待询价 |\n",
         output_path, profile={"title": "示例报告"},
@@ -100,6 +100,10 @@ def test_generated_report_uses_requested_fonts_sizes_and_three_line_tables(tmp_p
     toc = next(p for p in doc.paragraphs if p.text.startswith("01  "))
     assert_typeface(toc._p, 24)
     assert_three_line_table(doc.tables[0])
+    body_citations = [run for paragraph in doc.paragraphs for run in paragraph.runs if run.text == "[1]"]
+    table_citations = [run for row in doc.tables[0].rows for cell in row.cells for paragraph in cell.paragraphs for run in paragraph.runs if run.text == "[2]"]
+    assert body_citations and all(run._r.xpath("./w:rPr/w:vertAlign[@w:val='superscript']") for run in body_citations)
+    assert table_citations and all(run._r.xpath("./w:rPr/w:vertAlign[@w:val='superscript']") for run in table_citations)
     assert_typeface(doc.sections[0].footer._element, 24)
     assert doc.sections[0].footer._element.xpath(".//w:instrText[contains(text(), 'PAGE')]")
     assert len([r for r in doc.part.rels.values() if r.reltype.endswith('/hyperlink')]) == 1

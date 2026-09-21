@@ -1,10 +1,17 @@
 from __future__ import annotations
 
 import os
+import tempfile
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+RUNTIME_DIR = Path(
+    os.getenv(
+        "CITRUS_RUNTIME_DIR",
+        str(Path(tempfile.gettempdir()) / "citrus-agent" / ROOT.name),
+    )
+).expanduser()
 
 
 def _env_int(name: str, default: int, minimum: int = 1) -> int:
@@ -22,7 +29,7 @@ def _env_float(name: str, default: float, minimum: float = 0.0, maximum: float =
 
 
 MEMORY_DB_PATH = Path(
-    os.getenv("CITRUS_MEMORY_DB_PATH", str(ROOT / "data" / "memory" / "memory.db"))
+    os.getenv("CITRUS_MEMORY_DB_PATH", str(RUNTIME_DIR / "memory.db"))
 ).expanduser()
 MEMORY_RECENT_TOKEN_LIMIT = _env_int("CITRUS_MEMORY_RECENT_TOKEN_LIMIT", 2400, 256)
 MEMORY_SUMMARY_TRIGGER_TOKENS = _env_int("CITRUS_MEMORY_SUMMARY_TRIGGER_TOKENS", 4200, 512)

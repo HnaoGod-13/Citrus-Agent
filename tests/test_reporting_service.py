@@ -51,6 +51,23 @@ def test_report_requires_real_llm(monkeypatch, tmp_path):
         )
 
 
+def test_report_style_checker_rejects_internal_explanations():
+    markdown = """# 项目报告
+
+## 项目摘要
+这是由大模型撰写的项目摘要。[1] 系统清洗后的加权数据质量分为 90/100，但不代表可直接投资。
+
+## 结论和立项建议
+项目工艺路线确定为 NFC 果汁路线，建议按计划推进建设。
+
+## 待人工复核项
+- 待补充建设地点
+"""
+    issues = service._report_style_issues(markdown)
+    for phrase in ("大模型", "系统清洗", "加权数据质量", "不代表", "待人工复核", "待补充"):
+        assert phrase in "".join(issues)
+
+
 def test_report_combines_web_evidence_llm_and_word_export(monkeypatch, tmp_path):
     document = sample_document()
     analysis = run_intake_pipeline(document, document["id"], 3, document["task_id"])
@@ -61,7 +78,7 @@ def test_report_combines_web_evidence_llm_and_word_export(monkeypatch, tmp_path)
         captured["sources"] = sources
         captured["profile"] = profile
         captured["web_status"] = analysis_input["web_research"]["status"]
-        return "# 项目报告\n\n## 项目摘要\n" + ("这是由大模型撰写的可核验项目报告正文。" * 100)
+        return "# 项目报告\n\n## 项目摘要\n" + ("项目建设方案具备完整的事实依据和可执行的实施路径。" * 100)
 
     fake_export = types.ModuleType("app.reporting.docx_export")
     def write_docx(markdown, output_path, **kwargs):

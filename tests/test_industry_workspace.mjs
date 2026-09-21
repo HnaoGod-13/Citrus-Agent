@@ -60,7 +60,7 @@ test('industry intake cleaning normalizes useful records and blocks unusable one
   assert.ok(invalid.issues.length>=2);
 });
 test('report center only exposes the server generated editable Word flow',()=>{
-  assert.match(source,/联网检索并调用大模型生成项目报告/);
+  assert.match(source,/整理公开产业资料并形成项目报告/);
   assert.match(source,/result\.docx_base64/);
   assert.match(source,/accept="\.docx"/);
   assert.match(source,/\['项目报告'\]/);
@@ -68,10 +68,12 @@ test('report center only exposes the server generated editable Word flow',()=>{
   assert.doesNotMatch(source,/export function buildReportDocument/);
 });
 test('generated project report preview safely renders headings, lists and tables',()=>{
-  const html=renderReportMarkdown('## 项目摘要\n\n**重点** <script>alert(1)</script>\n\n| 项目 | 内容 |\n|---|---|\n| 批次 | B-01 |\n\n- 待复核');
+  const html=renderReportMarkdown('## 项目摘要\n\n**重点** <script>alert(1)</script> [1]\n\n| 项目 | 内容 |\n|---|---|\n| 批次 | B-01 [2] |\n\n- 待复核');
   assert.match(html,/<h3>项目摘要<\/h3>/);
   assert.match(html,/<strong>重点<\/strong>/);
   assert.match(html,/<table>/);
+  assert.match(html,/<sup>\[1\]<\/sup>/);
+  assert.match(html,/<sup>\[2\]<\/sup>/);
   assert.match(html,/<ul><li>待复核<\/li><\/ul>/);
   assert.doesNotMatch(html,/<script>/);
 });

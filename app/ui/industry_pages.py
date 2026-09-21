@@ -19,6 +19,7 @@ from app.intake_store import IntakeStore
 from app.intake_pipeline import build_task_context, run_intake_pipeline
 from app.report_enrichment import enrich_report_context
 from app.reporting import generate_project_report
+from agent import workflow as agent_workflow
 from agent.llm_client import DeepSeekAPIError
 
 _ASSETS = Path(__file__).parent / "industry_workspace"
@@ -267,7 +268,7 @@ def _report_action():
             analysis=analysis,
             profile=report,
             template_path=template_path,
-            output_dir=Path("output") / "reports",
+            output_dir=agent_workflow.REPORT_DIR,
         )
         result = {"ok": True, "requestId": action["requestId"], **generated}
     except (ValueError, DeepSeekAPIError, binascii.Error) as error:

@@ -194,10 +194,19 @@ def _add_hyperlink(paragraph, text: str, url: str) -> None:
 
 def _fill_with_links(paragraph, text: str) -> None:
     cursor = 0
-    for match in re.finditer(r"https?://[^\s]+", text):
+    # Keep source markers as real superscript runs so citations remain editable
+    # and visually consistent in both body paragraphs and table cells.
+    token_re = re.compile(r"https?://[^\s]+|\[(\d+)\]")
+    for match in token_re.finditer(text):
         if match.start() > cursor:
             paragraph.add_run(text[cursor:match.start()])
-        url = match.group(0).rstrip("。，；,.;)")
+        token = match.group(0)
+        if match.group(1):
+            citation = paragraph.add_run(token)
+            citation.font.superscript = True
+            cursor = match.end()
+            continue
+        url = token.rstrip("。，；,.;)")
         _add_hyperlink(paragraph, url, url)
         cursor = match.start() + len(url)
     if cursor < len(text):
@@ -230,10 +239,11 @@ def _add_markdown_table(document: Document, rows: list[list[str]]) -> None:
         row_properties.append(cannot_split)
         for column_index in range(columns):
             cell = table.cell(row_index, column_index)
-            cell.text = values[column_index].strip() if column_index < len(values) else ""
+            cell.text = ""
             cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
             _table_cell_margins(cell)
             paragraph = cell.paragraphs[0]
+            _fill_with_links(paragraph, values[column_index].strip() if column_index < len(values) else "")
             paragraph.paragraph_format.first_line_indent = Cm(0)
             paragraph.paragraph_format.space_after = Pt(0)
             if row_index == 0:

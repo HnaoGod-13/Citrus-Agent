@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
 from dataclasses import asdict, dataclass
 from datetime import datetime
@@ -16,6 +17,7 @@ from .evidence import (
 )
 from .guardrails import run_fixed_guardrails
 from .memory import build_memory_snapshot, redact_sensitive
+from .memory_config import RUNTIME_DIR
 from .planner import build_controlled_plan, serialize_plan
 from .process_knowledge import build_parameterized_process_plan
 from .rules import DIRECTION_EVIDENCE_TERMS
@@ -35,8 +37,8 @@ from .tools import (
 
 
 ROOT = Path(__file__).resolve().parents[1]
-REPORT_DIR = ROOT / "outputs" / "reports"
-AUDIT_LOG = ROOT / "logs" / "audit.jsonl"
+REPORT_DIR = Path(os.getenv("CITRUS_REPORT_DIR", str(RUNTIME_DIR / "reports"))).expanduser()
+AUDIT_LOG = Path(os.getenv("CITRUS_AUDIT_LOG", str(RUNTIME_DIR / "logs" / "audit.jsonl"))).expanduser()
 _AUDIT_WRITE_LOCK = threading.Lock()
 
 
