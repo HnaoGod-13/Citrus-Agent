@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import html
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
@@ -473,6 +474,22 @@ def _queue_agent_panel_prompt(view: str, prompt: str = "") -> None:
     upload_key = f"agent_panel_upload_{view}"
     queued = str(prompt or st.session_state.get(prompt_key) or "").strip()
     uploaded = st.session_state.get(upload_key)
+    # ``clear_on_submit`` resets the form widgets before the next script run.
+    # Keep the selected image in session state so the page switch to chat does
+    # not turn an image question into a text-only request.
+    if uploaded is not None:
+        try:
+            image_bytes = uploaded.getvalue()
+        except (AttributeError, OSError, TypeError):
+            image_bytes = b""
+        if image_bytes:
+            st.session_state[f"agent_panel_staged_image_bytes_{view}"] = image_bytes
+            st.session_state[f"agent_panel_staged_image_mime_{view}"] = str(
+                getattr(uploaded, "type", "") or ""
+            )
+            st.session_state[f"agent_panel_staged_image_name_{view}"] = str(
+                getattr(uploaded, "name", "uploaded-image") or "uploaded-image"
+            )
     if not queued and uploaded is not None:
         queued = "请识别这张图片，并说明可见特征和需要进一步确认的信息。"
     if queued:
@@ -545,7 +562,7 @@ def render_agent_panel(view: str) -> tuple[str, Any | None]:
             ["如何判断证据强弱？", "查找适用的行业标准"],
         ),
         "analytics": (
-            "运行诊断",
+            "当前回答",
             "我会基于实际运行记录解释完成率、耗时与异常，不虚构成本或 Token 数据。",
             ["解释最近的运行瓶颈", "有哪些可执行改进？"],
         ),
@@ -579,19 +596,6 @@ def render_agent_panel(view: str) -> tuple[str, Any | None]:
         ":material/list_alt:",
         ":material/bar_chart:",
     )
-    answer_titles = {
-        "intake": "当前判断",
-        "evidence": "证据说明",
-        "decision": "路线说明",
-        "process": "方案建议",
-        "matching": "匹配说明",
-        "report": "撰写建议",
-        "review": "审核提示",
-        "knowledge": "知识解答",
-        "analytics": "运行诊断",
-        "settings": "设置说明",
-    }
-    answer_title = answer_titles.get(view, "当前回答")
     task_context = st.session_state.get("industry_task_context") or {}
     task_id = str(task_context.get("task_id") or "")
     record_id = str(task_context.get("record_id") or "")
@@ -655,9 +659,21 @@ def render_agent_panel(view: str) -> tuple[str, Any | None]:
                         continue
                     timestamp = html.escape(str(message.get("context_time") or ""))
                     if message.get("role") == "user":
+                        image_html = ""
+                        image_bytes = message.get("image_bytes")
+                        if image_bytes:
+                            image_mime = str(message.get("image_mime_type") or "image/jpeg")
+                            if image_mime not in {"image/jpeg", "image/png"}:
+                                image_mime = "image/jpeg"
+                            encoded_image = base64.b64encode(image_bytes).decode("ascii")
+                            image_html = (
+                                f'<img class="agent-user-attachment" '
+                                f'src="data:{image_mime};base64,{encoded_image}" '
+                                'alt="本轮上传图片">'
+                            )
                         thread_items.append(
                             f'<article class="agent-panel-message user"><time>{timestamp}</time>'
-                            f'<div class="agent-user-bubble"><p>{content}</p></div></article>'
+                            f'<div class="agent-user-bubble">{image_html}<p>{content}</p></div></article>'
                         )
                     else:
                         thread_items.append(
@@ -665,9 +681,7 @@ def render_agent_panel(view: str) -> tuple[str, Any | None]:
                             f'<span class="agent-message-mark">{icon_svg("citrus", 16)}</span>'
                             '<div class="agent-message-body"><div class="agent-message-meta">'
                             f'<b>Citrus Agent</b><time>{timestamp}</time></div>'
-                            '<div class="agent-answer-card"><div class="agent-answer-title">'
-                            f'<span>{icon_svg("decision", 17)}</span><strong>{html.escape(answer_title)}</strong>'
-                            f'</div><p>{content}</p></div></div></article>'
+                            f'<div class="agent-answer-card"><p>{content}</p></div></div></article>'
                         )
                 if thread_items:
                     st.markdown(

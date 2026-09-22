@@ -1491,6 +1491,7 @@ def clear_active_conversation_state(*, clear_sidebar: bool = False) -> None:
                 "agent_panel_conversation_started_",
                 "agent_panel_pending_prompt_",
                 "agent_panel_pending_time_",
+                "agent_panel_staged_image_",
             )
         ):
             st.session_state.pop(key, None)
@@ -4614,21 +4615,57 @@ def submit_agent_panel_prompt(
     panel_view = str(st.session_state.get("product_view") or "")
     image_bytes: bytes | None = None
     image_mime_type = "image/jpeg"
-    if uploaded_image is not None:
+    image_filename = "uploaded-image"
+    staged_image_key = f"agent_panel_staged_image_bytes_{panel_view}"
+    staged_mime_key = f"agent_panel_staged_image_mime_{panel_view}"
+    staged_name_key = f"agent_panel_staged_image_name_{panel_view}"
+    # The contextual composer clears its form after submit.  The submit
+    # callback stages the selected upload before that reset; consume it here
+    # when the rerun no longer exposes an UploadedFile object.
+    if uploaded_image is None and st.session_state.get(staged_image_key):
+        image_bytes = st.session_state.get(staged_image_key)
+        image_mime_type = str(st.session_state.get(staged_mime_key) or "image/jpeg")
+        image_filename = str(st.session_state.get(staged_name_key) or image_filename)
+    elif uploaded_image is not None:
+        image_filename = str(getattr(uploaded_image, "name", image_filename) or image_filename)
         try:
             prepared = prepare_image_for_vision(
                 uploaded_image.getvalue(),
-                filename=getattr(uploaded_image, "name", "uploaded-image"),
+                filename=image_filename,
                 mime_type=getattr(uploaded_image, "type", ""),
             )
         except vision_client.VisionAPIError as error:
             st.session_state.pop(f"agent_panel_pending_prompt_{panel_view}", None)
             st.session_state.pop(f"agent_panel_pending_time_{panel_view}", None)
+            st.session_state.pop(staged_image_key, None)
+            st.session_state.pop(staged_mime_key, None)
+            st.session_state.pop(staged_name_key, None)
             with st.sidebar:
                 st.error(str(error))
             return
         image_bytes = prepared.data
         image_mime_type = prepared.mime_type
+    if image_bytes is not None and uploaded_image is None:
+        try:
+            prepared = prepare_image_for_vision(
+                image_bytes,
+                filename=image_filename,
+                mime_type=image_mime_type,
+            )
+        except vision_client.VisionAPIError as error:
+            st.session_state.pop(f"agent_panel_pending_prompt_{panel_view}", None)
+            st.session_state.pop(f"agent_panel_pending_time_{panel_view}", None)
+            st.session_state.pop(staged_image_key, None)
+            st.session_state.pop(staged_mime_key, None)
+            st.session_state.pop(staged_name_key, None)
+            with st.sidebar:
+                st.error(str(error))
+            return
+        image_bytes = prepared.data
+        image_mime_type = prepared.mime_type
+    st.session_state.pop(staged_image_key, None)
+    st.session_state.pop(staged_mime_key, None)
+    st.session_state.pop(staged_name_key, None)
     st.session_state.product_view = "chat"
     st.session_state.pop(f"agent_panel_pending_prompt_{panel_view}", None)
     st.session_state.pop(f"agent_panel_pending_time_{panel_view}", None)
@@ -4640,12 +4677,71 @@ def submit_agent_panel_prompt(
 
 
 def submit_contextual_panel_prompt(
-    prompt: str, api_key: str, *, active_view: str = ""
+    prompt: str,
+    api_key: str,
+    *,
+    active_view: str = "",
+    uploaded_image: Any | None = None,
 ) -> None:
-    """Answer in the current workbench while keeping the batch context bound."""
+    """Answer in the current workbench while keeping the batch context bound.
+
+    Image questions from the contextual composer go straight to the configured
+    Qwen vision model.  The composer clears its form after submit, so consume
+    the staged upload when the rerun no longer exposes an ``UploadedFile``.
+    """
     prompt = str(prompt or "").strip()
     if not prompt:
         return
+    staged_image_key = f"agent_panel_staged_image_bytes_{active_view}"
+    staged_mime_key = f"agent_panel_staged_image_mime_{active_view}"
+    staged_name_key = f"agent_panel_staged_image_name_{active_view}"
+    image_bytes: bytes | None = None
+    image_mime_type = "image/jpeg"
+    image_filename = "uploaded-image"
+    if uploaded_image is None and st.session_state.get(staged_image_key):
+        image_bytes = st.session_state.get(staged_image_key)
+        image_mime_type = str(st.session_state.get(staged_mime_key) or "image/jpeg")
+        image_filename = str(st.session_state.get(staged_name_key) or image_filename)
+    elif uploaded_image is not None:
+        image_filename = str(getattr(uploaded_image, "name", image_filename) or image_filename)
+        try:
+            prepared = prepare_image_for_vision(
+                uploaded_image.getvalue(),
+                filename=image_filename,
+                mime_type=getattr(uploaded_image, "type", ""),
+            )
+        except vision_client.VisionAPIError as error:
+            st.session_state.pop(staged_image_key, None)
+            st.session_state.pop(staged_mime_key, None)
+            st.session_state.pop(staged_name_key, None)
+            st.session_state.pop(f"agent_panel_pending_prompt_{active_view}", None)
+            st.session_state.pop(f"agent_panel_pending_time_{active_view}", None)
+            with st.sidebar:
+                st.error(str(error))
+            return
+        image_bytes = prepared.data
+        image_mime_type = prepared.mime_type
+    if image_bytes is not None and uploaded_image is None:
+        try:
+            prepared = prepare_image_for_vision(
+                image_bytes,
+                filename=image_filename,
+                mime_type=image_mime_type,
+            )
+        except vision_client.VisionAPIError as error:
+            st.session_state.pop(staged_image_key, None)
+            st.session_state.pop(staged_mime_key, None)
+            st.session_state.pop(staged_name_key, None)
+            st.session_state.pop(f"agent_panel_pending_prompt_{active_view}", None)
+            st.session_state.pop(f"agent_panel_pending_time_{active_view}", None)
+            with st.sidebar:
+                st.error(str(error))
+            return
+        image_bytes = prepared.data
+        image_mime_type = prepared.mime_type
+    st.session_state.pop(staged_image_key, None)
+    st.session_state.pop(staged_mime_key, None)
+    st.session_state.pop(staged_name_key, None)
     st.session_state[f"agent_panel_conversation_started_{active_view}"] = True
     context = st.session_state.get("industry_task_context") or {}
     model = st.session_state.get("industry_ui_model") or {}
@@ -4662,7 +4758,26 @@ def submit_contextual_panel_prompt(
         for item in (st.session_state.get("industry_context_messages") or [])
         if item.get("role") in {"user", "assistant"}
     ]
-    if api_key:
+    vision_payload: dict[str, Any] = {}
+    if image_bytes:
+        try:
+            vision_payload = orchestrator.run_vision_turn(
+                prompt,
+                image_bytes,
+                image_mime_type,
+            )
+            answer = str(vision_payload.get("answer") or "").strip()
+            answer = re.sub(
+                r"^图片接收状态：已接收，并已由视觉模型完成本轮分析。\s*",
+                "",
+                answer,
+            ).strip()
+            st.session_state.last_vision_context = orchestrator.build_vision_memory(
+                vision_payload
+            )
+        except Exception as error:
+            answer = f"图片已经收到，但视觉模型分析失败：{error}"
+    elif api_key:
         try:
             answer = chat_with_deepseek(
                 api_key,
@@ -4684,22 +4799,50 @@ def submit_contextual_panel_prompt(
         "record_id": record_id,
         "context_view": str(active_view or ""),
         "context_time": ui_components.beijing_time_string(),
+        "has_image": bool(image_bytes),
+        "image_mime_type": image_mime_type if image_bytes else "",
     }
     manager = get_memory_manager()
     user_id = str(st.session_state.get("memory_user_id") or "")
     session_id = str(st.session_state.get("memory_session_id") or "")
     project_id = str(st.session_state.get("memory_project_id") or "")
+    if image_bytes:
+        metadata.update(
+            {
+                "image_sha256": hashlib.sha256(image_bytes).hexdigest(),
+                "image_size": len(image_bytes),
+            }
+        )
+        if user_id and project_id:
+            try:
+                metadata["stored_image_path"] = persist_uploaded_image(
+                    manager,
+                    user_id,
+                    project_id,
+                    image_bytes,
+                    image_mime_type,
+                )
+            except (OSError, agent_memory.MemoryStorageError, agent_memory.MemoryManagerError):
+                pass
     user_message = {
         "role": "user",
         "content": prompt,
         "message_id": f"msg_{uuid4().hex}",
         **metadata,
     }
+    if image_bytes:
+        user_message["image_bytes"] = image_bytes
+        user_message["image_mime_type"] = image_mime_type
+    assistant_metadata = dict(metadata)
+    if isinstance(vision_payload.get("vision_result"), dict):
+        assistant_metadata["vision_result"] = _without_raw_model_output(
+            vision_payload["vision_result"]
+        )
     assistant_message = {
         "role": "assistant",
         "content": str(answer or "").strip(),
         "message_id": f"msg_{uuid4().hex}",
-        **metadata,
+        **assistant_metadata,
     }
     st.session_state.agent_messages.extend([user_message, assistant_message])
     if user_id and session_id and project_id:
@@ -4720,7 +4863,7 @@ def submit_contextual_panel_prompt(
                 "assistant",
                 assistant_message["content"],
                 message_id=assistant_message["message_id"],
-                metadata=metadata,
+                metadata=assistant_metadata,
             )
         except agent_memory.MemoryManagerError:
             pass
@@ -4787,6 +4930,7 @@ def main() -> None:
             agent_panel_prompt,
             api_key,
             active_view=active_view,
+            uploaded_image=agent_panel_upload,
         )
         st.rerun()
 
