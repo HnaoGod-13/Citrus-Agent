@@ -5602,6 +5602,12 @@ div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label)
     width: calc(var(--primary-rail-width) - 33px);
 }
 
+.primary-nav-list::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+    display: none;
+}
+
 .primary-nav-list::before {
     display: none;
     content: none;
@@ -5639,7 +5645,7 @@ div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label)
 }
 
 .primary-nav-item.is-active {
-    box-shadow: inset 3px 0 0 var(--text-primary);
+    box-shadow: none;
 }
 
 .primary-nav-item.is-active .primary-nav-icon {
@@ -5751,6 +5757,13 @@ div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label)
     transform: none !important;
 }
 
+/* The transparent navigation hit layer should not leave a focus frame after
+   a mouse click on top of the visible rail item. */
+[class*="st-key-product_nav_actions"] [data-testid="stButton"] > button:focus-visible {
+    outline: none !important;
+    box-shadow: none !important;
+}
+
 [class*="st-key-product_user_action"] {
     bottom: 18px;
     height: 58px;
@@ -5852,7 +5865,37 @@ section[data-testid="stAppScrollToBottomContainer"] [data-testid="stBottomBlockC
 }
 
 .block-container {
-    padding: 104px 26px 90px !important;
+    padding: 88px 26px 90px !important;
+}
+
+/* Keep page scrolling available while removing the native scrollbar chrome
+   that appears briefly when the pointer crosses a control. */
+:is(
+    html,
+    body,
+    [data-testid="stAppViewContainer"],
+    [data-testid="stMain"],
+    section[data-testid="stAppScrollToBottomContainer"],
+    [data-testid="stSidebarUserContent"],
+    [data-testid="stSidebar"] [class*="st-key-agent_panel_scroll_"]
+) {
+    scrollbar-width: none !important;
+    -ms-overflow-style: none !important;
+    scrollbar-gutter: auto !important;
+}
+
+:is(
+    html,
+    body,
+    [data-testid="stAppViewContainer"],
+    [data-testid="stMain"],
+    section[data-testid="stAppScrollToBottomContainer"],
+    [data-testid="stSidebarUserContent"],
+    [data-testid="stSidebar"] [class*="st-key-agent_panel_scroll_"]
+)::-webkit-scrollbar {
+    width: 0 !important;
+    height: 0 !important;
+    display: none !important;
 }
 
 .citrus-topbar-context {
