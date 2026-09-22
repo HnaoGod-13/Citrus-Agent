@@ -19,11 +19,9 @@ from uuid import uuid4
 
 import pandas as pd
 import streamlit as st
-from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-load_dotenv(ROOT / ".env", override=False)
 
 from agent import (
     background_tasks as agent_background,
@@ -42,7 +40,6 @@ from agent import (
 from app.ui import components as ui_components
 from app.ui import industry_pages as ui_industry_pages
 from app.ui import product_pages as ui_product_pages
-from app import auth as platform_auth
 
 
 def refresh_ui_modules() -> None:
@@ -1277,9 +1274,6 @@ def toggle_mobile_secondary_panel() -> None:
 
 
 def _authenticated_identity() -> str:
-    session_email = platform_auth.current_email()
-    if session_email:
-        return session_email
     configured = os.getenv("CITRUS_USER_ID", "").strip()
     if configured:
         return configured
@@ -1294,8 +1288,6 @@ def _authenticated_identity() -> str:
 
 def initialize_memory_identity() -> None:
     project_id = os.getenv("CITRUS_PROJECT_ID", "citrus-agent").strip() or "citrus-agent"
-    if platform_auth.current_principal():
-        project_id = str(st.session_state.get("active_organization_id") or project_id)
     session_config = {
         key: value
         for key, value in {
@@ -4747,9 +4739,6 @@ def main() -> None:
     )
     refresh_ui_modules()
     inject_style()
-    if not platform_auth.render_auth_gate():
-        return
-    platform_auth.render_account_controls()
     init_state()
     sync_active_agent_job()
     active_view = current_product_view()
