@@ -117,7 +117,7 @@ export function renderIndustryVisuals({tab, raw, request, header, tabs, button, 
     ['factory','工艺参数分布','加工工序、参数名称与实测值','','待更多记录'],
     ['clock','季节供应日历','采收日期、供应起止日期','','待更多记录'],
   ];
-  const library=`<div class="viz-library">${libraryItems.map(([icon,title,fields,target,status])=>`<article class="panel viz-library-card"><div class="viz-library-icon">${svg(icon,24)}</div><span>${esc(status)}</span><h2>${esc(title)}</h2><p>所需字段：${esc(fields)}</p>${target!==''?`<button class="btn" type="button" data-action="visual-goto" data-visual-tab="${target}">查看当前图表</button>`:'<button class="btn" type="button" disabled>数据积累后开放</button>'}</article>`).join('')}</div>`;
+  const library=`<div class="viz-library">${libraryItems.map(([icon,title,fields,target,status])=>`<article class="panel viz-library-card"><div class="viz-library-head"><div class="viz-library-icon">${svg(icon,24)}</div><div class="viz-library-copy"><h2>${esc(title)}</h2><p>所需字段：${esc(fields)}</p></div><span>${esc(status)}</span></div>${target!==''?`<button class="btn" type="button" data-action="visual-goto" data-visual-tab="${target}">查看当前图表</button>`:'<button class="btn" type="button" disabled>数据积累后开放</button>'}</article>`).join('')}</div>`;
   const bodies=[summary,detail,region,library];
   return header('VISUAL ANALYTICS','产业可视化')+`<div class="toolbar viz-toolbar">${tabs(['综合看板','产量与加工','区域供需','图表库'],tab)}<div class="actions">${button('导出当前数据','download-chart',false,'download')}</div></div>${source}${bodies[tab]||summary}`;
 }
