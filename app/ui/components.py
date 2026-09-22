@@ -2,13 +2,21 @@ from __future__ import annotations
 
 import html
 from collections.abc import Callable
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import urlencode
 
 import streamlit as st
 
 from agent.vision_client import MAX_UPLOAD_BYTES, SUPPORTED_UPLOAD_EXTENSIONS
+
+
+BEIJING_TIMEZONE = timezone(timedelta(hours=8))
+
+
+def beijing_time_string() -> str:
+    """Return the compact message time used by the Agent panel in China time."""
+    return datetime.now(BEIJING_TIMEZONE).strftime("%H:%M")
 
 
 NAV_GROUPS = (
@@ -470,7 +478,7 @@ def _queue_agent_panel_prompt(view: str, prompt: str = "") -> None:
     if queued:
         st.session_state[f"agent_panel_conversation_started_{view}"] = True
         st.session_state[f"agent_panel_pending_prompt_{view}"] = queued
-        st.session_state[f"agent_panel_pending_time_{view}"] = datetime.now().strftime("%H:%M")
+        st.session_state[f"agent_panel_pending_time_{view}"] = beijing_time_string()
 
 
 def render_agent_panel(view: str) -> tuple[str, Any | None]:
@@ -551,6 +559,9 @@ def render_agent_panel(view: str) -> tuple[str, Any | None]:
         ("当前上下文", "我会沿用当前任务上下文继续协作。", ["总结当前任务", "推荐下一步"]),
     )
     _, _, questions = context
+    # Keep the prompt shortcuts available for keyboard and state recovery
+    # paths, while the product stylesheet hides their visual cards per the
+    # compact Agent panel design.
     suggestions = {
         "intake": [
             "这批原料可以开始分析吗？",
@@ -649,14 +660,6 @@ def render_agent_panel(view: str) -> tuple[str, Any | None]:
                             f'<div class="agent-user-bubble"><p>{content}</p></div></article>'
                         )
                     else:
-                        actions = ""
-                        if index == len(visible_messages) - 1:
-                            actions = (
-                                '<div class="agent-answer-actions">'
-                                f'<span>{icon_svg("copy", 14)}复制</span>'
-                                f'<span>{icon_svg("message-circle", 14)}继续追问</span>'
-                                f'<span>{icon_svg("decision", 14)}查看相关信息</span></div>'
-                            )
                         thread_items.append(
                             '<article class="agent-panel-message assistant">'
                             f'<span class="agent-message-mark">{icon_svg("citrus", 16)}</span>'
@@ -664,7 +667,7 @@ def render_agent_panel(view: str) -> tuple[str, Any | None]:
                             f'<b>Citrus Agent</b><time>{timestamp}</time></div>'
                             '<div class="agent-answer-card"><div class="agent-answer-title">'
                             f'<span>{icon_svg("decision", 17)}</span><strong>{html.escape(answer_title)}</strong>'
-                            f'</div><p>{content}</p>{actions}</div></div></article>'
+                            f'</div><p>{content}</p></div></div></article>'
                         )
                 if thread_items:
                     st.markdown(

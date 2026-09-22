@@ -5596,6 +5596,7 @@ div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label)
 .primary-nav-list::before {
     display: none;
     content: none;
+    line-height: 18px;
 }
 
 .primary-nav-item {
@@ -6522,7 +6523,32 @@ section[data-testid="stAppScrollToBottomContainer"] [data-testid="stBottomBlockC
     background: center / 24px 24px no-repeat url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 19V5m-7 7 7-7 7 7'/%3E%3C/svg%3E");
     content: "";
     transform: translate(-50%, -50%);
+    /* The one-pixel source offset is cancelled below so the glyph's optical
+       center stays exactly on the button center. */
+    transform: translate(calc(-50% - 1px), calc(-50% - 1px));
     pointer-events: none;
+}
+
+[data-testid="stSidebar"] [class*="st-key-agent_composer_"] [data-testid="stFormSubmitButton"] button:disabled::after {
+    width: 20px;
+    height: 20px;
+    background: transparent !important;
+    border: 2px solid rgba(255, 255, 255, 0.45);
+    border-top-color: #ffffff;
+    border-radius: 50%;
+    animation: agent-composer-spin 800ms linear infinite;
+    transform: translate(-50%, -50%);
+}
+
+@keyframes agent-composer-spin {
+    from { transform: translate(-50%, -50%) rotate(0deg); }
+    to { transform: translate(-50%, -50%) rotate(360deg); }
+}
+
+/* Prompt shortcuts remain available to state recovery and keyboard flows;
+   the compact panel no longer shows their example cards. */
+[data-testid="stSidebar"] [class*="st-key-agent_panel_suggestions_"] {
+    display: none !important;
 }
 
 /* Streamlit marks the previous page tree as stale while the contextual Agent
