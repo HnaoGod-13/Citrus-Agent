@@ -6121,7 +6121,7 @@ section[data-testid="stAppScrollToBottomContainer"] [data-testid="stBottomBlockC
     padding: 18px 3px 16px 0;
     overflow-x: hidden !important;
     overflow-y: auto !important;
-    overscroll-behavior: contain;
+    overscroll-behavior: none;
     scrollbar-gutter: stable;
     scrollbar-width: thin;
 }
