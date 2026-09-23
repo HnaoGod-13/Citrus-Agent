@@ -1245,6 +1245,40 @@ def select_product_view(view: str) -> None:
     _set_query_value("view", normalized)
 
 
+def start_new_business_task() -> None:
+    """Open a fresh intake task and show the supplier/processor chooser.
+
+    The intake form is rendered inside a Streamlit component. Its browser-side
+    model intentionally survives ordinary reruns, so clearing only Python
+    session state would leave the previous side selected in the iframe. A
+    monotonic token is passed to the component to make this reset explicit.
+    """
+    preserve_sidebar_draft()
+    for key in (
+        "industry_ui_model",
+        "industry_task_context",
+        "industry_active_record_id",
+        "industry_context_messages",
+        "industry_inline_answer",
+        "intake_result",
+        "intake_last_request",
+        "report_result",
+        "report_last_request",
+        "industry_workspace_canvas",
+    ):
+        st.session_state.pop(key, None)
+    st.session_state.industry_workspace_view = "data"
+    st.session_state.industry_new_task_token = int(
+        st.session_state.get("industry_new_task_token", 0) or 0
+    ) + 1
+    st.session_state.product_view = "intake"
+    st.session_state.mobile_secondary_open = False
+    st.session_state.reset_main_scroll_position = True
+    _set_query_value("view", "intake")
+    _set_query_value("industry", "data")
+    _delete_query_value("record_id")
+
+
 def select_industry_view(view: str) -> None:
     normalized = str(view or "").strip().lower()
     normalized = {"production": "data", "supply": "market", "demand": "market", "match": "market"}.get(normalized, normalized)
@@ -1578,6 +1612,7 @@ def init_state() -> None:
     st.session_state.setdefault("industry_context_messages", [])
     st.session_state.setdefault("industry_task_context", {})
     st.session_state.setdefault("industry_active_record_id", "")
+    st.session_state.setdefault("industry_new_task_token", 0)
     st.session_state.setdefault("industry_inline_answer", "")
     st.session_state.retrieval_mode = normalize_retrieval_mode(
         st.session_state.retrieval_mode
@@ -4903,6 +4938,7 @@ def main() -> None:
             active_view,
             context_token,
             on_view_change=select_product_view,
+            on_create_task=start_new_business_task,
         )
         ui_components.render_top_actions(
             active_view,

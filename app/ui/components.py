@@ -180,6 +180,7 @@ def render_primary_navigation(
     context_token: str = "",
     *,
     on_view_change: Callable[[str], None] | None = None,
+    on_create_task: Callable[[], None] | None = None,
 ) -> None:
     """Render the product-level rail used by every page."""
     passive_link = ' tabindex="-1" aria-hidden="true"' if on_view_change else ""
@@ -238,11 +239,13 @@ def render_primary_navigation(
                 args=("intake",),
             )
         with st.container(key="product_create_action"):
+            create_callback = on_create_task or on_view_change
+            create_args = () if on_create_task else ("intake",)
             st.button(
                 "新建业务任务",
                 key="product_create_button",
-                on_click=on_view_change,
-                args=("intake",),
+                on_click=create_callback,
+                args=create_args,
             )
         with st.container(key="product_nav_actions"):
             for view, _icon, zh_label, en_label in NAV_ITEMS:

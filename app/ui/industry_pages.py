@@ -362,6 +362,7 @@ def render_industry_workspace() -> None:
             "photo": "app/static/industry/supply-reference.png",
             "intakeSchema": intake_schema(),
             "intakeScope": hashlib.sha256(repr(scope).encode()).hexdigest()[:20],
+            "newTaskToken": int(st.session_state.get("industry_new_task_token", 0) or 0),
             "intakeRecords": records,
             "intakeAnalytics": analytics,
             "intakeResult": st.session_state.get("intake_result"),

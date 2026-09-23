@@ -135,6 +135,12 @@ export default function(component) {
   const {parentElement,data,setStateValue}=component;
   const root=parentElement.querySelector('.iw');
   if(root._intakeScope!==data.intakeScope){delete root._model;delete root._view;delete root._intakeAck;root._intakeScope=data.intakeScope;}
+  const newTaskToken=Number(data.newTaskToken||0);
+  if(root._newTaskToken!==newTaskToken){
+    delete root._model;delete root._view;delete root._intakeAck;
+    delete root._tab;delete root._selected;delete root._listMode;
+    root._newTaskToken=newTaskToken;
+  }
   const model=root._model||structuredClone(data.model||{});
   model.request={...defaultRequest,...model.request};
   model.connections=model.connections||[];
