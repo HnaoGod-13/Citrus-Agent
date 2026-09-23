@@ -37,3 +37,21 @@ test('remounting cannot replay an acknowledged save over later field edits',()=>
   assert.equal(controller.refreshed,false);
   assert.equal(model.collection.documents.supplier.fields['base.variety'],'继续编辑后的品种');
 });
+
+test('returning to the intake entry clears the active side so either side can be selected again',()=>{
+  const entrySchema={sides:{
+    supplier:{title:'供应端信息收集',subtitle:'种植与采收资料',steps:[]},
+    processor:{title:'生产端信息收集',subtitle:'加工与追溯资料',steps:[]},
+  }};
+  const model={collection:{side:'processor',panel:'form',steps:{supplier:0,processor:2},documents:{processor:intakeNewDocument('processor')},dirty:{processor:false}}};
+  const props={root:{},model,data:{intakeSchema:entrySchema},setStateValue(){},render(){},flash(){},download(){},persist(){},changeView(){}};
+  const controller=createIntakeController(props);
+
+  controller.click({dataset:{action:'ic-home'}});
+
+  assert.equal(model.collection.side,'');
+  assert.equal(model.collection.panel,'form');
+  const markup=controller.render();
+  assert.match(markup,/data-action="ic-side-supplier"/);
+  assert.match(markup,/data-action="ic-side-processor"/);
+});
