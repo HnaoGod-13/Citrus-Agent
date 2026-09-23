@@ -2056,6 +2056,12 @@ _EXAMPLE_LIBRARY: tuple[dict[str, Any], ...] = (
         "title": "赣南脐橙 · NFC 果汁示例",
         "meta": "B-0902-008 · 35 吨 · 糖度 12.3 °Brix",
         "description": "完整检测记录，适合演示果汁路线评估与从榨汁到灌装的工艺输出。",
+        "origin": "江西 · 赣州",
+        "quantity": "35 吨",
+        "quality_label": "糖度",
+        "quality_value": "12.3 °Brix",
+        "inspection": "检测资料已完成",
+        "route_label": "果肉 · NFC 果汁",
         "document": {
             "side": "processor",
             "fields": {
@@ -2076,6 +2082,12 @@ _EXAMPLE_LIBRARY: tuple[dict[str, Any], ...] = (
         "title": "新会茶枝柑 · 果皮综合利用示例",
         "meta": "B-0901-015 · 3 吨 · 果皮水分 18%",
         "description": "含果皮水分和质量记录，适合演示陈皮、精油与果胶候选路线比较。",
+        "origin": "广东 · 江门新会",
+        "quantity": "3 吨",
+        "quality_label": "果皮水分",
+        "quality_value": "18%",
+        "inspection": "待复核 · 可运行",
+        "route_label": "果皮 · 综合利用",
         "document": {
             "side": "processor",
             "fields": {
@@ -2120,37 +2132,38 @@ def _example_result(example: dict[str, Any]) -> dict[str, Any]:
 
 
 def _render_example_library(page: str) -> None:
-    """Show runnable sample cards on both Agent output pages.
-
-    The cards intentionally live outside the empty-state component.  A
-    Streamlit ``st.columns`` call inserts its own element tree, so opening an
-    HTML wrapper before the columns and closing it afterwards can be discarded
-    by Streamlit's Markdown renderer.  Rendering the heading and each card as
-    complete fragments keeps the library visible even when there is no active
-    intake result.
-    """
+    """Show compact, runnable batch cards in the same visual language as supply matching."""
     st.markdown(
-        '<section class="agent-example-library"><div class="agent-library-heading">'
-        '<div><span class="product-page-eyebrow">SAMPLE LIBRARY</span>'
-        '<h3>示例资料库</h3><p>先用一份已完成资料体验 Agent 的清洗、检索与输出过程。</p></div>'
-        '<span class="agent-library-badge">2 个示例批次 · 点击即可生成</span></div></section>',
+        '<div class="agent-example-toolbar"><div>'
+        '<span class="product-page-eyebrow">01 · BATCH LIBRARY</span>'
+        '<h3>示例批次</h3></div>'
+        '<span class="agent-example-count">2 个可运行示例</span></div>',
         unsafe_allow_html=True,
     )
-    columns = st.columns(len(_EXAMPLE_LIBRARY))
-    for column, example in zip(columns, _EXAMPLE_LIBRARY):
+    columns = st.columns(len(_EXAMPLE_LIBRARY), gap="medium")
+    for index, (column, example) in enumerate(zip(columns, _EXAMPLE_LIBRARY), 1):
         with column:
-            st.markdown(
-                f'<article class="agent-example-card"><div class="agent-example-icon">◎</div>'
-                f'<h4>{html.escape(example["title"])}</h4><p class="agent-example-meta">{html.escape(example["meta"])}</p>'
-                f'<p>{html.escape(example["description"])}</p></article>',
-                unsafe_allow_html=True,
-            )
-            action = "生成路线决策" if page == "decision" else "生成工艺方案"
-            if st.button(action, key=f"{page}_{example['id']}", type="primary", use_container_width=True):
-                result = _example_result(example)
-                st.session_state[f"{page}_generated"] = True
-                st.session_state[f"{page}_generated_result"] = result
-                st.rerun()
+            with st.container(border=True, key=f"agent_example_{page}_{example['id']}"):
+                st.markdown(
+                    f'<div class="agent-example-card">'
+                    f'<div class="agent-example-topline"><span class="agent-example-index">{index:02d}</span>'
+                    f'<span class="agent-example-status"><i></i>示例资料</span></div>'
+                    f'<h3>{html.escape(example["title"].replace("示例", ""))}</h3>'
+                    f'<p class="agent-example-origin">{html.escape(example["origin"])} <b>·</b> {html.escape(example["meta"].split(" · ")[0])}</p>'
+                    f'<div class="agent-example-metrics"><div><span>批次数量</span><strong>{html.escape(example["quantity"])}</strong></div>'
+                    f'<div><span>{html.escape(example["quality_label"])}</span><strong>{html.escape(example["quality_value"])}</strong></div>'
+                    f'<div><span>资料状态</span><strong>{html.escape(example["inspection"])}</strong></div></div>'
+                    f'<p class="agent-example-description">{html.escape(example["description"])}</p>'
+                    f'<span class="agent-example-route">推荐方向 · {html.escape(example["route_label"])}</span>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+                action = "生成路线决策" if page == "decision" else "生成工艺方案"
+                if st.button(action, key=f"{page}_{example['id']}", type="primary", width="stretch"):
+                    result = _example_result(example)
+                    st.session_state[f"{page}_generated"] = True
+                    st.session_state[f"{page}_generated_result"] = result
+                    st.rerun()
 
 
 def _render_agent_generation(page: str, result: dict[str, Any], *, title: str) -> None:
@@ -2165,14 +2178,14 @@ def _render_agent_generation(page: str, result: dict[str, Any], *, title: str) -
         status_text = "资料已完成填写，可开始生成" if not review_count else f"资料已填写，仍有 {review_count} 项待复核"
         tone = "success" if not review_count else "warning"
         st.markdown(
-            f'<div class="agent-ready-banner {tone}"><span class="agent-ready-dot"></span>'
-            f'<div><strong>{status_text}</strong><small>数据质量分 {score if score is not None else "待评估"} · 已绑定当前批次</small></div></div>',
+            f'<div class="agent-ready-line {tone}"><span class="agent-ready-dot"></span>'
+            f'<strong>{status_text}</strong><small>数据质量分 {score if score is not None else "待评估"} · 已绑定当前批次</small></div>',
             unsafe_allow_html=True,
         )
     else:
         st.markdown(
-            '<div class="agent-ready-banner warning"><span class="agent-ready-dot"></span>'
-            '<div><strong>尚未完成资料填写</strong><small>请先在资料确认页保存一份批次资料，或使用下方示例资料库。</small></div></div>',
+            '<div class="agent-ready-line warning"><span class="agent-ready-dot"></span>'
+            '<strong>等待批次资料</strong><small>可先点击上方任一示例运行 Agent。</small></div>',
             unsafe_allow_html=True,
         )
     if not ready:
@@ -2193,6 +2206,15 @@ def _render_agent_generation(page: str, result: dict[str, Any], *, title: str) -
             st.write("✓ 输出整理：生成可回查的业务建议")
             thinking.update(label="Agent 已完成分析", state="complete", expanded=False)
         st.caption("本次输出已绑定当前批次；重新填写并保存资料后可再次生成。")
+
+
+def _render_agent_empty_hint(title: str, description: str) -> None:
+    """Keep the no-result state quiet after the runnable cards."""
+    st.markdown(
+        f'<div class="agent-empty-hint"><span class="agent-empty-mark">—</span>'
+        f'<div><strong>{html.escape(title)}</strong><small>{html.escape(description)}</small></div></div>',
+        unsafe_allow_html=True,
+    )
 
 
 def _select_identity_role(role: str) -> None:
@@ -2354,7 +2376,7 @@ def render_decision_page() -> None:
     _render_agent_generation("decision", result, title="生成路线决策")
     scores = list(result.get("scores") or [])
     if not scores:
-        ui_components.render_empty_state("暂无可确认路线", "完成一次带批次信息的分析后，候选路线会按真实评分显示。", icon="decision")
+        _render_agent_empty_hint("暂无已生成路线", "提交真实批次或点击上方示例后，路线会在这里展开。")
         return
     if not st.session_state.get("decision_generated"):
         return
@@ -2389,7 +2411,7 @@ def render_process_page() -> None:
     plan = result.get("processing_plan") or {}
     stages = list(plan.get("stages") or []) if isinstance(plan, dict) else []
     if not stages:
-        ui_components.render_empty_state("尚未生成工艺方案", "确认路线后，系统会展示工序、参数来源、设备、状态和风险边界。", icon="factory")
+        _render_agent_empty_hint("暂无已生成工艺方案", "先选择一个示例或完成资料确认，工艺阶段会在这里展开。")
         return
     if not st.session_state.get("process_generated"):
         return
