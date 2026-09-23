@@ -4717,6 +4717,10 @@ div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label)
     .agent-live-spinner {
         animation: citrus-spin 800ms linear infinite !important;
     }
+
+    .agent-progress-spinner {
+        animation: agent-panel-spin 800ms linear infinite !important;
+    }
 }
 
 /* Industry workspace, matched to the existing product shell ---------------- */
@@ -6356,7 +6360,9 @@ section[data-testid="stAppScrollToBottomContainer"] [data-testid="stBottomBlockC
     border: 4px solid #e7f1ec;
     border-top-color: #269a60;
     border-radius: 50%;
-    animation: agent-panel-spin 1s linear infinite;
+    animation: agent-panel-spin 800ms linear infinite;
+    transform-origin: center;
+    will-change: transform;
 }
 
 .agent-thinking-bubble .agent-progress-spinner {
