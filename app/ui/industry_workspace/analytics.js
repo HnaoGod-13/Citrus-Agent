@@ -97,6 +97,42 @@ function originChart(origins, esc) {
   return `<div class="viz-origin-bars">${origins.map((p,i)=>`<article class="viz-origin-row"><header><span>${String(i+1).padStart(2,'0')}</span><b>${esc(p.label)}</b><strong>${compact(p.value)}<small>批</small></strong></header><i aria-hidden="true"><em style="width:${Math.max(4,p.value/max*100)}%"></em></i></article>`).join('')}</div>`;
 }
 
+function sparkline(values, tone='blue', label='指标趋势') {
+  const points=values.filter(value=>Number.isFinite(Number(value))).map(Number);
+  if(points.length<2)return `<span class="viz-sparkline is-empty" aria-label="${label}暂无足够数据"></span>`;
+  const max=Math.max(...points), min=Math.min(...points), span=Math.max(max-min,1);
+  const coords=points.map((value,index)=>{
+    const x=(index/(points.length-1))*100;
+    const y=8+((max-value)/span)*34;
+    return [x,y];
+  });
+  const line=coords.map(([x,y],index)=>`${index?'L':'M'} ${x.toFixed(1)} ${y.toFixed(1)}`).join(' ');
+  const area=`${line} L 100 50 L 0 50 Z`;
+  return `<svg class="viz-sparkline ${tone}" viewBox="0 0 100 52" preserveAspectRatio="none" role="img" aria-label="${label}"><path class="viz-spark-area" d="${area}"/><path class="viz-spark-line" d="${line}"/><circle cx="${coords.at(-1)[0].toFixed(1)}" cy="${coords.at(-1)[1].toFixed(1)}" r="2.5"/></svg>`;
+}
+
+function regionDistribution(origins, esc) {
+  if(!origins.length)return '<div class="viz-empty"><b>暂无区域分布数据</b><span>提交供应端采集记录后，系统会按产地生成区域分布。</span></div>';
+  const selected=origins.slice(0,6), total=selected.reduce((sum,item)=>sum+item.value,0), max=Math.max(1,...selected.map(item=>item.value));
+  const positions=[[20,30],[40,19],[61,31],[28,62],[52,63],[76,56]];
+  const links=selected.slice(1).map((item,index)=>{
+    const [x1,y1]=positions[0], [x2,y2]=positions[index+1]||positions[1];
+    return `<path d="M ${x1} ${y1} Q ${(x1+x2)/2} ${Math.min(y1,y2)-10} ${x2} ${y2}"/>`;
+  }).join('');
+  const nodes=selected.map((item,index)=>{
+    const [x,y]=positions[index]||positions[positions.length-1], percent=Math.round(item.value/Math.max(total,1)*100);
+    return `<g class="viz-region-node" transform="translate(${x} ${y})"><circle r="${4+Math.min(4,item.value/max*4)}"/><circle class="pulse" r="${10+Math.min(4,item.value/max*4)}"/><text y="-11" text-anchor="middle">${esc(item.label)}</text><text class="value" y="17" text-anchor="middle">${compact(item.value)} 批 · ${percent}%</text></g>`;
+  }).join('');
+  return `<div class="viz-region-board"><div class="viz-region-map"><svg viewBox="0 0 100 82" role="img" aria-label="供应产地区域分布示意图"><defs><linearGradient id="viz-region-fill" x1="0" x2="1" y1="0" y2="1"><stop offset="0" stop-color="#e8f5ff"/><stop offset="1" stop-color="#d9f4e9"/></linearGradient></defs><path class="viz-region-surface" d="M10 27C18 10 37 7 49 15c7-9 24-6 34 8 8 11 5 29-7 39-10 9-25 13-38 10C19 69 4 56 7 42c1-5 1-10 3-15Z"/><path class="viz-region-grid" d="M8 42h84M18 20l55 50M40 12l10 67M74 17 28 68"/>${links}<g>${nodes}</g></svg><div class="viz-region-caption"><span><i></i>记录较多区域</span><small>按供应端产地字段聚合</small></div></div><div class="viz-region-stats">${selected.slice(0,4).map((item,index)=>`<div><span><i class="region-tone-${index%4}"></i>${esc(item.label)}</span><strong>${compact(item.value)}<small>批</small></strong></div>`).join('')}</div></div>`;
+}
+
+function recordMixChart(d, esc) {
+  const supplier=Math.max(0,d.supplierCount), processor=Math.max(0,d.processorCount), total=supplier+processor;
+  if(!total)return '<div class="viz-empty compact"><b>暂无记录构成</b></div>';
+  const supplierDeg=supplier/total*360;
+  return `<div class="viz-mix"><div class="viz-mix-donut" style="--supplier:${supplierDeg}deg" role="img" aria-label="供应端占比${Math.round(supplier/total*100)}%"><strong>${compact(total)}</strong><span>条记录</span></div><div class="viz-mix-list"><div><span><i class="supplier"></i>供应端</span><strong>${compact(supplier)}<small> · ${Math.round(supplier/total*100)}%</small></strong></div><div><span><i class="processor"></i>生产端</span><strong>${compact(processor)}<small> · ${Math.round(processor/total*100)}%</small></strong></div><p>已提交 ${compact(d.submittedCount)} 条 · 草稿 ${compact(d.draftCount)} 条</p></div></div>`;
+}
+
 function routeChart(origins, destination, esc) {
   if(!origins.length)return '<div class="viz-empty"><b>暂无区域流向</b></div>';
   const selected=origins.slice(0,4), max=Math.max(1,...selected.map(p=>p.value));
@@ -112,13 +148,16 @@ export function renderIndustryVisuals({tab, raw, request, header, tabs, button, 
   const passRate=qualityTotal?Math.round(d.quality.qualified/qualityTotal*100):null;
   const source=`<section class="viz-source" aria-label="数据口径"><div class="viz-source-main"><span class="viz-source-icon">${svg('database',18)}</span><div><strong>数据状态 · ${esc(statusLabel)}</strong><span>数据来源 · ${esc(sourceLabel)}</span></div></div><dl><div><dt>采集记录</dt><dd>${compact(d.recordCount)} 份</dd></div><div><dt>数据更新时间</dt><dd>${esc(d.updatedAt||'暂无')}</dd></div></dl></section>`;
   const legend='<div class="viz-legend"><span><i class="supply"></i>供应端采收量</span><span><i class="output"></i>生产端成品产量</span><small>单位：吨</small></div>';
-  const metric=(icon,label,value,unit,detail,tone)=>`<article class="viz-kpi ${tone||''}"><span class="viz-kpi-icon">${svg(icon,19)}</span><div><span class="viz-kpi-label">${label}</span><b>${value}${unit?`<em>${unit}</em>`:''}</b><small>${detail||'—'}</small></div></article>`;
-  const metrics=`<section class="viz-kpis" aria-label="核心指标">${metric('database','采集记录',compact(d.recordCount),'份',`供应 ${compact(d.supplierCount)} · 生产 ${compact(d.processorCount)}`,'blue')}${metric('conveyor','供应端采收量',compact(d.supplyTons),'吨',`累计 ${compact(d.supplyTons)} 吨`,'green')}${metric('factory','投入加工量',compact(d.inputTons),'吨',`已记录 ${compact(d.processorCount)} 条生产记录`,'orange')}${metric('box','成品产量',compact(d.outputTons),'吨',`产出率 ${d.inputTons?Math.round(d.outputTons/d.inputTons*100)+'%':'—'}`,'violet')}${metric('juice','平均糖度',d.averageBrix===null?'—':compact(d.averageBrix),'°Brix','来自供应端质量档案','gold')}</section>`;
+  const metric=(icon,label,value,unit,detail,tone,trend)=>`<article class="viz-kpi ${tone||''}"><div class="viz-kpi-top"><span class="viz-kpi-icon">${svg(icon,19)}</span><span class="viz-kpi-label">${label}</span></div><b>${value}${unit?`<em>${unit}</em>`:''}</b><small>${detail||'—'}</small>${sparkline(trend||[] ,tone||'blue',label+'趋势')}</article>`;
+  const supplySeries=d.timeline.map(point=>point.supply), outputSeries=d.timeline.map(point=>point.output);
+  const metrics=`<section class="viz-kpis" aria-label="核心指标">${metric('database','采集记录',compact(d.recordCount),'份',`供应 ${compact(d.supplierCount)} · 生产 ${compact(d.processorCount)}`,'blue',d.timeline.map(point=>point.supply+point.output))}${metric('conveyor','供应端采收量',compact(d.supplyTons),'吨',`累计 ${compact(d.supplyTons)} 吨`,'green',supplySeries)}${metric('factory','投入加工量',compact(d.inputTons),'吨',`已记录 ${compact(d.processorCount)} 条生产记录`,'orange',outputSeries)}${metric('box','成品产量',compact(d.outputTons),'吨',`产出率 ${d.inputTons?Math.round(d.outputTons/d.inputTons*100)+'%':'—'}`,'violet',outputSeries)}${metric('juice','平均糖度',d.averageBrix===null?'—':compact(d.averageBrix),'°Brix','来自供应端质量档案','gold',[])}</section>`;
   const volume=`<section class="panel viz-panel viz-wide viz-volume-panel"><div class="viz-panel-head"><div><span>OPERATING TREND</span><h2>供应与加工量趋势</h2><p>按采集记录中的日期归集，保留原始单位换算为吨。</p></div>${legend}</div>${volumeChart(d.timeline,esc)}</section>`;
   const quality=`<section class="panel viz-panel viz-quality-panel"><div class="viz-panel-head"><div><span>QUALITY STATUS</span><h2>质量结论</h2><p>仅统计已录入的检测或放行结论。</p></div><span class="viz-panel-badge">${passRate===null?'暂无':`合格 ${passRate}%`}</span></div>${qualityChart(d.quality)}</section>`;
   const origins=`<section class="panel viz-panel viz-origin-panel"><div class="viz-panel-head"><div><span>SUPPLY ORIGIN</span><h2>供应批次产地排行</h2><p>按供应端采集记录计数。</p></div><span class="viz-panel-badge">Top ${Math.min(5,d.origins.length)}</span></div>${originChart(d.origins.slice(0,5),esc)}</section>`;
   const scope=`<section class="panel viz-panel viz-scope-panel"><div class="viz-panel-head"><div><span>DATA COVERAGE</span><h2>数据覆盖</h2><p>当前账号授权范围内的记录构成。</p></div></div><div class="viz-scope-grid"><div><span>供应端</span><strong>${compact(d.supplierCount)}</strong><small>条记录</small></div><div><span>生产端</span><strong>${compact(d.processorCount)}</strong><small>条记录</small></div><div><span>已提交</span><strong>${compact(d.submittedCount)}</strong><small>条记录</small></div><div><span>草稿</span><strong>${compact(d.draftCount)}</strong><small>条记录</small></div></div><div class="viz-scope-total"><span>授权记录总量</span><strong>${compact(d.recordCount)} <small>份</small></strong></div></section>`;
-  const summary=`<section class="viz-overview"><div class="viz-overview-copy"><span class="viz-overline">CITRUS AI · VISUAL INTELLIGENCE</span><h2>产业数据看板</h2><p>把当前账号的采集、加工与质量记录，整理成可读的经营视图。</p></div><span class="viz-overview-status ${preview?'is-preview':''}"><i></i>${esc(statusLabel)}</span></section>${source}${metrics}<div class="viz-dashboard">${volume}${quality}${origins}${scope}</div>`;
+  const recordMix=`<section class="panel viz-panel viz-mix-panel"><div class="viz-panel-head"><div><span>RECORD MIX</span><h2>供应与生产构成</h2><p>按当前账号记录类型统计。</p></div></div>${recordMixChart(d,esc)}</section>`;
+  const regionPanel=`<section class="panel viz-panel viz-region-panel"><div class="viz-panel-head"><div><span>REGIONAL SUPPLY MAP</span><h2>供应区域分布</h2><p>按供应端采集记录中的产地字段聚合，节点大小代表批次量。</p></div><span class="viz-panel-badge">${d.origins.length?`${d.origins.length} 个区域`:'暂无区域'}</span></div>${regionDistribution(d.origins,esc)}</section>`;
+  const summary=`<section class="viz-overview"><div class="viz-overview-copy"><span class="viz-overline">CITRUS AI · VISUAL INTELLIGENCE</span><h2>产业可视化</h2><p>用真实采集记录查看供应、加工、质量和区域分布。</p></div><div class="viz-command-meta"><span class="viz-overview-status ${preview?'is-preview':''}"><i></i>${esc(statusLabel)}</span><span class="viz-updated"><small>数据更新时间</small><strong>${esc(d.updatedAt||'暂无')}</strong></span></div></section>${source}${metrics}<div class="viz-dashboard viz-dashboard-home"><div class="viz-top-grid">${regionPanel}${origins}</div><div class="viz-middle-grid">${volume}${quality}</div><div class="viz-bottom-grid">${recordMix}${scope}</div></div>`;
   const detail=`<div class="viz-detail-layout">${volume}<section class="panel viz-panel"><div class="viz-panel-head"><div><span>02 / DATA</span><h2>月度数据明细</h2></div></div><div class="table-wrap"><table><thead><tr><th>月份</th><th>供应量（吨）</th><th>成品量（吨）</th></tr></thead><tbody>${d.timeline.map(p=>`<tr><td>${esc(p.label)}</td><td>${compact(p.supply)}</td><td>${compact(p.output)}</td></tr>`).join('')||'<tr><td colspan="3">暂无数据</td></tr>'}</tbody></table></div></section></div>`;
   const region=`<div class="viz-region-layout"><section class="panel viz-panel"><div class="viz-panel-head"><div><span>01 / FLOW</span><h2>区域供需位置关系</h2></div></div>${routeChart(d.origins,request?.destination,esc)}</section>${origins}</div>`;
   const libraryItems=[
