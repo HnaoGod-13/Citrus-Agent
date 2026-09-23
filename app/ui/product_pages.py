@@ -25,8 +25,11 @@ import streamlit as st
 
 from agent import memory as agent_memory
 from app import knowledge_catalog as catalog_index
+from app.intake_pipeline import run_intake_pipeline
 from app.ui import components as ui_components
 from app.ui import industry_pages as ui_industry_pages
+from app.admin_console import render_platform_admin
+from app.auth import can_access_admin
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -1700,6 +1703,9 @@ def render_settings_page() -> None:
     ]
     _render_table(product_rows, "产品状态暂不可用。", height=176, variant="settings")
 
+    if can_access_admin():
+        render_platform_admin()
+
     st.subheader("模型")
     model_rows = [
         {
@@ -1969,8 +1975,224 @@ def _go_view(view: str) -> None:
 
 
 def _current_result() -> dict[str, Any]:
+    """Return the active Agent result, including the saved intake pipeline.
+
+    The intake workspace runs its deterministic cleaning/ranking pipeline and
+    stores the result in ``industry_ui_model``.  Product pages historically
+    only looked at ``last_result`` (the chat workflow), which made a completed
+    intake look empty.  Prefer the active intake batch, then fall back to the
+    chat workflow when no intake analysis is available.
+    """
     value = st.session_state.get("last_result")
-    return value if isinstance(value, dict) else {}
+    model = st.session_state.get("industry_ui_model")
+    analysis = model.get("analysis") if isinstance(model, dict) else None
+    if not isinstance(analysis, dict) or not any(
+        analysis.get(key) for key in ("routes", "scores", "processing_plan", "batch")
+    ):
+        intake_result = st.session_state.get("intake_result")
+        analysis = intake_result.get("analysis") if isinstance(intake_result, dict) else None
+    if not isinstance(analysis, dict) or not any(
+        analysis.get(key) for key in ("routes", "scores", "processing_plan", "batch")
+    ):
+        return value if isinstance(value, dict) else {}
+
+    cleaned = analysis.get("cleaning") or {}
+    facts = cleaned.get("normalized") or analysis.get("batch_summary") or analysis.get("batch") or {}
+    routes = list(analysis.get("routes") or analysis.get("scores") or [])
+    scores = [
+        {
+            "direction": item.get("label") or item.get("direction") or item.get("route") or "未命名路线",
+            "match_level": item.get("tier") or ("首选" if index == 0 else "备选"),
+            "evidence_support": item.get("evidence_support") or ("规则与资料库参考" if item.get("reasons") else "待补证据"),
+            "data_confidence": item.get("data_confidence") or f"{item.get('score', '—')}/100",
+            "score": item.get("score"),
+            "reasons": item.get("reasons") or [],
+            "process": item.get("process") or [],
+        }
+        for index, item in enumerate(routes)
+        if isinstance(item, dict)
+    ]
+    selected = analysis.get("recommended_route") or (routes[0] if routes else {})
+    selected_label = selected.get("label") or selected.get("direction") or selected.get("route") or "待补充"
+    raw_plan = analysis.get("processing_plan") or {}
+    process_steps = list(raw_plan.get("stages") or selected.get("process") or [])
+    plan = dict(raw_plan) if isinstance(raw_plan, dict) else {}
+    plan.update({
+        "route": plan.get("route") or selected_label,
+        "product_form": plan.get("product_form") or selected_label,
+        "status": plan.get("status") or "待补资料/小试复核",
+        "stages": [
+            {"name": str(step), "steps": [str(step)], "operation": "根据企业 SOP 与小试结果确认", "control": "待复核"}
+            if not isinstance(step, dict)
+            else step
+            for step in process_steps
+        ],
+        "basis": plan.get("basis") or "批次资料清洗结果、路线规则与示例资料库参考",
+        "missing_data": plan.get("missing_data") or ", ".join(str(item) for item in cleaned.get("missing") or []) or "无",
+    })
+    quality_risks = analysis.get("quality_risks")
+    if not quality_risks and cleaned.get("missing"):
+        quality_risks = [
+            f"待补字段：{', '.join(str(item) for item in cleaned.get('missing') or [])}"
+        ]
+    enrichment = analysis.get("report_enrichment") if isinstance(analysis.get("report_enrichment"), dict) else {}
+    evidence = analysis.get("evidence") or enrichment.get("evidence") or []
+    return {
+        "batch": facts,
+        "scores": scores,
+        "processing_plan": plan,
+        "recommended_route": selected,
+        "quality_risks": quality_risks or [],
+        "cleaning": cleaned,
+        "evidence": evidence,
+        "research_status": enrichment.get("research_status") or "待检索",
+        "source": "intake_pipeline",
+    }
+
+
+_EXAMPLE_LIBRARY: tuple[dict[str, Any], ...] = (
+    {
+        "id": "example_nfc",
+        "title": "赣南脐橙 · NFC 果汁示例",
+        "meta": "B-0902-008 · 35 吨 · 糖度 12.3 °Brix",
+        "description": "完整检测记录，适合演示果汁路线评估与从榨汁到灌装的工艺输出。",
+        "document": {
+            "side": "processor",
+            "fields": {
+                "base.origin": "江西赣州",
+                "base.variety": "脐橙",
+                "product.batch": "B-0902-008",
+                "harvest.quantity": "35",
+                "harvest.unit": "吨",
+                "quality.brix": "12.3",
+                "quality.acidity": "0.68",
+                "product.name": "NFC 柑橘汁",
+                "quality.testStatus": "农残、重金属、微生物检测通过",
+            },
+        },
+    },
+    {
+        "id": "example_peel",
+        "title": "新会茶枝柑 · 果皮综合利用示例",
+        "meta": "B-0901-015 · 3 吨 · 果皮水分 18%",
+        "description": "含果皮水分和质量记录，适合演示陈皮、精油与果胶候选路线比较。",
+        "document": {
+            "side": "processor",
+            "fields": {
+                "base.origin": "广东江门新会",
+                "base.variety": "茶枝柑",
+                "product.batch": "B-0901-015",
+                "harvest.quantity": "3",
+                "harvest.unit": "吨",
+                "quality.brix": "10.5",
+                "quality.acidity": "0.72",
+                "quality.moisture": "18",
+                "product.name": "果皮综合利用",
+                "quality.testStatus": "农残、重金属、微生物检测通过",
+            },
+        },
+    },
+)
+
+
+def _example_result(example: dict[str, Any]) -> dict[str, Any]:
+    analysis = run_intake_pipeline(example["document"], record_id=example["id"], revision=1)
+    model = st.session_state.get("industry_ui_model")
+    model = dict(model) if isinstance(model, dict) else {}
+    model.update(
+        analysis=analysis,
+        taskContext=analysis.get("task_context") or {},
+        activeIntakeReport=example["document"],
+    )
+    st.session_state.industry_ui_model = model
+    st.session_state.industry_task_context = dict(analysis.get("task_context") or {})
+    # A sample is a deliberate replacement for the current chat result so the
+    # page immediately renders the selected batch rather than an older answer.
+    st.session_state.last_result = {}
+    for key in (
+        "decision_generated",
+        "decision_generated_result",
+        "process_generated",
+        "process_generated_result",
+    ):
+        st.session_state.pop(key, None)
+    return _current_result()
+
+
+def _render_example_library(page: str) -> None:
+    """Show runnable sample cards on both Agent output pages.
+
+    The cards intentionally live outside the empty-state component.  A
+    Streamlit ``st.columns`` call inserts its own element tree, so opening an
+    HTML wrapper before the columns and closing it afterwards can be discarded
+    by Streamlit's Markdown renderer.  Rendering the heading and each card as
+    complete fragments keeps the library visible even when there is no active
+    intake result.
+    """
+    st.markdown(
+        '<section class="agent-example-library"><div class="agent-library-heading">'
+        '<div><span class="product-page-eyebrow">SAMPLE LIBRARY</span>'
+        '<h3>示例资料库</h3><p>先用一份已完成资料体验 Agent 的清洗、检索与输出过程。</p></div>'
+        '<span class="agent-library-badge">2 个示例批次 · 点击即可生成</span></div></section>',
+        unsafe_allow_html=True,
+    )
+    columns = st.columns(len(_EXAMPLE_LIBRARY))
+    for column, example in zip(columns, _EXAMPLE_LIBRARY):
+        with column:
+            st.markdown(
+                f'<article class="agent-example-card"><div class="agent-example-icon">◎</div>'
+                f'<h4>{html.escape(example["title"])}</h4><p class="agent-example-meta">{html.escape(example["meta"])}</p>'
+                f'<p>{html.escape(example["description"])}</p></article>',
+                unsafe_allow_html=True,
+            )
+            action = "生成路线决策" if page == "decision" else "生成工艺方案"
+            if st.button(action, key=f"{page}_{example['id']}", type="primary", use_container_width=True):
+                result = _example_result(example)
+                st.session_state[f"{page}_generated"] = True
+                st.session_state[f"{page}_generated_result"] = result
+                st.rerun()
+
+
+def _render_agent_generation(page: str, result: dict[str, Any], *, title: str) -> None:
+    """Render a lightweight Agent trace and the action that starts generation."""
+    cleaning = result.get("cleaning") if isinstance(result, dict) else {}
+    score = cleaning.get("weighted_score") if isinstance(cleaning, dict) else None
+    ready = bool(result.get("scores"))
+    missing = list(cleaning.get("missing") or []) if isinstance(cleaning, dict) else []
+    invalid = list(cleaning.get("invalid") or []) if isinstance(cleaning, dict) else []
+    if ready:
+        review_count = len(missing) + len(invalid)
+        status_text = "资料已完成填写，可开始生成" if not review_count else f"资料已填写，仍有 {review_count} 项待复核"
+        tone = "success" if not review_count else "warning"
+        st.markdown(
+            f'<div class="agent-ready-banner {tone}"><span class="agent-ready-dot"></span>'
+            f'<div><strong>{status_text}</strong><small>数据质量分 {score if score is not None else "待评估"} · 已绑定当前批次</small></div></div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            '<div class="agent-ready-banner warning"><span class="agent-ready-dot"></span>'
+            '<div><strong>尚未完成资料填写</strong><small>请先在资料确认页保存一份批次资料，或使用下方示例资料库。</small></div></div>',
+            unsafe_allow_html=True,
+        )
+    if not ready:
+        return
+    generated = bool(st.session_state.get(f"{page}_generated"))
+    if not generated and st.button(title, type="primary", key=f"{page}_generate", use_container_width=True):
+        st.session_state[f"{page}_generated"] = True
+        generated = True
+    if generated:
+        # Keep the trace in a running status while the page assembles the
+        # output.  Streamlit renders the spinner immediately, then the final
+        # state below makes the completed work auditable after the rerun.
+        with st.status("Agent 正在思考…", expanded=True) as thinking:
+            st.write("✓ 数据清洗：统一批次、数量、糖度与检测字段")
+            research_status = str(result.get("research_status") or "匹配本地知识库与示例资料")
+            st.write(f"✓ 资料检索：{research_status}")
+            st.write("✓ 路线评估：比较候选路线、证据支持和质量风险")
+            st.write("✓ 输出整理：生成可回查的业务建议")
+            thinking.update(label="Agent 已完成分析", state="complete", expanded=False)
+        st.caption("本次输出已绑定当前批次；重新填写并保存资料后可再次生成。")
 
 
 def _select_identity_role(role: str) -> None:
@@ -2123,19 +2345,18 @@ def render_evidence_page() -> None:
 
 
 def render_decision_page() -> None:
-    ui_components.render_page_header(
-        "TASK · DECISION",
-        "路线决策",
-        "并列比较候选路线，确认前可补充约束并重新评估。",
-    )
+    ui_components.render_page_header("TASK · DECISION", "路线决策", "并列比较候选路线，确认前可补充约束并重新评估。")
     ui_components.render_process_stepper("decision")
-    scores = list(_current_result().get("scores") or [])
+    # Keep the runnable examples in the first viewport so the page is useful
+    # even before a real batch has been saved.
+    _render_example_library("decision")
+    result = _current_result()
+    _render_agent_generation("decision", result, title="生成路线决策")
+    scores = list(result.get("scores") or [])
     if not scores:
-        ui_components.render_empty_state(
-            "暂无可确认路线",
-            "完成一次带批次信息的分析后，候选路线会按真实评分显示。",
-            icon="decision",
-        )
+        ui_components.render_empty_state("暂无可确认路线", "完成一次带批次信息的分析后，候选路线会按真实评分显示。", icon="decision")
+        return
+    if not st.session_state.get("decision_generated"):
         return
     cards = []
     for index, item in enumerate(scores[:4]):
@@ -2143,40 +2364,42 @@ def render_decision_page() -> None:
         level = str(_result_value(item, "match_level", "待评估"))
         evidence = str(_result_value(item, "evidence_support", "未评估"))
         confidence = str(_result_value(item, "data_confidence", "待评估"))
+        score = _result_value(item, "score", "—")
+        score_text = f"{score}/100" if score not in (None, "", "—") else "—"
         cards.append(
             f'<article class="route-card{" is-recommended" if index == 0 else ""}">'
-            f'<header><span>{"推荐方案" if index == 0 else "候选方案"}</span>'
-            f'<h3>{html.escape(title)}</h3></header><dl>'
-            f'<div><dt>匹配等级</dt><dd>{html.escape(level)}</dd></div>'
+            f'<header><span>{"推荐方案" if index == 0 else "候选方案"}</span><h3>{html.escape(title)}</h3></header>'
+            f'<dl><div><dt>匹配等级</dt><dd>{html.escape(level)}</dd></div>'
             f'<div><dt>证据支持</dt><dd>{html.escape(evidence)}</dd></div>'
             f'<div><dt>数据置信度</dt><dd>{html.escape(confidence)}</dd></div>'
-            "</dl></article>"
+            f'<div><dt>路线评分</dt><dd>{html.escape(score_text)}</dd></div></dl></article>'
         )
-    st.markdown(
-        '<div class="route-card-list">' + "".join(cards) + "</div>",
-        unsafe_allow_html=True,
-    )
-    st.caption(
-        "路线排序沿用当前 Agent 结果；正式采用前仍需核对企业能力、检测结论、设备状态和小试结果。"
-    )
+    st.markdown('<div class="route-card-list">' + "".join(cards) + "</div>", unsafe_allow_html=True)
+    st.caption("路线排序沿用当前 Agent 结果；正式采用前仍需核对企业能力、检测结论、设备状态和小试结果。")
 
 
 def render_process_page() -> None:
-    ui_components.render_page_header(
-        "TASK · PROCESS",
-        "工艺方案",
-        "将确认路线转成可编辑、可追溯、可审核的端到端工艺草案。",
-    )
+    ui_components.render_page_header("TASK · PROCESS", "工艺方案", "将确认路线转成可编辑、可追溯、可审核的端到端工艺草案。")
     ui_components.render_process_stepper("process")
-    plan = _current_result().get("processing_plan") or {}
+    # Keep the runnable examples in the first viewport so the page is useful
+    # even before a real batch has been saved.
+    _render_example_library("process")
+    result = _current_result()
+    _render_agent_generation("process", result, title="生成工艺方案")
+    plan = result.get("processing_plan") or {}
     stages = list(plan.get("stages") or []) if isinstance(plan, dict) else []
     if not stages:
-        ui_components.render_empty_state(
-            "尚未生成工艺方案",
-            "确认路线后，系统会展示工序、参数来源、设备、状态和风险边界。",
-            icon="factory",
-        )
+        ui_components.render_empty_state("尚未生成工艺方案", "确认路线后，系统会展示工序、参数来源、设备、状态和风险边界。", icon="factory")
         return
+    if not st.session_state.get("process_generated"):
+        return
+    route_label = plan.get("direction") or plan.get("route") or plan.get("product_form") or "待补充"
+    plan_status = plan.get("status") or "待小试复核"
+    st.markdown(
+        '<div class="processing-flow-summary"><span>主推路线</span>'
+        f'<p><strong>{html.escape(str(route_label))}</strong> · {html.escape(str(plan_status))}</p></div>',
+        unsafe_allow_html=True,
+    )
     rows = []
     for index, stage in enumerate(stages, 1):
         steps = stage.get("steps") if isinstance(stage, dict) else []

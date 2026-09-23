@@ -2,6 +2,12 @@ __pycache__/
 *.py[cod]
 .streamlit/secrets.toml
 .env
+.env.*
+!.env.example
+.runtime/
+backups/
+data/runtime/
+*.backup.zip
 logs/
 outputs/
 output/

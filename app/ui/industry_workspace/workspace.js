@@ -342,7 +342,7 @@ export default function(component) {
     }
     if(action?.startsWith('trade-')){const id=action.slice(6),candidate=tradeCandidates.find(c=>c.id===id);if(!candidate?.score)return;model.pendingTrade=id;modal('申请商业对接',`<p>${esc(candidate.seller)} · ${esc(candidate.origin)} → 重庆</p><p style="margin-top:12px">对接申请仅保存为会话草稿。提交前还需确认报价、运费、到厂验收和合同条款。</p>`,'保存对接申请','trade');return;}
     if(action==='generate-report'){
-      if(model.activeIntakeReport?.status!=='submitted'||!model.taskContext?.task_id){flash('请先在采集模块点击“正式提交”，提交后系统才会开始分析并生成报告。');return;}
+      if(!['submitted','approved'].includes(model.activeIntakeReport?.status)||!model.taskContext?.task_id){flash('请先在采集模块点击“正式提交”，提交后系统才会开始分析并生成报告。');return;}
       model.report.generated=false;
       setStateValue('report_action',{requestId:crypto.randomUUID(),operation:'generate',recordId:model.activeIntakeReport.id,taskContext:structuredClone(model.taskContext),report:structuredClone(model.report)});flash('正在整理公开产业资料并形成项目报告，请稍候…');return;
     }

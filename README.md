@@ -103,6 +103,10 @@
 
 ## 快速开始
 
+### 第一阶段企业试点
+
+邀请制账号、企业成员、资料审核、私有附件、备份恢复和上线验收见 [`docs/phase1-pilot.md`](docs/phase1-pilot.md) 与 [`docs/phase1-acceptance.md`](docs/phase1-acceptance.md)。本地初始化管理员可运行 `python scripts/init_platform.py admin@example.com`；生产环境必须配置 OIDC、持久数据库和私有对象存储，不能启用本地试点登录。
+
 ### 环境要求
 
 - Python 3.11 或更高版本
@@ -247,11 +251,16 @@ python -m unittest tests.test_evidence_verifiability tests.test_processing_knowl
 │   ├── literature/              # 文献目录、知识目录库和云端索引分片
 │   └── memory/                  # 运行时记忆数据库
 ├── scripts/                     # 文献与知识目录构建脚本
+│   ├── init_platform.py         # 初始化平台管理员和企业数据库
+│   ├── backup_pilot.py          # 生成校验过的试点备份
+│   └── restore_pilot.py         # 校验并恢复本地 SQLite 备份
 ├── tests/                       # 自动化测试
 ├── .streamlit/config.toml       # Streamlit 主题与服务配置
 ├── requirements.txt
 └── README.md
 ```
+
+第一阶段的正式运行目录是 `streamlit-deploy`，请从这里启动 `streamlit run app/main.py`。根目录的旧预览副本不包含企业账号、审核和长期资料存储能力。
 
 ## 开发约定
 

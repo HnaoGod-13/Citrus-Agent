@@ -6,6 +6,46 @@
     font-display: swap;
 }
 
+/* Agent generation states used by the route decision and process pages. */
+.agent-ready-banner {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 18px 0 14px;
+    padding: 14px 16px;
+    border: 1px solid var(--line, #dedede);
+    border-radius: 14px;
+    background: var(--surface, #fff);
+}
+.agent-ready-banner.success { border-color: #b8ddc4; background: #f4fbf6; }
+.agent-ready-banner.warning { border-color: #efd4a5; background: #fffaf1; }
+.agent-ready-banner .agent-ready-dot {
+    width: 9px; height: 9px; border-radius: 50%; background: #d88a17;
+    box-shadow: 0 0 0 4px rgb(216 138 23 / 12%); flex: 0 0 auto;
+}
+.agent-ready-banner.success .agent-ready-dot { background: #3e9f63; box-shadow: 0 0 0 4px rgb(62 159 99 / 12%); }
+.agent-ready-banner strong, .agent-ready-banner small { display: block; }
+.agent-ready-banner strong { font-size: 14px; color: var(--ink, #161616); }
+.agent-ready-banner small { margin-top: 3px; color: var(--muted, #6d6d6d); }
+.agent-example-library {
+    margin-top: 28px; padding: 18px; border: 1px solid var(--line, #dedede);
+    border-radius: 18px; background: linear-gradient(135deg, #fff, #faf9f5);
+}
+.agent-library-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
+.agent-library-heading h3 { margin: 2px 0 4px; font-size: 17px; }
+.agent-library-heading p { margin: 0; color: var(--muted, #6d6d6d); font-size: 13px; }
+.agent-library-badge { padding: 5px 9px; border-radius: 99px; color: #6f5a28; background: #f6ebca; font-size: 12px; white-space: nowrap; }
+.agent-example-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.agent-example-card { min-height: 146px; padding: 14px; border: 1px solid #e6e1d5; border-radius: 14px; background: #fff; }
+.agent-example-card h4 { margin: 8px 0 4px; font-size: 14px; }
+.agent-example-card p { margin: 7px 0 0; color: var(--muted, #6d6d6d); font-size: 12px; line-height: 1.55; }
+.agent-example-card .agent-example-meta { color: #8c6c2d; font-weight: 600; }
+.agent-example-icon { display: grid; width: 26px; height: 26px; place-items: center; border-radius: 8px; color: #7a5b21; background: #fff2cf; font-size: 18px; }
+@media (max-width: 700px) {
+    .agent-example-grid { grid-template-columns: 1fr; }
+    .agent-library-heading { flex-direction: column; gap: 8px; }
+}
+
 :root {
     color-scheme: light;
 

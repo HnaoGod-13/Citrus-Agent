@@ -14,8 +14,12 @@ import tempfile
 from copy import deepcopy
 
 import streamlit as st
+from sqlalchemy.exc import SQLAlchemyError
 from app.intake_schema import intake_schema
 from app.intake_store import IntakeStore
+from app.auth import current_principal
+from app.platform_store import Actor, PlatformStore
+from app.pilot_intake import PilotIntakeStore
 from app.intake_pipeline import build_task_context, run_intake_pipeline
 from app.report_enrichment import enrich_report_context
 from app.reporting import generate_project_report
@@ -50,10 +54,25 @@ def _save_snapshot() -> None:
 
 def _intake_store():
     from agent.memory_config import MEMORY_DB_PATH
+    principal = current_principal() or {}
+    user = principal.get("user") or {}
+    organizations = principal.get("organizations") or []
+    if user.get("id") and organizations:
+        organization_id = str(st.session_state.get("active_organization_id") or organizations[0].get("id") or "")
+        if organization_id:
+            platform = PlatformStore()
+            return PilotIntakeStore(platform, Actor(str(user["id"]), organization_id))
     return IntakeStore(Path(MEMORY_DB_PATH).with_name("industry_intake.db"))
 
 
 def _scope():
+    principal = current_principal() or {}
+    user = principal.get("user") or {}
+    organizations = principal.get("organizations") or []
+    if user.get("id") and organizations:
+        organization_id = str(st.session_state.get("active_organization_id") or organizations[0].get("id") or "")
+        st.session_state.active_organization_id = organization_id
+        return str(user["id"]), organization_id
     return (str(st.session_state.get("memory_user_id") or ""),
             str(st.session_state.get("memory_project_id") or ""))
 
@@ -92,7 +111,7 @@ def restore_active_context(record_id: str = "") -> bool:
     try:
         document = _intake_store().load(*scope, requested)
         analysis = None
-        if document.get("status") == "submitted":
+        if document.get("status") in {"submitted", "approved"}:
             analysis = run_intake_pipeline(
                 document,
                 str(document.get("id") or requested),
@@ -100,7 +119,7 @@ def restore_active_context(record_id: str = "") -> bool:
                 document.get("task_id") or None,
             )
             analysis["report_enrichment"] = _enrich_report(document)
-    except (ValueError, TypeError, KeyError, sqlite3.Error, OSError):
+    except (ValueError, TypeError, KeyError, sqlite3.Error, SQLAlchemyError, OSError):
         return False
     model = deepcopy(st.session_state.get("industry_ui_model", {}))
     model.update(activeIntakeReport=document)
@@ -161,7 +180,7 @@ def _intake_action():
                 raise ValueError("请选择供应端采集记录。")
             result = dict(ok=True, document=document, message="已带入原料来源，请补齐到货验收信息。") if operation == "link" else dict(ok=True, document=document, message="已打开保存的采集记录。")
             if operation == "load":
-                if document.get("status") == "submitted":
+                if document.get("status") in {"submitted", "approved"}:
                     result["analysis"] = run_intake_pipeline(
                         document,
                         str(document.get("id") or ""),
@@ -177,7 +196,7 @@ def _intake_action():
                 st.query_params["record_id"] = st.session_state.industry_active_record_id
         else:
             raise ValueError("不支持此采集操作。")
-    except (ValueError, TypeError, KeyError, sqlite3.Error, OSError) as error:
+    except (ValueError, TypeError, KeyError, sqlite3.Error, SQLAlchemyError, OSError) as error:
         # Keep validation feedback useful but never disclose database paths.
         result = dict(ok=False, message=str(error) if isinstance(error, ValueError) else "采集记录暂未保存成功，请导出备份并稍后重试。")
     st.session_state.intake_result = dict(result, requestId=action["requestId"], operation=operation)
@@ -205,6 +224,17 @@ def _intake_action():
             else:
                 model.pop("taskContext", None)
             st.session_state.industry_task_context = dict(context)
+            if result.get("analysis"):
+                # A newly submitted or loaded batch supersedes any sample or
+                # chat output that was generated for the previous batch.
+                for key in (
+                    "decision_generated",
+                    "decision_generated_result",
+                    "process_generated",
+                    "process_generated_result",
+                ):
+                    st.session_state.pop(key, None)
+                st.session_state.last_result = {}
             collection.pop("undo", None)
             if operation == "load":
                 collection["panel"] = "form"
@@ -238,7 +268,7 @@ def _report_action():
         if not record_id:
             raise ValueError("请先正式提交采集记录，系统才会开始分析并生成项目报告。")
         document = _intake_store().load(*_scope(), record_id)
-        if document.get("status") != "submitted":
+        if document.get("status") not in {"submitted", "approved"}:
             raise ValueError("当前记录仍是草稿。请先正式提交，再生成项目报告。")
         analysis = run_intake_pipeline(
             document,
@@ -309,7 +339,7 @@ def render_industry_workspace() -> None:
             store = _intake_store()
             records = store.list(*scope)
             analytics = store.analytics(*scope)
-        except (ValueError, OSError, sqlite3.Error):
+        except (ValueError, OSError, sqlite3.Error, SQLAlchemyError):
             st.warning("暂时无法读取已保存的采集记录。请稍后重试，当前填写内容仍可导出备份。")
     # Register in the active runtime, including a fresh AppTest or hot reload.
     # Registering an identical definition is idempotent in Streamlit 1.61.
