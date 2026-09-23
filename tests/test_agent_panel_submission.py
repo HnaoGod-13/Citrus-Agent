@@ -146,8 +146,9 @@ def test_pending_prompt_renders_loading_conversation_and_disables_composer():
     assert not app.exception
     markup = "\n".join(str(item.value) for item in app.markdown)
     assert "agent-panel-conversation is-loading" in markup
-    assert "agent-progress-card" in markup
-    assert "正在核对页面数据与批次完整性" in markup
+    assert "agent-thinking-bubble" in markup
+    assert "正在思考…" in markup
+    assert "agent-progress-steps" not in markup
     assert app.text_input[0].disabled is True
     assert next(button for button in app.button if button.label == "发送").disabled is True
 
