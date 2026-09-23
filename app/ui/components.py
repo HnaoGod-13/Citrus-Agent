@@ -635,16 +635,10 @@ def render_agent_panel(view: str) -> tuple[str, Any | None]:
                     f'<span class="agent-message-mark">{icon_svg("citrus", 16)}</span>'
                     '<div class="agent-message-body"><div class="agent-message-meta">'
                     f'<b>Citrus Agent</b><time>{timestamp}</time></div>'
-                    '<div class="agent-progress-card"><div class="agent-progress-heading">'
+                    '<div class="agent-thinking-bubble" role="status" aria-live="polite">'
                     '<span class="agent-progress-spinner"></span>'
-                    '<strong>正在核对页面数据与批次完整性…</strong></div>'
-                    '<p>我正在读取当前页面的资料信息，并进行相关数据的核对与分析，请稍候…</p>'
-                    '<ol class="agent-progress-steps">'
-                    '<li class="is-done"><span></span><div><b>核对批次字段</b><small>已完成 · 正在汇总页面信息</small></div></li>'
-                    '<li class="is-active"><span></span><div><b>检查样品状态</b><small>正在分析 · 匹配样品信息与状态</small></div></li>'
-                    '<li><span></span><div><b>生成页面结论</b><small>等待中</small></div></li>'
-                    '</ol><div class="agent-stop-generation">'
-                    f'{icon_svg("square", 15)}<span>正在生成</span></div></div></div></article>'
+                    '<span>正在思考…</span>'
+                    '</div></div></article>'
                     '</div></section>',
                     unsafe_allow_html=True,
                 )
