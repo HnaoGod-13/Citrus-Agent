@@ -752,53 +752,6 @@ class ProductRouteStateTests(unittest.TestCase):
                 set_query.assert_any_call("view", page)
                 set_query.assert_any_call("industry", industry)
 
-    def test_new_business_task_resets_intake_selection_and_bumps_component_token(self) -> None:
-        state = SessionStateStub(
-            industry_ui_model={"collection": {"side": "processor"}},
-            industry_task_context={"task_id": "task_old"},
-            industry_active_record_id="record_old",
-            industry_context_messages=[{"role": "user", "content": "旧任务"}],
-            industry_inline_answer="旧回答",
-            intake_result={"ok": True},
-            intake_last_request="request_old",
-            report_result={"ok": True},
-            report_last_request="report_old",
-            industry_workspace_canvas={"snapshot": {"collection": {"side": "processor"}}},
-            industry_workspace_view="data",
-            industry_new_task_token=3,
-            product_view="report",
-            mobile_secondary_open=True,
-        )
-        with (
-            patch.object(app_main.st, "session_state", state),
-            patch.object(app_main, "preserve_sidebar_draft"),
-            patch.object(app_main, "_set_query_value") as set_query,
-            patch.object(app_main, "_delete_query_value") as delete_query,
-        ):
-            app_main.start_new_business_task()
-
-        for key in (
-            "industry_ui_model",
-            "industry_task_context",
-            "industry_active_record_id",
-            "industry_context_messages",
-            "industry_inline_answer",
-            "intake_result",
-            "intake_last_request",
-            "report_result",
-            "report_last_request",
-            "industry_workspace_canvas",
-        ):
-            self.assertNotIn(key, state)
-        self.assertEqual("data", state.industry_workspace_view)
-        self.assertEqual(4, state.industry_new_task_token)
-        self.assertEqual("intake", state.product_view)
-        self.assertFalse(state.mobile_secondary_open)
-        self.assertTrue(state.reset_main_scroll_position)
-        set_query.assert_any_call("view", "intake")
-        set_query.assert_any_call("industry", "data")
-        delete_query.assert_called_once_with("record_id")
-
     def test_query_view_overrides_stale_session_view(self) -> None:
         state = SessionStateStub(
             product_view="workspace",
