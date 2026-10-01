@@ -26,6 +26,7 @@ import streamlit as st
 from agent import memory as agent_memory
 from app import knowledge_catalog as catalog_index
 from app.intake_pipeline import run_intake_pipeline
+from app import batch_research
 from app.ui import components as ui_components
 from app.ui import industry_pages as ui_industry_pages
 from app.admin_console import render_platform_admin
@@ -1974,7 +1975,7 @@ def _go_view(view: str) -> None:
         rerun()
 
 
-def _current_result() -> dict[str, Any]:
+def _batch_result() -> dict[str, Any]:
     """Return the active Agent result, including the saved intake pipeline.
 
     The intake workspace runs its deterministic cleaning/ranking pipeline and
@@ -2003,8 +2004,8 @@ def _current_result() -> dict[str, Any]:
         {
             "direction": item.get("label") or item.get("direction") or item.get("route") or "未命名路线",
             "match_level": item.get("tier") or ("首选" if index == 0 else "备选"),
-            "evidence_support": item.get("evidence_support") or ("规则与资料库参考" if item.get("reasons") else "待补证据"),
-            "data_confidence": item.get("data_confidence") or f"{item.get('score', '—')}/100",
+            "evidence_support": item.get("evidence_support") or "尚未进行路线文献检索",
+            "data_confidence": item.get("data_confidence") or "待文献分析",
             "score": item.get("score"),
             "reasons": item.get("reasons") or [],
             "process": item.get("process") or [],
@@ -2027,7 +2028,7 @@ def _current_result() -> dict[str, Any]:
             else step
             for step in process_steps
         ],
-        "basis": plan.get("basis") or "批次资料清洗结果、路线规则与示例资料库参考",
+        "basis": plan.get("basis") or "批次资料清洗结果与路线规则；尚未完成工艺文献检索",
         "missing_data": plan.get("missing_data") or ", ".join(str(item) for item in cleaned.get("missing") or []) or "无",
     })
     quality_risks = analysis.get("quality_risks")
@@ -2047,7 +2048,16 @@ def _current_result() -> dict[str, Any]:
         "evidence": evidence,
         "research_status": enrichment.get("research_status") or "待检索",
         "source": "intake_pipeline",
+        "task_context": analysis.get("task_context") or {},
     }
+
+
+def _current_result() -> dict[str, Any]:
+    source = _batch_result()
+    researched = st.session_state.get("batch_research_result") or {}
+    if researched.get("research_input_key") == batch_research.input_key(source):
+        return researched
+    return source
 
 
 _EXAMPLE_LIBRARY: tuple[dict[str, Any], ...] = (
@@ -2126,9 +2136,10 @@ def _example_result(example: dict[str, Any]) -> dict[str, Any]:
         "decision_generated_result",
         "process_generated",
         "process_generated_result",
+        "batch_research_result",
     ):
         st.session_state.pop(key, None)
-    return _current_result()
+    return _batch_result()
 
 
 def _render_example_library(page: str) -> None:
@@ -2160,14 +2171,13 @@ def _render_example_library(page: str) -> None:
                 )
                 action = "生成路线决策" if page == "decision" else "生成工艺方案"
                 if st.button(action, key=f"{page}_{example['id']}", type="primary", width="stretch"):
-                    result = _example_result(example)
-                    st.session_state[f"{page}_generated"] = True
-                    st.session_state[f"{page}_generated_result"] = result
+                    _example_result(example)
+                    st.session_state[f"{page}_generation_requested"] = True
                     st.rerun()
 
 
-def _render_agent_generation(page: str, result: dict[str, Any], *, title: str) -> None:
-    """Render a lightweight Agent trace and the action that starts generation."""
+def _render_agent_generation(page: str, result: dict[str, Any], *, title: str) -> dict[str, Any] | None:
+    """Run real retrieval on request; rerenders only display the saved result."""
     cleaning = result.get("cleaning") if isinstance(result, dict) else {}
     score = cleaning.get("weighted_score") if isinstance(cleaning, dict) else None
     ready = bool(result.get("scores"))
@@ -2190,22 +2200,63 @@ def _render_agent_generation(page: str, result: dict[str, Any], *, title: str) -
         )
     if not ready:
         return
-    generated = bool(st.session_state.get(f"{page}_generated"))
-    if not generated and st.button(title, type="primary", key=f"{page}_generate", use_container_width=True):
-        st.session_state[f"{page}_generated"] = True
-        generated = True
+    mode = st.selectbox("文献检索方式", ["deep", "quick"],
+                        format_func=lambda value: "全库深度检索（推荐精准模式）" if value == "deep" else "快速检索",
+                        key=f"{page}_literature_mode")
+    request_key = f"{batch_research.input_key(result)}:{page}:{mode}:v1"
+    cached = st.session_state.get(f"{page}_generated_result") or {}
+    generated = cached if cached.get("research_request_key") == request_key else None
+    requested = bool(st.session_state.pop(f"{page}_generation_requested", False))
+    clicked = st.button("重新检索并生成" if generated else title, type="primary",
+                        key=f"{page}_generate", width="stretch")
+    if requested or clicked:
+        st.session_state.pop(f"{page}_generated_result", None)
+        st.session_state[f"{page}_generated"] = False
+        generated = None
+        with st.status("正在检索文献并分析当前批次…", expanded=True) as thinking:
+            try:
+                generated = batch_research.generate_batch_research(
+                    result, page=page, retrieval_mode=mode, progress_callback=st.write,
+                )
+            except Exception:
+                thinking.update(label="本次文献分析未完成", state="error", expanded=True)
+                st.error("文献分析暂时失败，请重试。未将本次分析标记为成功。")
+                return None
+            generated["research_request_key"] = request_key
+            st.session_state[f"{page}_generated_result"] = generated
+            st.session_state[f"{page}_generated"] = True
+            st.session_state.batch_research_result = generated
+            thinking.update(label="文献检索与分析已结束", state="complete", expanded=False)
     if generated:
-        # Keep the trace in a running status while the page assembles the
-        # output.  Streamlit renders the spinner immediately, then the final
-        # state below makes the completed work auditable after the rerun.
-        with st.status("Agent 正在思考…", expanded=True) as thinking:
-            st.write("✓ 数据清洗：统一批次、数量、糖度与检测字段")
-            research_status = str(result.get("research_status") or "匹配本地知识库与示例资料")
-            st.write(f"✓ 资料检索：{research_status}")
-            st.write("✓ 路线评估：比较候选路线、证据支持和质量风险")
-            st.write("✓ 输出整理：生成可回查的业务建议")
-            thinking.update(label="Agent 已完成分析", state="complete", expanded=False)
-        st.caption("本次输出已绑定当前批次；重新填写并保存资料后可再次生成。")
+        summary, needs_attention = batch_research.retrieval_summary(generated)
+        (st.warning if needs_attention else st.success)(summary)
+        with st.expander("查看实际分析步骤"):
+            for step in generated.get("agent_steps") or []:
+                st.write(f"{step.get('name', '')} · {step.get('status', '')}")
+                st.caption(step.get("observation", ""))
+        st.caption("结果绑定当前批次与资料版本；返回同一页面不会重复检索，路线与工艺会分别按各自问题分析。点击“重新检索并生成”可更新。")
+    return generated
+
+
+def _render_research_sources(result: dict[str, Any]) -> None:
+    evidence = list(result.get("evidence") or [])
+    st.subheader("本次文献依据")
+    if not evidence:
+        st.info("本次没有可展示的文献依据，路线仅作规则建议；工艺数值需补充可靠来源。")
+        return
+    st.caption("以下为本次实际检索并纳入分析的片段。相关性不等于直接适用，请结合证据等级和实验条件复核。")
+    for index, item in enumerate(evidence, 1):
+        title = str(item.get("title") or item.get("source_file") or "未命名文献")
+        with st.expander(f"{index:02d} · {title}"):
+            location = item.get("page") or item.get("page_start") or "未标注"
+            st.caption(f"年份：{item.get('year') or '未标注'} · 页码：{location} · {item.get('evidence_level') or '待复核'}")
+            st.text(str(item.get("chunk_text") or "当前条目没有可展示的原文片段。"))
+            if item.get("doi"):
+                st.caption("DOI：" + str(item["doi"]))
+            if item.get("applicability"):
+                st.write("适用条件：" + str(item["applicability"]))
+            st.caption("文献编号：" + str(item.get("document_id") or item.get("source_file") or "未标注"))
+            st.caption("片段编号：" + str(item.get("chunk_id") or "未标注"))
 
 
 def _render_agent_empty_hint(title: str, description: str) -> None:
@@ -2372,13 +2423,12 @@ def render_decision_page() -> None:
     # Keep the runnable examples in the first viewport so the page is useful
     # even before a real batch has been saved.
     _render_example_library("decision")
-    result = _current_result()
-    _render_agent_generation("decision", result, title="生成路线决策")
+    result = _render_agent_generation("decision", _batch_result(), title="生成路线决策")
+    if not result:
+        return
     scores = list(result.get("scores") or [])
     if not scores:
         _render_agent_empty_hint("暂无已生成路线", "提交真实批次或点击上方示例后，路线会在这里展开。")
-        return
-    if not st.session_state.get("decision_generated"):
         return
     cards = []
     for index, item in enumerate(scores[:4]):
@@ -2398,6 +2448,7 @@ def render_decision_page() -> None:
         )
     st.markdown('<div class="route-card-list">' + "".join(cards) + "</div>", unsafe_allow_html=True)
     st.caption("路线排序沿用当前 Agent 结果；正式采用前仍需核对企业能力、检测结论、设备状态和小试结果。")
+    _render_research_sources(result)
 
 
 def render_process_page() -> None:
@@ -2406,14 +2457,13 @@ def render_process_page() -> None:
     # Keep the runnable examples in the first viewport so the page is useful
     # even before a real batch has been saved.
     _render_example_library("process")
-    result = _current_result()
-    _render_agent_generation("process", result, title="生成工艺方案")
+    result = _render_agent_generation("process", _batch_result(), title="生成工艺方案")
+    if not result:
+        return
     plan = result.get("processing_plan") or {}
     stages = list(plan.get("stages") or []) if isinstance(plan, dict) else []
     if not stages:
         _render_agent_empty_hint("暂无已生成工艺方案", "先选择一个示例或完成资料确认，工艺阶段会在这里展开。")
-        return
-    if not st.session_state.get("process_generated"):
         return
     route_label = plan.get("direction") or plan.get("route") or plan.get("product_form") or "待补充"
     plan_status = plan.get("status") or "待小试复核"
@@ -2436,6 +2486,24 @@ def render_process_page() -> None:
             }
         )
     _render_table(rows, "当前方案没有可展示的工序。", height=520)
+    parameter_plan = result.get("parameterized_plan") or {}
+    if parameter_plan.get("rows"):
+        st.subheader("工艺参数与文献支持")
+        st.caption("通用工序用于组织流程；下表单独列出本次文献能支持的参数及其适用条件。缺少可靠依据时不填入数值。")
+        parameter_rows = []
+        for row in parameter_plan["rows"]:
+            parameters = row.get("parameters") or []
+            parameter_rows.append({
+                "工序": row.get("step", ""),
+                "文献参数": "；".join(f"{p.get('name', '')}：{p.get('recommendation', '')}" for p in parameters) or "暂无可靠参数",
+                "适用条件": "；".join(dict.fromkeys(
+                    f"{p.get('raw_material') or '原料未标注'} / {p.get('method') or '方法未标注'} / {p.get('scale') or '规模未标注'}"
+                    for p in parameters)),
+                "证据状态": row.get("parameter_status", "待复核"),
+                "来源": "；".join(str(ref) for ref in row.get("source_refs") or row.get("source_ids") or []),
+            })
+        _render_table(parameter_rows, "当前没有可用参数依据。", height=420)
+    _render_research_sources(result)
 
 
 def render_matching_page() -> None:
