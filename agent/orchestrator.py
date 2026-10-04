@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Callable
 from uuid import uuid4
 
-from .evidence import format_key_conclusions_markdown
+from .evidence import clean_source_text, clean_source_title, format_key_conclusions_markdown
 from .llm_client import DeepSeekAPIError, build_chat_messages, chat_with_deepseek
 from .memory import describe_model_messages
 from .report import parameterized_plan_markdown
@@ -1209,10 +1209,13 @@ def build_previous_evidence_answer(result: dict[str, Any]) -> str:
         locator = f"第{page}页" if page else "页码未标注"
         category = item.get("category") or item.get("product") or "未分类"
         source = item.get("doi") or item.get("publication") or item.get("source_file") or "本地文献"
-        excerpt = _short_evidence_text(item.get("chunk_text") or "", limit=260)
+        excerpt = _short_evidence_text(
+            clean_source_text(item.get("chunk_text")) or "未提取到可核验正文片段",
+            limit=260,
+        )
         lines.extend(
             [
-                f"[文献{number}] {item.get('title') or '未命名文献'}",
+                f"[文献{number}] {clean_source_title(item.get('title')) or '未命名文献'}",
                 f"年份：{item.get('year') or '未知'}；类别：{category}；定位：{locator}；来源：{source}",
                 f"上一轮使用的证据片段：{excerpt}",
                 "",

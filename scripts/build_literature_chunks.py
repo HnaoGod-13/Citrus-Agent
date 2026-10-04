@@ -20,7 +20,30 @@ DEFAULT_OUTPUT_DIR = ROOT / "data" / "literature"
 DEFAULT_CHUNK_CHARS = 1200
 DEFAULT_OVERLAP_CHARS = 180
 MIN_CHUNK_CHARS = 260
-BUILDER_VERSION = "3.1-section-sqlite"
+BUILDER_VERSION = "3.2-section-sqlite-clean-display-text"
+
+# A number of imported filenames carry a manually added translation after the
+# English title (for example ``...【中文_阿维菌素...``).  Keeping that suffix in
+# the title makes it look like part of the citation and, when the filename was
+# truncated, leaves an incomplete Chinese phrase in every result.  The suffix
+# is metadata about the local file, not part of the paper title.
+_TITLE_TRANSLATION_MARKER_RE = re.compile(
+    r"\s*(?:【|\[|（|\()\s*(?:中文|Chinese|韩文|韓文|Korean|한국어|日文|Japanese)(?![A-Za-z]).*$",
+    flags=re.IGNORECASE,
+)
+
+# pypdf/fitz can return C0/C1 controls, zero-width controls, replacement
+# glyphs, or unpaired UTF-16 surrogates when a PDF embeds a broken font map.
+# They cannot be displayed reliably and can even make JSON/SQLite output fail
+# to encode.  Preserve line breaks while replacing those characters with a
+# space so neighbouring words do not get concatenated.
+_PDF_TEXT_CONTROL_RE = re.compile(
+    r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\ud800-\udfff\ufffd]"
+)
+_PDF_METADATA_BLOB_RE = re.compile(
+    r"^\s*serial\s+JL\b.*\barticleinfo\b.*\bcontenttype\b.*\bdateloaded(?:txt)?\b",
+    flags=re.IGNORECASE | re.DOTALL,
+)
 
 CATEGORY_PRODUCT = {
     "陈皮": "陈皮",
@@ -95,8 +118,10 @@ class SourceDocument:
 
 
 def clean_text(text: str, preserve_lines: bool = True) -> str:
-    text = str(text or "").replace("\x00", " ")
+    text = _PDF_TEXT_CONTROL_RE.sub(" ", str(text or ""))
     text = re.sub(r"(?<=[A-Za-z])-\s*\n\s*(?=[a-z])", "", text)
+    text = re.sub(r"(?<=\d)\.\s+(?=\d)", ".", text)
+    text = re.sub(r"(?<=\d)\s+(?=\d{3}(?:\D|$))", "", text)
     text = re.sub(r"[\t\r\f\v]+", " ", text)
     text = re.sub(r"[ ]{2,}", " ", text)
     if preserve_lines:
@@ -105,6 +130,11 @@ def clean_text(text: str, preserve_lines: bool = True) -> str:
     else:
         text = re.sub(r"\s+", " ", text)
     return text.strip()
+
+
+def is_metadata_blob(text: str) -> bool:
+    """Identify publisher index metadata accidentally returned as PDF body text."""
+    return bool(_PDF_METADATA_BLOB_RE.search(str(text or "")))
 
 
 def _json_list(value: Iterable[str]) -> str:
@@ -157,6 +187,10 @@ def _metadata_from_filename(path: Path) -> tuple[str, str]:
     year = match.group(1) if match else "未知"
     title = match.group(2) if match else stem
     title = clean_text(title.replace("_", " "), preserve_lines=False)
+    # Imported PDFs may append a translated title in a full-width or ASCII
+    # bracket.  It is often truncated by the source filename limit, so strip
+    # from the marker to the end instead of exposing a partial citation.
+    title = _TITLE_TRANSLATION_MARKER_RE.sub("", title).strip(" .-_–—")
     return year, title
 
 
@@ -496,7 +530,7 @@ def article_to_chunks(
         segments, current_section = _section_segments(page["text"], current_section)
         for section, segment in segments:
             for chunk_text in split_text(segment, chunk_chars, overlap_chars):
-                if is_reference_like(chunk_text):
+                if is_reference_like(chunk_text) or is_metadata_blob(chunk_text):
                     continue
                 chunk_index += 1
                 keywords = keywords_for(document.categories, f"{article['title']} {chunk_text}")

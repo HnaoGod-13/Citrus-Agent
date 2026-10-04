@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from typing import Any, Mapping
 
 
@@ -134,8 +135,186 @@ _CONCEPT_TERMS: dict[str, tuple[str, ...]] = {
 }
 
 
+_SOURCE_TITLE_TRANSLATION_RE = re.compile(
+    r"(?:[\[【（(]\s*|[.:：]\s*[\[【（(]?\s*)"
+    r"(?:中文(?:标题|题名|译名)?|Chinese(?:\s+(?:title|translation))?|译文)"
+    r"(?=\s|[:：_\-—]|[\u4e00-\u9fff]|$).*?$",
+    flags=re.IGNORECASE,
+)
+_SOURCE_METADATA_RE = re.compile(
+    r"\b(?:serial\s+JL|articleinfo|articlenumber|contenttype|dateloaded|"
+    r"itemstage\s+FULL-TEXT|webpdfpagecount)\b",
+    flags=re.IGNORECASE,
+)
+_SOURCE_PAGE_LINE_RE = re.compile(
+    r"^(?:第\s*\d{1,4}\s*页|page\s+\d{1,4}(?:\s+of\s+\d{1,4})?)$",
+    flags=re.IGNORECASE,
+)
+_SOURCE_NOISE_LINE_RE = re.compile(
+    r"^(?:https?://\S+|www\.\S+|downloaded\s+from\b.*|copyright\b.*|"
+    r"all\s+rights\s+reserved\b.*)$",
+    flags=re.IGNORECASE,
+)
+
+
 def _clean_text(value: Any) -> str:
-    return re.sub(r"\s+", " ", str(value or "")).strip()
+    """Normalize metadata without silently inventing scientific content."""
+    text = str(value or "")
+    # Invalid surrogate code points can survive PDF extraction and make the
+    # rendered Streamlit payload look like mojibake. Drop only those code
+    # points; ordinary non-ASCII scientific text is retained.
+    text = "".join(char for char in text if unicodedata.category(char) != "Cs")
+    text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\u200b-\u200f\u202a-\u202e\u2060\ufeff]", "", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def clean_source_title(value: Any) -> str:
+    """Return a bibliographic title without an appended machine translation.
+
+    Some source filenames encode a Chinese translation after the English title
+    (for example ``Title.【中文 ...``). That suffix is indexing metadata rather
+    than part of the paper title, so it must not be shown as if it were a title.
+    """
+    title = _clean_text(value)
+    if not title:
+        return ""
+    title = _SOURCE_TITLE_TRANSLATION_RE.sub("", title).strip()
+    return title.rstrip(" .:：-—([{【（")
+
+
+def clean_source_text(value: Any) -> str:
+    """Clean display-only PDF/OCR noise while preserving the supplied wording."""
+    raw = str(value or "").replace("\r\n", "\n").replace("\r", "\n")
+    raw = "".join(char for char in raw if unicodedata.category(char) != "Cs")
+    if not raw or _SOURCE_METADATA_RE.search(raw):
+        return ""
+    raw = re.sub(r"(?<=[A-Za-z])-\s*\n\s*(?=[a-z])", "-", raw)
+    lines: list[str] = []
+    for line in raw.splitlines():
+        line = re.sub(r"[ \t]+", " ", line).strip()
+        if not line or _SOURCE_PAGE_LINE_RE.fullmatch(line) or _SOURCE_NOISE_LINE_RE.match(line):
+            continue
+        if re.fullmatch(r"(?:\|?\s*:?-{3,}:?\s*)+\|?", line):
+            continue
+        lines.append(line)
+    text = " ".join(lines)
+    text = re.sub(r"~~([^~]+)~~", r"\1", text)
+    text = re.sub(r"(^|\s)#{1,6}\s+", r"\1", text)
+    # Repair missing boundaries introduced when a PDF text layer concatenates
+    # CJK and Latin glyph runs. Keep numeric scientific notation untouched.
+    text = re.sub(r"(?<=[\u4e00-\u9fff])(?=[A-Za-z])", " ", text)
+    text = re.sub(r"(?<=[A-Za-z])(?=[\u4e00-\u9fff])", " ", text)
+    text = re.sub(r"(?<=\d)(?=[A-Za-z])", " ", text)
+    # Common PDF text-layer artifacts split decimal points and thousands
+    # groups into separate glyph runs (``1. 5`` / ``10 000``).
+    text = re.sub(r"(?<=\d)\.\s+(?=\d)", ".", text)
+    text = re.sub(r"(?<=\d)\s+(?=\d{3}(?:\D|$))", "", text)
+    text = re.sub(r"\s+([,.;:!?，。；：！？、）】])", r"\1", text)
+    text = re.sub(r"([（【])\s+", r"\1", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _join_source_chunks(left: str, right: str) -> str:
+    if not left:
+        return right
+    if not right:
+        return left
+    # Adjacent retrieval chunks usually overlap by 100–200 characters. Remove
+    # only a verified suffix/prefix overlap, never guessed scientific words.
+    overlap = 0
+    for size in range(min(240, len(left), len(right)), 24, -1):
+        if left[-size:].casefold() == right[:size].casefold():
+            overlap = size
+            break
+    right = right[overlap:]
+    if not right:
+        return left
+    separator = " " if left[-1].isascii() and right[0].isascii() else ""
+    return left + separator + right
+
+
+def _complete_sentence_window(text: str) -> str:
+    """Drop visibly cut-off leading/trailing clauses from a PDF chunk."""
+    if not text:
+        return text
+    start = 0
+    # A chunk beginning with a digit, lowercase letter, or punctuation is
+    # almost certainly the continuation of the previous chunk. Keep the first
+    # complete sentence instead of presenting that continuation as a paragraph.
+    if text[0].isdigit() or text[0].islower() or text[0] in ",.;:，。；：":
+        match = re.search(r"[。！？!?\.](?:\s+|$)", text)
+        if match and match.end() < len(text):
+            start = match.end()
+    end = len(text)
+    if text and text[-1] not in "。！？!?.":
+        matches = list(re.finditer(r"[。！？!?\.](?:\s+|$)", text))
+        if matches and matches[-1].end() > start:
+            end = matches[-1].end()
+    window = text[start:end].strip()
+    return window or text
+
+
+def source_text_for_display(
+    item: Mapping[str, Any],
+    *,
+    max_chars: int = 3600,
+    focus_terms: Any = None,
+) -> str:
+    """Build a readable source passage from a seed chunk and same-paper context."""
+    seed = clean_source_text(item.get("chunk_text"))
+    if not seed:
+        return "该片段主要是文献索引元数据，未提取到可核验的正文信息。"
+    seed_index = int(item.get("chunk_index") or 0)
+    parts = [(seed_index, seed)]
+    document_id = _clean_text(item.get("document_id"))
+    for neighbor in item.get("adjacent_chunks") or []:
+        if not isinstance(neighbor, Mapping):
+            continue
+        if document_id and _clean_text(neighbor.get("document_id")) not in {"", document_id}:
+            continue
+        text = clean_source_text(neighbor.get("chunk_text"))
+        if text:
+            parts.append((int(neighbor.get("chunk_index") or 0), text))
+    merged = ""
+    for _, text in sorted(parts, key=lambda pair: pair[0]):
+        merged = _join_source_chunks(merged, text)
+        if len(merged) >= max_chars:
+            break
+    terms = [
+        _clean_text(value).casefold()
+        for value in (focus_terms if isinstance(focus_terms, (list, tuple, set)) else [focus_terms])
+        if _clean_text(value)
+    ]
+    if terms:
+        sentences = [
+            part.strip()
+            for part in re.split(
+                r"(?<=[。！？!?])\s*|(?<=\.)\s+(?=[A-Z\u4e00-\u9fff])",
+                merged,
+            )
+            if part.strip()
+        ]
+        hit = next(
+            (index for index, sentence in enumerate(sentences)
+             if any(term in sentence.casefold() for term in terms)),
+            None,
+        )
+        if hit is not None:
+            selected = sentences[hit:hit + 2]
+            focused = " ".join(selected).strip()
+            if focused:
+                merged = focused
+    merged = _complete_sentence_window(merged)
+    if len(merged) <= max_chars:
+        return merged
+    # Prefer a complete sentence boundary when a long context still exceeds
+    # the display limit. The raw chunk remains available through its locator.
+    boundary = max(
+        (index for index, char in enumerate(merged[:max_chars]) if char in "。！？.!?"),
+        default=-1,
+    )
+    end = boundary + 1 if boundary >= max_chars // 2 else max_chars
+    return merged[:end].rstrip() + "…"
 
 
 def _contains_any(text: str, terms: tuple[str, ...] | list[str]) -> bool:
@@ -337,14 +516,14 @@ def evidence_reference(item: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "document_id": _clean_text(item.get("document_id") or item.get("source_file")),
         "chunk_id": _clean_text(item.get("chunk_id")),
-        "title": _clean_text(item.get("title")) or "未命名文献",
+        "title": clean_source_title(item.get("title")) or "未命名文献",
         "year": _clean_text(item.get("year")) or "年份未知",
         "doi": normalize_doi(item.get("doi")),
         "url": source_url(item),
         "source": _clean_text(item.get("publication") or item.get("source") or item.get("source_file")),
         "section": _clean_text(item.get("section")) or "正文",
         "page": item.get("page") or item.get("page_start"),
-        "excerpt": compact_excerpt(item.get("chunk_text"), 420),
+        "excerpt": compact_excerpt(clean_source_text(item.get("chunk_text")), 420),
         "applicability": _clean_text(item.get("applicability")) or build_applicability(item),
         "evidence_level": effective_evidence_level(item),
         "evidence_level_reason": _clean_text(item.get("evidence_level_reason")),
@@ -608,7 +787,7 @@ def format_key_conclusions_markdown(
         if not refs:
             lines.append("- 可核验文献：未绑定；不得包装为文献直接结论。")
         for ref_index, ref in enumerate(refs, 1):
-            title = _clean_text(ref.get("title")) or "未命名文献"
+            title = clean_source_title(ref.get("title")) or "未命名文献"
             year = _clean_text(ref.get("year")) or "年份未知"
             doi = normalize_doi(ref.get("doi"))
             url = source_url(ref) or _clean_text(ref.get("url"))

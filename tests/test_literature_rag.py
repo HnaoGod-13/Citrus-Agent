@@ -15,13 +15,40 @@ from agent.rag import (
 )
 from scripts.build_literature_chunks import (
     SourceDocument,
+    _metadata_from_filename,
     _write_document,
     article_to_chunks,
+    clean_text,
     initialize_database,
+    is_metadata_blob,
 )
 
 
 class LiteratureIngestionTests(unittest.TestCase):
+    def test_filename_title_drops_truncated_translation_suffix(self) -> None:
+        year, title = _metadata_from_filename(
+            Path(
+                "2021_The residual behavior and processing factors of abamectin "
+                "and fluazinam in citrus juice processing.【中文_阿维菌素和氟啶胺在_9fcfe1394784.pdf"
+            )
+        )
+
+        self.assertEqual("2021", year)
+        self.assertEqual(
+            "The residual behavior and processing factors of abamectin and "
+            "fluazinam in citrus juice processing",
+            title,
+        )
+
+    def test_pdf_text_cleaning_removes_invalid_glyphs_and_metadata_blobs(self) -> None:
+        self.assertEqual("A B C D", clean_text("A\udbc2\udd27B\ufffdC\x01D"))
+        self.assertTrue(
+            is_metadata_blob(
+                "serial JL 272552 articleinfo contenttype FULL-TEXT "
+                "dateloaded 2024-01-01"
+            )
+        )
+
     @staticmethod
     def _write_test_chunks(connection, document_id: str, chunks: list[dict], *, title: str) -> None:
         document = SourceDocument(

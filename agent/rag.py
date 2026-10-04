@@ -1261,9 +1261,11 @@ def fetch_adjacent_method_result_chunks(
 
 
 def format_evidence_context(evidence: list[dict[str, Any]], excerpt_chars: int = 650) -> str:
+    from .evidence import clean_source_text, clean_source_title
+
     lines: list[str] = []
     for index, item in enumerate(evidence, 1):
-        title = str(item.get("title") or "未命名文献")
+        title = clean_source_title(item.get("title")) or "未命名文献"
         year = str(item.get("year") or "年份未知")
         category = str(item.get("category") or item.get("product") or "未分类")
         section = str(item.get("section") or "正文")
@@ -1271,7 +1273,7 @@ def format_evidence_context(evidence: list[dict[str, Any]], excerpt_chars: int =
         doi = str(item.get("doi") or "")
         locator = f"第{page}页" if page else "页码未标注"
         source = f"DOI {doi}" if doi else str(item.get("publication") or item.get("source_file") or "本地文献")
-        excerpt = re.sub(r"\s+", " ", str(item.get("chunk_text") or "")).strip()
+        excerpt = clean_source_text(item.get("chunk_text")) or "未提取到可核验正文片段"
         if len(excerpt) > excerpt_chars:
             excerpt = excerpt[:excerpt_chars].rstrip() + "…"
         evidence_level = str(item.get("evidence_level") or "证据不足")

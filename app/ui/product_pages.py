@@ -24,6 +24,7 @@ from typing import Any, Iterator
 import streamlit as st
 
 from agent import memory as agent_memory
+from agent import evidence as agent_evidence
 from app import knowledge_catalog as catalog_index
 from app.intake_pipeline import run_intake_pipeline
 from app import batch_research
@@ -2246,11 +2247,20 @@ def _render_research_sources(result: dict[str, Any]) -> None:
         return
     st.caption("以下为本次实际检索并纳入分析的片段。相关性不等于直接适用，请结合证据等级和实验条件复核。")
     for index, item in enumerate(evidence, 1):
-        title = str(item.get("title") or item.get("source_file") or "未命名文献")
+        title = agent_evidence.clean_source_title(
+            item.get("title") or item.get("source_file")
+        ) or "未命名文献"
         with st.expander(f"{index:02d} · {title}"):
             location = item.get("page") or item.get("page_start") or "未标注"
             st.caption(f"年份：{item.get('year') or '未标注'} · 页码：{location} · {item.get('evidence_level') or '待复核'}")
-            st.text(str(item.get("chunk_text") or "当前条目没有可展示的原文片段。"))
+            if item.get("adjacent_chunks"):
+                st.caption("正文显示已合并同篇相邻片段，并清理 PDF 页眉、页码和不可见控制字符。")
+            st.text(
+                agent_evidence.source_text_for_display(
+                    item,
+                    focus_terms=item.get("matched_terms"),
+                )
+            )
             if item.get("doi"):
                 st.caption("DOI：" + str(item["doi"]))
             if item.get("applicability"):

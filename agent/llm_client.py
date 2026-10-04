@@ -8,7 +8,12 @@ import urllib.error
 import urllib.request
 from typing import Any
 
-from .evidence import EVIDENCE_POLICY_VERSION, annotate_evidence
+from .evidence import (
+    EVIDENCE_POLICY_VERSION,
+    annotate_evidence,
+    clean_source_text,
+    clean_source_title,
+)
 from .memory import build_context_messages, estimate_tokens, select_recent_messages, truncate_to_tokens
 from .memory_config import CONTEXT_TOKEN_BUDGETS, MEMORY_RECENT_TOKEN_LIMIT
 from .process_knowledge import format_processing_context, mask_processing_numeric_values
@@ -305,11 +310,15 @@ def build_analysis_context(result: dict[str, Any]) -> str:
     excerpt_limit = 420 if retrieval_mode == "deep" else 560
     for index, item in enumerate(evidence[:evidence_limit], 1):
         page = item.get("page") or item.get("page_start") or "未标注"
-        safe_title = mask_processing_numeric_values(item.get("title") or "未命名文献")
+        safe_title = mask_processing_numeric_values(
+            clean_source_title(item.get("title")) or "未命名文献"
+        )
         safe_applicability = mask_processing_numeric_values(
             item.get("applicability") or "需回查原文确认"
         )
-        safe_excerpt = mask_processing_numeric_values(item.get("chunk_text") or "")
+        safe_excerpt = mask_processing_numeric_values(
+            clean_source_text(item.get("chunk_text"))
+        ) or "未提取到可核验正文片段"
         line = (
             f"- [文献{index}] {safe_title}"
             f"（{item.get('year') or '年份未知'}；{item.get('category') or item.get('product') or '未分类'}；"
