@@ -2786,6 +2786,91 @@ div[data-testid="stDataFrame"] * {
     font-weight: var(--weight-medium);
 }
 
+/* Live literature/route analysis step list.  Completed rows stay dark while
+   pending rows recede, so the active row and its spinner are easy to follow. */
+.agent-analysis-steps {
+    display: grid;
+    gap: 0;
+    width: 100%;
+    margin: 14px 0 18px;
+    padding: 4px 0;
+    border-top: 1px solid var(--border-subtle);
+    border-bottom: 1px solid var(--border-subtle);
+}
+
+.agent-analysis-step {
+    display: flex;
+    min-height: 42px;
+    box-sizing: border-box;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 4px;
+    color: var(--text-tertiary);
+    transition: color 160ms ease, opacity 160ms ease;
+}
+
+.agent-analysis-step.is-complete,
+.agent-analysis-step.is-active {
+    color: var(--text-primary);
+}
+
+.agent-analysis-step.is-pending {
+    opacity: .58;
+}
+
+.agent-analysis-marker {
+    display: inline-flex;
+    width: 22px;
+    height: 22px;
+    flex: 0 0 22px;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    border: 1px solid currentColor;
+    border-radius: 50%;
+    color: inherit;
+    font-size: 10px;
+    font-weight: var(--weight-medium);
+    line-height: 1;
+}
+
+.agent-analysis-step.is-complete .agent-analysis-marker {
+    color: var(--surface);
+    background: var(--text-primary);
+    border-color: var(--text-primary);
+    font-size: 13px;
+}
+
+.agent-analysis-copy {
+    display: grid;
+    min-width: 0;
+    gap: 1px;
+}
+
+.agent-analysis-copy strong {
+    color: inherit;
+    font-size: 13px;
+    font-weight: var(--weight-medium);
+    line-height: 1.4;
+}
+
+.agent-analysis-copy small {
+    color: inherit;
+    font-size: 11px;
+    line-height: 1.4;
+}
+
+.agent-analysis-spinner {
+    width: 12px;
+    height: 12px;
+    flex: 0 0 12px;
+    margin-left: auto;
+    border: 2px solid var(--border);
+    border-top-color: var(--text-primary);
+    border-radius: 50%;
+    animation: citrus-spin 800ms linear infinite;
+}
+
 .deep-retrieval-stats {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
