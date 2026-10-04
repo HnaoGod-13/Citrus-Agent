@@ -45,6 +45,10 @@ from app.ui import product_pages as ui_product_pages
 def refresh_ui_modules() -> None:
     """Refresh lightweight UI code after a Streamlit Cloud hot deployment."""
     importlib.invalidate_caches()
+    # Evidence display helpers can change with the UI deployment. Reload the
+    # module before product_pages so its module-level reference sees the new
+    # title and excerpt cleaners in a hot-reloaded Streamlit process.
+    importlib.reload(agent_evidence)
     importlib.reload(ui_components)
     importlib.reload(ui_industry_pages)
     importlib.reload(ui_product_pages)
