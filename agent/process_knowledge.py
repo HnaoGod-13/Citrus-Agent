@@ -7,7 +7,7 @@ import time
 from collections import Counter, defaultdict
 from typing import Any, Callable
 
-from .evidence import DIRECT_EVIDENCE
+from .evidence import DIRECT_EVIDENCE, clean_source_text, clean_source_title
 from .processing_config import (
     PROCESS_CONTEXT_EVIDENCE_LIMIT,
     PROCESS_CONTEXT_PARAMETER_LIMIT,
@@ -1878,8 +1878,10 @@ def format_processing_context(
     for index, item in enumerate(evidence[:PROCESS_CONTEXT_EVIDENCE_LIMIT], 1):
         source_id = str(item.get("document_id") or item.get("source_file") or item.get("chunk_id") or "")
         location = _source_location(item)
-        safe_title = mask_processing_numeric_values(item.get("title") or "未命名")
-        chunk_sentences = _sentences(str(item.get("chunk_text") or ""))
+        safe_title = mask_processing_numeric_values(
+            clean_source_title(item.get("title")) or "未命名"
+        )
+        chunk_sentences = _sentences(clean_source_text(item.get("chunk_text")))
         safe_sentences = [
             sentence
             for sentence_index, sentence in enumerate(chunk_sentences)
@@ -1910,7 +1912,7 @@ def format_processing_context(
         )
         if numeric_neighbors and _parameter_signal(str(numeric_neighbors[0].get("chunk_text") or "")) > 0:
             neighbor = numeric_neighbors[0]
-            neighbor_sentences = _sentences(str(neighbor.get("chunk_text") or ""))
+            neighbor_sentences = _sentences(clean_source_text(neighbor.get("chunk_text")))
             safe_neighbor_sentences = [
                 sentence
                 for neighbor_index, sentence in enumerate(neighbor_sentences)

@@ -6,6 +6,8 @@ from typing import Any
 
 from .evidence import (
     build_applicability,
+    clean_source_text,
+    clean_source_title,
     effective_evidence_level,
     format_key_conclusions_markdown,
     normalize_doi,
@@ -577,11 +579,11 @@ def generate_report(
             source = item.get("publication") or item.get("source_file") or "DOI/链接未收录"
         evidence_level = effective_evidence_level(item)
         applicability = item.get("applicability") or build_applicability(item)
-        excerpt = re.sub(r"\s+", " ", str(item.get("chunk_text") or "")).strip()
+        excerpt = clean_source_text(item.get("chunk_text")) or "未提取到可核验正文片段"
         if len(excerpt) > 760:
             excerpt = excerpt[:760].rstrip() + "…"
         evidence_lines.append(
-            f"{index}. **[文献{index}] {item.get('title') or '未命名文献'}**"
+            f"{index}. **[文献{index}] {clean_source_title(item.get('title')) or '未命名文献'}**"
             f"（{item.get('year') or '年份未知'}；{category}；{section}；{locator}；{source}）\n"
             f"   - 证据等级：**{evidence_level}**；判定：{item.get('evidence_level_reason') or '按保守规则自动分级'}\n"
             f"   - 原文片段：{excerpt}\n"
@@ -592,9 +594,7 @@ def generate_report(
             neighbor_locator = f"第 {neighbor_page} 页" if neighbor_page else "页码未标注"
             neighbor_section = neighbor.get("section") or "正文"
             neighbor_chunk = neighbor.get("chunk_id") or "片段号未标注"
-            neighbor_excerpt = re.sub(
-                r"\s+", " ", str(neighbor.get("chunk_text") or "")
-            ).strip()
+            neighbor_excerpt = clean_source_text(neighbor.get("chunk_text")) or "未提取到可核验正文片段"
             if len(neighbor_excerpt) > 620:
                 neighbor_excerpt = neighbor_excerpt[:620].rstrip() + "…"
             evidence_lines.append(

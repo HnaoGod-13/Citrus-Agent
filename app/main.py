@@ -2766,7 +2766,9 @@ def render_key_conclusion_evidence(conclusions: list[Mapping[str, Any]]) -> None
         for ref in list(item.get("evidence") or [])[:3]:
             if not isinstance(ref, Mapping):
                 continue
-            title = html.escape(str(ref.get("title") or "未命名文献"))
+            title = html.escape(
+                agent_evidence.clean_source_title(ref.get("title")) or "未命名文献"
+            )
             year = html.escape(str(ref.get("year") or "年份未知"))
             doi = agent_evidence.normalize_doi(ref.get("doi"))
             url = agent_evidence.source_url(ref) or str(ref.get("url") or "")
@@ -2820,7 +2822,9 @@ def render_reference_evidence(
     for index, item in enumerate(evidence, 1):
         if not isinstance(item, Mapping):
             continue
-        title = html.escape(str(item.get("title") or "未命名文献"))
+        title = html.escape(
+            agent_evidence.clean_source_title(item.get("title")) or "未命名文献"
+        )
         year = html.escape(str(item.get("year") or "年份未知"))
         source = html.escape(_evidence_source_label(item))
         topic = item.get("topic") or item.get("category") or item.get("product")
@@ -2853,13 +2857,16 @@ def render_reference_evidence(
             else ""
         )
         raw_text = str(item.get("chunk_text") or "")
+        display_raw = agent_evidence.clean_source_text(raw_text)
         excerpt = build_evidence_excerpt(
-            raw_text,
+            display_raw or raw_text,
             item.get("matched_terms"),
             page_numbers=(item.get("page"), item.get("page_start"), item.get("page_end")),
         )
+        if not display_raw:
+            excerpt = agent_evidence.source_text_for_display(item)
         excerpt_html = highlight_evidence_excerpt(excerpt, item.get("matched_terms"))
-        full_text = full_evidence_display_text(raw_text)
+        full_text = agent_evidence.source_text_for_display(item)
         full_text_html = html.escape(full_text or "暂无可展示的原文片段。")
         st.markdown(
             '<article class="reference-evidence-item">'
