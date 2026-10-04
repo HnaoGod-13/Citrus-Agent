@@ -109,13 +109,10 @@ def test_example_and_saved_batch_buttons_run_research_and_rerun_uses_cached_resu
     assert "可回查的原文" in [item.value for item in app.text]
     app.run()
     assert app.session_state["calls"] == 1
-    if page == "process":
-        # The sample cards above are the single process entry point; the old
-        # duplicate wide button is intentionally absent.
-        assert not any(button.key == "process_generate" for button in app.button)
-        app.button(key="process_example_nfc").click().run()
-    else:
-        app.button(key="decision_generate").click().run()
+    # The sample cards above are the single entry point; the old duplicate
+    # wide generation button is intentionally absent on both pages.
+    assert not any(button.key == f"{page}_generate" for button in app.button)
+    app.button(key=f"{page}_example_nfc").click().run()
     assert app.session_state["calls"] == 2
     # A different saved revision must require analysis before showing results.
     model = deepcopy(app.session_state["industry_ui_model"])
@@ -124,10 +121,7 @@ def test_example_and_saved_batch_buttons_run_research_and_rerun_uses_cached_resu
     app.run()
     assert not app.exception
     assert "本次文献依据" not in [item.value for item in app.subheader]
-    if page == "process":
-        app.button(key="process_example_nfc").click().run()
-    else:
-        app.button(key="decision_generate").click().run()
+    app.button(key=f"{page}_example_nfc").click().run()
     assert app.session_state["calls"] == 3
 
 
@@ -140,6 +134,6 @@ def test_failed_generation_is_not_marked_done_and_can_retry():
     assert app.error
     assert "本次文献依据" not in [item.value for item in app.subheader]
     app.session_state["fail_research"] = False
-    app.button(key="decision_generate").click().run()
+    app.button(key="decision_example_nfc").click().run()
     assert not app.exception
     assert app.session_state["decision_generated"] is True

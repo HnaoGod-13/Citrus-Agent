@@ -2279,6 +2279,24 @@ def _is_example_batch(result: dict[str, Any]) -> bool:
     return bool(record_id) and record_id in {str(item["id"]) for item in _EXAMPLE_LIBRARY}
 
 
+def _render_agent_run_status(slot: Any, label: str, state: str = "running") -> None:
+    """Render the analysis status with a visible running indicator."""
+    safe_state = state if state in {"running", "complete", "error"} else "running"
+    safe_label = html.escape(label)
+    icon = (
+        '<span class="agent-run-status-icon" aria-label="正在思考"></span>'
+        if safe_state == "running"
+        else '<span class="agent-run-status-icon" aria-hidden="true">✓</span>'
+        if safe_state == "complete"
+        else '<span class="agent-run-status-icon" aria-hidden="true">!</span>'
+    )
+    slot.markdown(
+        f'<div class="agent-run-status is-{safe_state}" role="status" aria-live="polite">'
+        f'{icon}<strong>{safe_label}</strong></div>',
+        unsafe_allow_html=True,
+    )
+
+
 def _render_agent_generation(page: str, result: dict[str, Any], *, title: str) -> dict[str, Any] | None:
     """Run real retrieval on request; rerenders only display the saved result."""
     cleaning = result.get("cleaning") if isinstance(result, dict) else {}
@@ -2311,11 +2329,8 @@ def _render_agent_generation(page: str, result: dict[str, Any], *, title: str) -
     generated = cached if cached.get("research_request_key") == request_key else None
     requested = bool(st.session_state.pop(f"{page}_generation_requested", False))
     progress_host: Any | None = None
-    # The process page already has the unified entry button in the example
-    # library above.  Keeping this second wide button made the same action
-    # appear twice and obscured the live Agent analysis below it.
     clicked = False
-    if page != "process" or not _is_example_batch(result):
+    if not _is_example_batch(result):
         clicked = st.button("重新检索并生成" if generated else title, type="primary",
                             key=f"{page}_generate", width="stretch")
     if requested or clicked:
@@ -2330,6 +2345,8 @@ def _render_agent_generation(page: str, result: dict[str, Any], *, title: str) -
             active_index=active_index,
             completed_indices=completed_indices,
         )
+        status_host = st.empty()
+        _render_agent_run_status(status_host, "正在检索文献并分析当前批次…")
 
         def _progress(message: str) -> None:
             nonlocal active_index
@@ -2343,21 +2360,20 @@ def _render_agent_generation(page: str, result: dict[str, Any], *, title: str) -
                 completed_indices=completed_indices,
             )
 
-        with st.status("正在检索文献并分析当前批次…", expanded=True) as thinking:
-            try:
-                generated = batch_research.generate_batch_research(
-                    result, page=page, retrieval_mode=mode, progress_callback=_progress,
-                )
-            except Exception:
-                thinking.update(label="本次文献分析未完成", state="error", expanded=True)
-                st.error("文献分析暂时失败，请重试。未将本次分析标记为成功。")
-                return None
-            generated["research_request_key"] = request_key
-            st.session_state[f"{page}_generated_result"] = generated
-            st.session_state[f"{page}_generated"] = True
-            st.session_state.batch_research_result = generated
-            _render_agent_analysis_steps(progress_host, final_steps=generated.get("agent_steps") or [])
-            thinking.update(label="文献检索与分析已结束", state="complete", expanded=False)
+        try:
+            generated = batch_research.generate_batch_research(
+                result, page=page, retrieval_mode=mode, progress_callback=_progress,
+            )
+        except Exception:
+            _render_agent_run_status(status_host, "本次文献分析未完成", "error")
+            st.error("文献分析暂时失败，请重试。未将本次分析标记为成功。")
+            return None
+        generated["research_request_key"] = request_key
+        st.session_state[f"{page}_generated_result"] = generated
+        st.session_state[f"{page}_generated"] = True
+        st.session_state.batch_research_result = generated
+        _render_agent_analysis_steps(progress_host, final_steps=generated.get("agent_steps") or [])
+        _render_agent_run_status(status_host, "文献检索与分析已结束", "complete")
     if generated:
         if progress_host is None:
             progress_host = st.empty()
@@ -2366,7 +2382,7 @@ def _render_agent_generation(page: str, result: dict[str, Any], *, title: str) -
         (st.warning if needs_attention else st.success)(summary)
         rerun_hint = (
             "再次运行可点击上方对应示例批次按钮。"
-            if page == "process" and _is_example_batch(result)
+            if _is_example_batch(result)
             else "点击“重新检索并生成”可更新。"
         )
         st.caption(f"结果绑定当前批次与资料版本；返回同一页面不会重复检索，路线与工艺会分别按各自问题分析。{rerun_hint}")
