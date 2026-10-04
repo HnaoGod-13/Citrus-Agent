@@ -2177,6 +2177,108 @@ def _render_example_library(page: str) -> None:
                     st.rerun()
 
 
+_AGENT_ANALYSIS_STEPS: tuple[tuple[str, str], ...] = (
+    ("理解任务", "确认当前批次、目标产品和分析边界"),
+    ("识别业务场景和检索范围", "识别产品类型并限定文献检索范围"),
+    ("制定受控执行计划", "排列必需工具和分析顺序"),
+    ("读取受控记忆", "读取当前任务上下文和长期文献状态"),
+    ("识别加工目标、规模、设备和参数需求", "拆解本次工艺问题和参数需求"),
+    ("检索文献证据", "按单元操作检索参数、质量和包装依据"),
+    ("评估加工路线", "综合批次规则、证据适用性和数据完整度"),
+    ("补充单元操作参数和质量证据", "围绕优先路线补充工艺证据"),
+    ("检查质控边界和风险项", "识别需要人工复核的风险和缺口"),
+    ("生成可复核的 Markdown 报告", "整理工艺方案、证据和决策链"),
+    ("执行固定质控护栏", "完成必需工具校验和发布前检查"),
+)
+
+
+def _analysis_step_index(message: str) -> int:
+    """Map a workflow progress message to the visible analysis step."""
+    text = str(message or "")
+    if "识别业务场景" in text:
+        return 1
+    if "制定受控执行计划" in text:
+        return 2
+    if "读取短期任务上下文" in text or "读取受控记忆" in text:
+        return 3
+    if "识别加工目标" in text:
+        return 4
+    if "按单元操作拆分问题" in text or "检索本地文献库" in text:
+        return 5
+    if "综合批次规则" in text:
+        return 6
+    if "围绕优先路线补充" in text:
+        return 7
+    if "检查质控边界" in text:
+        return 8
+    if "生成可复核" in text:
+        return 9
+    if "固定质控护栏" in text:
+        return 10
+    return 0
+
+
+def _render_agent_analysis_steps(
+    host: Any,
+    *,
+    active_index: int | None = None,
+    completed_indices: set[int] | None = None,
+    final_steps: list[dict[str, Any]] | None = None,
+) -> None:
+    """Render a compact live step list with an active spinner.
+
+    ``st.status`` only shows a stream of log messages.  The list here keeps
+    finished work visually black, leaves pending work muted, and marks the
+    current operation with a spinner on the right.  On completion we use the
+    actual workflow step records so optional branches are not shown as if they
+    had run.
+    """
+    if final_steps is not None:
+        rows = []
+        for item in final_steps:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or "分析步骤")
+            observation = str(item.get("observation") or "")
+            status = str(item.get("status") or "")
+            # A final partial retrieval is still an executed step.  Only an
+            # explicitly active/pending record should keep the muted state;
+            # final rows never show a spinner.
+            state = "pending" if status in {"进行中", "运行中", "active", "pending"} else "complete"
+            rows.append((name, observation, state))
+        if not rows:
+            rows = [(name, detail, "complete") for name, detail in _AGENT_ANALYSIS_STEPS]
+    else:
+        rows = []
+        current = max(0, min(int(active_index or 0), len(_AGENT_ANALYSIS_STEPS) - 1))
+        for index, (name, detail) in enumerate(_AGENT_ANALYSIS_STEPS):
+            if completed_indices is None:
+                state = "complete" if index < current else "active" if index == current else "pending"
+            else:
+                state = "complete" if index in completed_indices else "active" if index == current else "pending"
+            rows.append((name, detail, state))
+
+    markup = ['<div class="agent-analysis-steps" role="status" aria-live="polite">']
+    for index, (name, detail, state) in enumerate(rows, 1):
+        marker = "✓" if state == "complete" else str(index).zfill(2)
+        spinner = '<span class="agent-analysis-spinner" aria-label="正在进行"></span>' if state == "active" else ""
+        markup.append(
+            f'<div class="agent-analysis-step is-{state}">'
+            f'<span class="agent-analysis-marker">{html.escape(marker)}</span>'
+            f'<span class="agent-analysis-copy"><strong>{html.escape(name)}</strong>'
+            f'<small>{html.escape(detail)}</small></span>{spinner}</div>'
+        )
+    markup.append("</div>")
+    host.markdown("".join(markup), unsafe_allow_html=True)
+
+
+def _is_example_batch(result: dict[str, Any]) -> bool:
+    """Identify the sample batch flow that already has an entry button above."""
+    context = result.get("task_context") if isinstance(result, dict) else {}
+    record_id = str(context.get("record_id") or "").strip() if isinstance(context, dict) else ""
+    return bool(record_id) and record_id in {str(item["id"]) for item in _EXAMPLE_LIBRARY}
+
+
 def _render_agent_generation(page: str, result: dict[str, Any], *, title: str) -> dict[str, Any] | None:
     """Run real retrieval on request; rerenders only display the saved result."""
     cleaning = result.get("cleaning") if isinstance(result, dict) else {}
@@ -2208,16 +2310,43 @@ def _render_agent_generation(page: str, result: dict[str, Any], *, title: str) -
     cached = st.session_state.get(f"{page}_generated_result") or {}
     generated = cached if cached.get("research_request_key") == request_key else None
     requested = bool(st.session_state.pop(f"{page}_generation_requested", False))
-    clicked = st.button("重新检索并生成" if generated else title, type="primary",
-                        key=f"{page}_generate", width="stretch")
+    progress_host: Any | None = None
+    # The process page already has the unified entry button in the example
+    # library above.  Keeping this second wide button made the same action
+    # appear twice and obscured the live Agent analysis below it.
+    clicked = False
+    if page != "process" or not _is_example_batch(result):
+        clicked = st.button("重新检索并生成" if generated else title, type="primary",
+                            key=f"{page}_generate", width="stretch")
     if requested or clicked:
         st.session_state.pop(f"{page}_generated_result", None)
         st.session_state[f"{page}_generated"] = False
         generated = None
+        progress_host = st.empty()
+        completed_indices: set[int] = set()
+        active_index = 0
+        _render_agent_analysis_steps(
+            progress_host,
+            active_index=active_index,
+            completed_indices=completed_indices,
+        )
+
+        def _progress(message: str) -> None:
+            nonlocal active_index
+            next_index = _analysis_step_index(message)
+            if next_index != active_index:
+                completed_indices.add(active_index)
+                active_index = next_index
+            _render_agent_analysis_steps(
+                progress_host,
+                active_index=active_index,
+                completed_indices=completed_indices,
+            )
+
         with st.status("正在检索文献并分析当前批次…", expanded=True) as thinking:
             try:
                 generated = batch_research.generate_batch_research(
-                    result, page=page, retrieval_mode=mode, progress_callback=st.write,
+                    result, page=page, retrieval_mode=mode, progress_callback=_progress,
                 )
             except Exception:
                 thinking.update(label="本次文献分析未完成", state="error", expanded=True)
@@ -2227,15 +2356,20 @@ def _render_agent_generation(page: str, result: dict[str, Any], *, title: str) -
             st.session_state[f"{page}_generated_result"] = generated
             st.session_state[f"{page}_generated"] = True
             st.session_state.batch_research_result = generated
+            _render_agent_analysis_steps(progress_host, final_steps=generated.get("agent_steps") or [])
             thinking.update(label="文献检索与分析已结束", state="complete", expanded=False)
     if generated:
+        if progress_host is None:
+            progress_host = st.empty()
+            _render_agent_analysis_steps(progress_host, final_steps=generated.get("agent_steps") or [])
         summary, needs_attention = batch_research.retrieval_summary(generated)
         (st.warning if needs_attention else st.success)(summary)
-        with st.expander("查看实际分析步骤"):
-            for step in generated.get("agent_steps") or []:
-                st.write(f"{step.get('name', '')} · {step.get('status', '')}")
-                st.caption(step.get("observation", ""))
-        st.caption("结果绑定当前批次与资料版本；返回同一页面不会重复检索，路线与工艺会分别按各自问题分析。点击“重新检索并生成”可更新。")
+        rerun_hint = (
+            "再次运行可点击上方对应示例批次按钮。"
+            if page == "process" and _is_example_batch(result)
+            else "点击“重新检索并生成”可更新。"
+        )
+        st.caption(f"结果绑定当前批次与资料版本；返回同一页面不会重复检索，路线与工艺会分别按各自问题分析。{rerun_hint}")
     return generated
 
 
