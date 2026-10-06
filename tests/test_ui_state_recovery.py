@@ -293,6 +293,21 @@ class EmptyStateProgressLayoutTests(unittest.TestCase):
             reduced_motion_rule.index(spinner_override),
         )
 
+    def test_batch_run_status_has_a_visible_spinner_and_terminal_states(self) -> None:
+        stylesheet = Path(app_main.__file__).with_name("ui").joinpath("design_system.css")
+        css = stylesheet.read_text(encoding="utf-8-sig")
+
+        status_start = css.index(".agent-run-status {")
+        status_rule = css[status_start : css.index("}", status_start) + 1]
+        icon_start = css.index(".agent-run-status-icon {")
+        icon_rule = css[icon_start : css.index("}", icon_start) + 1]
+        self.assertIn("display: flex;", status_rule)
+        self.assertIn("border: 1px solid var(--border-subtle);", status_rule)
+        self.assertIn("border-top-color: var(--text-primary);", icon_rule)
+        self.assertIn("animation: citrus-spin 800ms linear infinite;", icon_rule)
+        self.assertIn(".agent-run-status.is-complete .agent-run-status-icon", css)
+        self.assertIn(".agent-run-status.is-error .agent-run-status-icon", css)
+
     def test_background_progress_never_repositions_the_transcript(self) -> None:
         source = Path(app_main.__file__).read_text(encoding="utf-8-sig")
         monitor = source[

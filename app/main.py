@@ -763,6 +763,22 @@ SCROLL_POSITION_MANAGER_INSTALLER = r"""
             if (!target || typeof target.closest !== "function") return;
             const rail = target.closest(".citrus-primary-rail");
             const sidebar = target.closest('[data-testid="stSidebar"]');
+            const agentPanel = target.closest('[class*="st-key-agent_panel_scroll_"]');
+            if (agentPanel) {
+                const canMoveDown = event.deltaY > 0
+                    && agentPanel.scrollTop + agentPanel.clientHeight < agentPanel.scrollHeight - 1;
+                const canMoveUp = event.deltaY < 0 && agentPanel.scrollTop > 1;
+                event.preventDefault();
+                manager.handleUserInput(event);
+                if (canMoveDown || canMoveUp) {
+                    agentPanel.scrollBy({
+                        top: event.deltaY,
+                        left: 0,
+                        behavior: "auto",
+                    });
+                }
+                return;
+            }
             const primaryRailWidth = Number.parseFloat(
                 window.getComputedStyle(doc.documentElement)
                     .getPropertyValue("--primary-rail-width")

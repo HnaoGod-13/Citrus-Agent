@@ -2887,27 +2887,26 @@ div[data-testid="stDataFrame"] * {
     border-radius: var(--radius-input);
 }
 
+.agent-run-status-icon {
+    display: inline-flex;
+    width: 16px;
+    height: 16px;
+    flex: 0 0 16px;
+    box-sizing: border-box;
+    align-items: center;
+    justify-content: center;
+    border: 2px solid var(--border);
+    border-top-color: var(--text-primary);
+    border-radius: 50%;
+    animation: citrus-spin 800ms linear infinite;
+    will-change: transform;
+}
+
 .agent-run-status strong {
+    color: inherit;
     font-size: 13px;
     font-weight: var(--weight-medium);
     line-height: 1.4;
-}
-
-.agent-run-status-icon {
-    display: inline-flex;
-    width: 14px;
-    height: 14px;
-    flex: 0 0 14px;
-    align-items: center;
-    justify-content: center;
-    box-sizing: border-box;
-    border: 2px solid var(--border-strong);
-    border-top-color: var(--text-primary);
-    border-radius: 50%;
-    color: var(--surface);
-    font-size: 9px;
-    font-weight: var(--weight-semibold);
-    line-height: 1;
 }
 
 .agent-run-status.is-running .agent-run-status-icon {
@@ -4930,6 +4929,10 @@ div[data-testid="stHorizontalBlock"]:has(.assistant-markdown-label)
     .agent-progress-spinner {
         animation: agent-panel-spin 800ms linear infinite !important;
     }
+
+    .agent-run-status.is-running .agent-run-status-icon {
+        animation: citrus-spin 800ms linear infinite !important;
+    }
 }
 
 /* Industry workspace, matched to the existing product shell ---------------- */
@@ -6269,7 +6272,7 @@ section[data-testid="stAppScrollToBottomContainer"] [data-testid="stBottomBlockC
     padding: 18px 3px 16px 0;
     overflow-x: hidden !important;
     overflow-y: auto !important;
-    overscroll-behavior: contain;
+    overscroll-behavior: none;
     scrollbar-gutter: stable;
     scrollbar-width: thin;
 }
