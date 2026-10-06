@@ -1,10 +1,53 @@
 from docx import Document
-from docx.shared import Cm
+from docx.shared import Cm, Pt
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+import base64
+from io import BytesIO
+import pytest
+from PIL import Image
 
 from app.reporting.docx_export import markdown_to_docx
+from app.reporting.markdown_format import normalize_table_captions
+
+
+def test_generated_figures_embed_png_keep_editable_captions_and_survive_template_slots(tmp_path):
+    png = BytesIO()
+    Image.new("RGB", (900, 300), "white").save(png, format="PNG")
+    figure = {"id": "flow-1", "caption": "图1 工艺流程", "note": "资料来源：[1]",
+              "mime_type": "image/png", "image_base64": base64.b64encode(png.getvalue()).decode()}
+    markdown = "## 工艺方案\n流程说明。\n![图1 工艺流程](report-figure:flow-1)\n实施要求。"
+    for use_template in (False, True):
+        template_path = tmp_path / "figure-template.docx"
+        if use_template:
+            template = Document()
+            template.add_heading("工艺方案", level=1)
+            template.add_paragraph("{{工艺方案}}")
+            template.save(template_path)
+        result = markdown_to_docx(markdown, tmp_path / f"figures-{use_template}.docx", figures=[figure],
+                                  template_path=template_path if use_template else None)
+        document = Document(result)
+        assert len(document.inline_shapes) == 1
+        assert document.inline_shapes[0].width <= document.sections[0].page_width - document.sections[0].left_margin - document.sections[0].right_margin
+        text = "\n".join(p.text for p in document.paragraphs)
+        assert "report-figure:" not in text and "{{" not in text
+        assert text.index("流程说明") < text.index("图1 工艺流程") < text.index("实施要求")
+        caption = next(p for p in document.paragraphs if p.text == figure["caption"])
+        assert_typeface(caption._p, 21)
+        assert caption.alignment == WD_ALIGN_PARAGRAPH.CENTER
+        assert caption._p.getprevious().xpath(".//w:drawing")
+        assert caption.paragraph_format.first_line_indent == 0
+        assert document.element.body.xpath('.//w:r[w:rPr/w:vertAlign[@w:val="superscript"]]/w:t[text()="[1]"]')
+
+
+def test_figure_export_rejects_unknown_ids_and_non_png_payloads(tmp_path):
+    marker = "![图片](report-figure:unknown)"
+    with pytest.raises(ValueError, match="缺少对应图表"):
+        markdown_to_docx(marker, tmp_path / "missing.docx")
+    with pytest.raises(ValueError, match="PNG"):
+        markdown_to_docx(marker, tmp_path / "unsafe.docx", figures=[{
+            "id": "unknown", "mime_type": "image/svg+xml", "image_base64": "PHN2Zz4="}])
 
 
 def test_custom_word_template_preserves_layout_and_fills_section_placeholders(tmp_path):
@@ -94,11 +137,25 @@ def test_generated_report_uses_requested_fonts_sizes_and_three_line_tables(tmp_p
         if paragraph.style.name.startswith("Heading"):
             assert_typeface(paragraph._p, 32)
             assert paragraph.alignment == WD_ALIGN_PARAGRAPH.LEFT
+            assert paragraph.paragraph_format.first_line_indent == Pt(32)
+            assert paragraph._p.xpath("./w:pPr/w:ind/@w:firstLineChars") == ["200"]
+        elif paragraph.style.name == "Report TOC Title":
+            assert_typeface(paragraph._p, 32)
+            assert paragraph.alignment == WD_ALIGN_PARAGRAPH.CENTER
             assert paragraph.paragraph_format.first_line_indent == 0
+        elif paragraph.style.name == "Report TOC Entry":
+            assert_typeface(paragraph._p, 28)
+        elif paragraph.style.name == "Report Table Caption":
+            assert_typeface(paragraph._p, 21)
+            assert paragraph.alignment == WD_ALIGN_PARAGRAPH.CENTER
+            assert paragraph.paragraph_format.keep_with_next is True
+            assert paragraph._p.getnext().tag == qn("w:tbl")
         elif paragraph.style.name != "Title":
             assert_typeface(paragraph._p, 24)
     toc = next(p for p in doc.paragraphs if p.text.startswith("01  "))
-    assert_typeface(toc._p, 24)
+    assert_typeface(toc._p, 28)
+    assert toc.paragraph_format.line_spacing == 1.3
+    assert toc.paragraph_format.space_after >= Pt(3)
     assert_three_line_table(doc.tables[0])
     body_citations = [run for paragraph in doc.paragraphs for run in paragraph.runs if run.text == "[1]"]
     table_citations = [run for row in doc.tables[0].rows for cell in row.cells for paragraph in cell.paragraphs for run in paragraph.runs if run.text == "[2]"]
@@ -145,7 +202,122 @@ def test_uploaded_template_direct_formatting_cannot_override_report_format(tmp_p
     assert heading.text == "项目摘要"
     assert_typeface(heading._p, 32)
     assert heading.alignment == WD_ALIGN_PARAGRAPH.LEFT
-    assert heading.paragraph_format.first_line_indent == 0
+    assert heading.paragraph_format.first_line_indent == Pt(32)
     for name in ("header", "footer", "first_page_header", "even_page_footer"):
         assert_typeface(getattr(doc.sections[0], name)._element, 24)
     assert_three_line_table(doc.tables[0])
+
+
+def test_table_titles_are_numbered_once_and_stay_above_their_tables(tmp_path):
+    markdown = "## 原料条件\n\n| 品种 | 数量 |\n|---|---|\n| 沃柑 | 20 |\n\n## 市场分析\n\n**表9 出口量**\n\n| 年份 | 数值 |\n|---|---|\n| 2024 | 20 |\n"
+    normalized = normalize_table_captions(markdown)
+    assert normalized == normalize_table_captions(normalized)
+    assert "表1 原料条件" in normalized and "表2 出口量" in normalized
+    document = Document(markdown_to_docx(normalized, tmp_path / "tables.docx"))
+    captions = [p for p in document.paragraphs if p.style.name == "Report Table Caption"]
+    assert [p.text for p in captions] == ["表1 原料条件", "表2 出口量"]
+    assert all(p._p.getnext().tag == qn("w:tbl") for p in captions)
+
+
+def test_native_template_table_title_and_toc_use_requested_format(tmp_path):
+    template = Document()
+    template.add_heading("目 录", level=1)
+    template.add_paragraph("表1 原料指标")
+    table = template.add_table(rows=2, cols=1)
+    table.cell(0, 0).text = "指标"
+    table.cell(1, 0).text = "糖度"
+    template_path = tmp_path / "native-captions.docx"
+    template.save(template_path)
+    document = Document(markdown_to_docx("", tmp_path / "native-result.docx", template_path=template_path))
+    assert document.paragraphs[0].alignment == WD_ALIGN_PARAGRAPH.CENTER
+    assert document.paragraphs[0].paragraph_format.first_line_indent == 0
+    caption = document.paragraphs[1]
+    assert_typeface(caption._p, 21)
+    assert caption.alignment == WD_ALIGN_PARAGRAPH.CENTER
+    assert caption.paragraph_format.keep_with_next is True
+
+
+@pytest.mark.parametrize("with_figure", [False, True])
+def test_template_section_slots_keep_editable_tables_and_separate_captions(tmp_path, with_figure):
+    template = Document()
+    template.add_paragraph("模板前文")
+    template.add_heading("实施计划", level=1)
+    slot = template.add_paragraph()
+    slot.add_run("{{实施")
+    slot.add_run("计划}}")
+    template.add_paragraph("模板后文")
+    template_path = tmp_path / "table-slot.docx"
+    template.save(template_path)
+    png = BytesIO()
+    Image.new("RGB", (900, 300), "white").save(png, format="PNG")
+    figure = {"id": "schedule-1", "caption": "图1 实施计划", "note": "",
+              "mime_type": "image/png", "image_base64": base64.b64encode(png.getvalue()).decode()}
+    marker = "![图1 实施计划](report-figure:schedule-1)\n\n" if with_figure else ""
+    markdown = ("## 实施计划\n前期准备说明。[1]\n\n" + marker
+                + "表1 阶段计划\n\n| 阶段 | 计划 |\n|---|---|\n| 前期 | 第1月 |\n| 建设 | 第2月 [2] |\n"
+                + "\n### 验收要求\n完成验收。\n")
+    document = Document(markdown_to_docx(markdown, tmp_path / "table-slot-result.docx",
+                                       template_path=template_path, figures=[figure] if with_figure else []))
+    assert len(document.tables) == 1
+    assert_three_line_table(document.tables[0])
+    caption = next(p for p in document.paragraphs if p.text == "表1 阶段计划")
+    assert caption._p.getnext() == document.tables[0]._tbl
+    assert caption.alignment == WD_ALIGN_PARAGRAPH.CENTER
+    assert caption.paragraph_format.keep_with_next is True
+    assert_typeface(caption._p, 21)
+    text = "\n".join(p.text for p in document.paragraphs)
+    assert text.index("模板前文") < text.index("前期准备说明") < text.index("表1 阶段计划") < text.index("完成验收") < text.index("模板后文")
+    assert text.count("前期准备说明") == 1 and "{{" not in text and "｜" not in text
+    subheading = next(p for p in document.paragraphs if p.text == "验收要求")
+    assert subheading.style.name == "Heading 2"
+    assert subheading.paragraph_format.first_line_indent == Pt(32)
+    assert document.tables[0]._tbl.xpath('.//w:r[w:rPr/w:vertAlign[@w:val="superscript"]]/w:t[text()="[2]"]')
+    assert len(document.inline_shapes) == int(with_figure)
+    if with_figure:
+        figure_caption = next(p for p in document.paragraphs if p.text == "图1 实施计划")
+        assert figure_caption._p.getprevious().xpath(".//w:drawing")
+        assert figure_caption._p.getnext() == caption._p
+        assert figure_caption.alignment == WD_ALIGN_PARAGRAPH.CENTER
+        assert_typeface(figure_caption._p, 21)
+
+
+def test_table_cell_section_slot_preserves_existing_template_grid(tmp_path):
+    template = Document()
+    table = template.add_table(rows=2, cols=2)
+    table.cell(0, 0).text = "章节"
+    table.cell(0, 1).text = "内容"
+    table.cell(1, 0).text = "实施计划"
+    table.cell(1, 1).text = "{{实施计划}}"
+    template_path = tmp_path / "cell-slot.docx"
+    template.save(template_path)
+    markdown = "## 实施计划\n\n| 阶段 | 计划 |\n|---|---|\n| 前期 | 第1月 |\n"
+    document = Document(markdown_to_docx(markdown, tmp_path / "cell-result.docx", template_path=template_path))
+    assert len(document.tables) == 1 and len(document.tables[0].rows) == 2
+    cell = document.tables[0].cell(1, 1)
+    assert "第1月" in cell.text and "{{" not in cell.text
+    assert len(cell.tables) == 0 and cell._tc[-1].tag == qn("w:p")
+    assert_three_line_table(document.tables[0])
+
+
+@pytest.mark.parametrize("caption_style", ["Normal", "Caption"])
+def test_existing_template_image_caption_uses_requested_format(tmp_path, caption_style):
+    template = Document()
+    png = BytesIO()
+    Image.new("RGB", (900, 300), "white").save(png, format="PNG")
+    png.seek(0)
+    template.add_picture(png, width=Cm(12))
+    template.add_paragraph()
+    caption = template.add_paragraph("图1 已有工艺图", style=caption_style)
+    caption.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    caption.paragraph_format.first_line_indent = Cm(1)
+    template.add_paragraph("正文说明。")
+    template.add_paragraph("图1 的详细说明见正文。")
+    template_path = tmp_path / "image-caption.docx"
+    template.save(template_path)
+    document = Document(markdown_to_docx("", tmp_path / "image-result.docx", template_path=template_path))
+    caption = next(p for p in document.paragraphs if p.text == "图1 已有工艺图")
+    assert caption.alignment == WD_ALIGN_PARAGRAPH.CENTER
+    assert caption.paragraph_format.first_line_indent == 0
+    assert_typeface(caption._p, 21)
+    mention = next(p for p in document.paragraphs if p.text == "图1 的详细说明见正文。")
+    assert_typeface(mention._p, 24)

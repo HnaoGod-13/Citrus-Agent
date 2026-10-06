@@ -77,6 +77,57 @@ test('generated project report preview safely renders headings, lists and tables
   assert.match(html,/<ul><li>待复核<\/li><\/ul>/);
   assert.doesNotMatch(html,/<script>/);
 });
+test('report table captions precede their table and do not turn prose mentions into captions',()=>{
+  for(const caption of ['表1 原料数据','表 1 原料数据 <script>attack()</script> [1]']){
+    const html=renderReportMarkdown(`${caption}\n\n| 项目 | 内容 |\n|---|---|\n| 批次 | B-01 |`);
+    assert.match(html,/<p class="report-table-caption">.*<\/p><table>/);
+    assert.doesNotMatch(html,/<script>/);
+  }
+  assert.equal(renderReportMarkdown('详见表1 原料数据。'),'<p>详见表1 原料数据。</p>');
+  assert.equal(renderReportMarkdown('表1 显示了原料数据。\n这是分析正文。'),'<p>表1 显示了原料数据。</p><p>这是分析正文。</p>');
+});
+test('only the contents heading receives centered contents styling',()=>{
+  assert.equal(renderReportMarkdown('## 目 录\n## 产业分析'),'<h3 class="report-toc-heading">目 录</h3><h3>产业分析</h3>');
+});
+
+const reportPng='iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aL1sAAAAASUVORK5CYII=';
+test('report figures render only matching PNG assets with captions and superscript source notes',()=>{
+  const figures=[{id:'export-volume',caption:'图1 武鸣沃柑出口量',note:'来源：新华社 [11]',image_base64:reportPng,mime_type:'image/png'}];
+  const markdown='## 产业分析\n\n![出口量](report-figure:export-volume)\n\n产业基础稳步提升。';
+  const html=renderReportMarkdown(markdown,figures);
+  assert.match(html,/<figure class="report-figure"><img src="data:image\/png;base64,/);
+  assert.ok(html.includes(`src="data:image/png;base64,${reportPng}"`));
+  assert.match(html,/<figcaption>图1 武鸣沃柑出口量<\/figcaption>/);
+  assert.match(html,/来源：新华社 <sup>\[11\]<\/sup>/);
+  assert.doesNotMatch(html,/report-figure:export-volume/);
+  const restored=JSON.parse(JSON.stringify({markdown,figures}));
+  assert.equal(renderReportMarkdown(restored.markdown,restored.figures),html);
+});
+test('report figure preview rejects external images and malformed assets while escaping all figure text',()=>{
+  const figures=[
+    {id:'trusted',caption:'图1 <script>alert("caption")</script>',note:'<img src=x onerror="attack()"> [11]',image_base64:reportPng,mime_type:'image/png'},
+    {id:'unsafe-type',caption:'非PNG图',image_base64:reportPng,mime_type:'image/svg+xml'},
+    {id:'unsafe-data',caption:'无效图',image_base64:'https://example.com/chart.png',mime_type:'image/png'},
+    {id:'unsafe-attribute',caption:'无效属性图',image_base64:`${reportPng}" onerror="attack()`,mime_type:'image/png'},
+  ];
+  const markdown=[
+    '![图](report-figure:trusted)',
+    '![外部图](https://example.com/private.png)',
+    '![脚本图](javascript:attack())',
+    '![本地图](file:///private.png)',
+    '![缺失 <script>attack()</script> [2]](report-figure:missing)',
+    '![图](report-figure:unsafe-type)',
+    '![图](report-figure:unsafe-data)',
+    '![图](report-figure:unsafe-attribute)',
+  ].join('\n');
+  const html=renderReportMarkdown(markdown,figures);
+  assert.equal((html.match(/<img /g)||[]).length,1);
+  assert.match(html,/&lt;script&gt;alert\(&quot;caption&quot;\)&lt;\/script&gt;/);
+  assert.match(html,/&lt;img src=x onerror=&quot;attack\(\)&quot;&gt; <sup>\[11\]<\/sup>/);
+  assert.match(html,/缺失 &lt;script&gt;attack\(\)&lt;\/script&gt; <sup>\[2\]<\/sup>/);
+  assert.doesNotMatch(html,/<script|https:\/\/example\.com|javascript:|file:\/\/|report-figure:|image\/svg\+xml/);
+  assert.equal(renderReportMarkdown('![缺失](report-figure:missing)'),'<p class="report-figure-caption">缺失</p>');
+});
 
 test('operational workspace omits prototype boundary and session explanation strips',()=>{
   for(const phrase of ['业务数据边界','供应、采购、匹配与对接在一个流程内完成','当前供应批次和候选企业为界面演示数据','class="session-note"','class="evidence-note"']){

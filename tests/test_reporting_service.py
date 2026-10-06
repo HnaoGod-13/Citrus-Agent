@@ -78,10 +78,12 @@ def test_report_combines_web_evidence_llm_and_word_export(monkeypatch, tmp_path)
         captured["sources"] = sources
         captured["profile"] = profile
         captured["web_status"] = analysis_input["web_research"]["status"]
-        return "# 项目报告\n\n## 项目摘要\n" + ("项目建设方案具备完整的事实依据和可执行的实施路径。" * 100)
+        return "# 项目报告\n\n## 项目摘要\n" + ("项目建设方案具备完整的事实依据和可执行的实施路径。" * 100) + "\n\n## 加工路线和工艺方案\n工艺流程：原料验收 → 分选清洗 → 榨汁"
 
     fake_export = types.ModuleType("app.reporting.docx_export")
     def write_docx(markdown, output_path, **kwargs):
+        captured["export_markdown"] = markdown
+        captured["export_figures"] = kwargs.get("figures")
         Path(output_path).write_bytes(b"PK-test-docx")
         return Path(output_path)
     fake_export.markdown_to_docx = write_docx
@@ -105,6 +107,10 @@ def test_report_combines_web_evidence_llm_and_word_export(monkeypatch, tmp_path)
     assert captured["profile"]["reportType"] == "项目报告"
     assert "templateData" not in captured["profile"] and "markdown" not in captured["profile"]
     assert Path(result["docx_path"]).read_bytes() == b"PK-test-docx"
+    assert result["figures"] == captured["export_figures"]
+    assert len(result["figures"]) == 1
+    assert result["figures"][0]["kind"] == "flow"
+    assert result["figures"][0]["id"] in captured["export_markdown"]
 
 
 def test_web_search_tries_the_next_provider_after_a_failure(monkeypatch):

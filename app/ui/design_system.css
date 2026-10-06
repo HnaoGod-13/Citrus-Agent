@@ -778,6 +778,7 @@ header[data-testid="stHeader"] {
 }
 
 [data-testid="stSidebar"] {
+    overscroll-behavior: contain;
     width: var(--secondary-panel-width) !important;
     min-width: var(--secondary-panel-width) !important;
     max-width: var(--secondary-panel-width) !important;
@@ -2869,6 +2870,68 @@ div[data-testid="stDataFrame"] * {
     border-top-color: var(--text-primary);
     border-radius: 50%;
     animation: citrus-spin 800ms linear infinite;
+}
+
+.agent-run-status {
+    display: flex;
+    width: 100%;
+    min-height: 58px;
+    box-sizing: border-box;
+    align-items: center;
+    gap: 10px;
+    margin: 8px 0 16px;
+    padding: 16px;
+    color: var(--text-primary);
+    background: var(--surface-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-input);
+}
+
+.agent-run-status strong {
+    font-size: 13px;
+    font-weight: var(--weight-medium);
+    line-height: 1.4;
+}
+
+.agent-run-status-icon {
+    display: inline-flex;
+    width: 14px;
+    height: 14px;
+    flex: 0 0 14px;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    border: 2px solid var(--border-strong);
+    border-top-color: var(--text-primary);
+    border-radius: 50%;
+    color: var(--surface);
+    font-size: 9px;
+    font-weight: var(--weight-semibold);
+    line-height: 1;
+}
+
+.agent-run-status.is-running .agent-run-status-icon {
+    animation: citrus-spin 800ms linear infinite;
+}
+
+.agent-run-status.is-complete .agent-run-status-icon {
+    color: var(--surface);
+    background: var(--text-primary);
+    border-color: var(--text-primary);
+    animation: none;
+}
+
+.agent-run-status.is-error {
+    color: #8a1f1f;
+    background: #fff7f7;
+    border-color: #dfbaba;
+}
+
+.agent-run-status.is-error .agent-run-status-icon {
+    color: #fff;
+    background: #9b3d3d;
+    border-color: #9b3d3d;
+    animation: none;
 }
 
 .deep-retrieval-stats {
@@ -7016,10 +7079,13 @@ body:has(.agent-panel-conversation.is-loading)
     box-shadow: var(--shadow-subtle);
 }
 
-.identity-card.is-selected,
-.route-card.is-recommended {
+.identity-card.is-selected {
     border-color: var(--text-primary);
     box-shadow: inset 3px 0 0 var(--text-primary);
+}
+
+.route-card.is-recommended {
+    border-color: #dbe6de;
 }
 
 .identity-card > span,
@@ -7027,6 +7093,33 @@ body:has(.agent-panel-conversation.is-loading)
     color: var(--text-tertiary);
     font-size: 11px;
     text-transform: uppercase;
+}
+
+.route-card header > span {
+    display: inline-flex;
+    vertical-align: top;
+    min-height: 24px;
+    align-items: center;
+    box-sizing: border-box;
+    padding: 3px 0;
+    line-height: 16px;
+}
+
+.route-card.is-recommended header > span {
+    gap: 6px;
+    padding-inline: 9px;
+    color: #42634d;
+    background: #eef5f0;
+    border-radius: var(--radius-round);
+}
+
+.route-card.is-recommended header > span::before {
+    content: "";
+    width: 5px;
+    height: 5px;
+    flex: 0 0 auto;
+    background: #64876e;
+    border-radius: 50%;
 }
 
 .identity-card h3,

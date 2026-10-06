@@ -232,6 +232,7 @@ def _intake_action():
                     "decision_generated_result",
                     "process_generated",
                     "process_generated_result",
+                    "batch_research_result",
                 ):
                     st.session_state.pop(key, None)
                 st.session_state.last_result = {}
@@ -316,9 +317,18 @@ def _report_action():
     model["reportResult"] = result
     report = model.setdefault("report", {})
     if result.get("ok"):
-        report.update(generated=True, generatedAt=result.get("created_at", ""), reportId=result.get("report_id", ""), generationMode=result.get("generation_mode", ""), sources=result.get("sources", []), markdown=result.get("markdown", ""))
+        report.update(
+            generated=True,
+            generatedAt=result.get("created_at", ""),
+            reportId=result.get("report_id", ""),
+            generationMode=result.get("generation_mode", ""),
+            sources=result.get("sources", []),
+            figures=result.get("figures", []),
+            markdown=result.get("markdown", ""),
+        )
     else:
         report["generated"] = False
+        report["figures"] = []
     model["reportActionHandled"] = action["requestId"]
     st.session_state.industry_ui_model = model
 

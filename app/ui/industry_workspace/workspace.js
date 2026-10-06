@@ -34,20 +34,47 @@ const reportInline=value=>esc(value)
   .replace(/\[(\d+)\]/g,'<sup>[$1]</sup>')
   .replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>')
   .replace(/https?:\/\/[^\s<]+/g,url=>`<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>`);
-export function renderReportMarkdown(markdown) {
+export function renderReportMarkdown(markdown, figures=[]) {
   const lines=String(markdown||'').split(/\r?\n/),html=[];
+  const figureById=new Map((Array.isArray(figures)?figures:[])
+    .filter(figure=>figure&&typeof figure.id==='string')
+    .map(figure=>[figure.id,figure]));
   let index=0;
   const cells=line=>line.trim().replace(/^\||\|$/g,'').split('|').map(cell=>cell.trim());
   while(index<lines.length){
     const text=lines[index].trim();
     if(!text){index++;continue;}
+    const image=text.match(/^!\[(.*)\]\((.*)\)$/);
+    if(image){
+      const reference=image[2].match(/^report-figure:([A-Za-z0-9_-]+)$/);
+      const figure=reference?figureById.get(reference[1]):null;
+      const caption=String(figure?.caption||image[1]);
+      const payload=figure?.image_base64;
+      const validPng=figure?.mime_type==='image/png'&&typeof payload==='string'
+        &&payload.startsWith('iVBORw0KGgo')
+        &&/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(payload);
+      if(validPng){
+        html.push(`<figure class="report-figure"><img src="data:image/png;base64,${payload}" alt="${esc(caption)}"><figcaption>${reportInline(caption)}</figcaption>${figure.note?`<p class="report-figure-note">${reportInline(figure.note)}</p>`:''}</figure>`);
+      }else html.push(`<p class="report-figure-caption">${reportInline(caption)}</p>`);
+      index++;continue;
+    }
     if(text.startsWith('|')&&index+1<lines.length&&/^\s*\|?\s*:?-{3,}/.test(lines[index+1])){
       const header=cells(text);index+=2;const rows=[];
       while(index<lines.length&&lines[index].trim().startsWith('|'))rows.push(cells(lines[index++]));
       html.push(`<table><thead><tr>${header.map(cell=>`<th>${reportInline(cell)}</th>`).join('')}</tr></thead><tbody>${rows.map(row=>`<tr>${header.map((_,i)=>`<td>${reportInline(row[i]||'')}</td>`).join('')}</tr>`).join('')}</tbody></table>`);continue;
     }
+    if(/^表\s*\d+(?:[.．-]\d+)*[\s:：、.．]+\S/.test(text)){
+      let tableIndex=index+1;
+      while(tableIndex<lines.length&&!lines[tableIndex].trim())tableIndex++;
+      if(lines[tableIndex]?.trim().startsWith('|')&&/^\s*\|?\s*:?-{3,}/.test(lines[tableIndex+1]||'')){
+        html.push(`<p class="report-table-caption">${reportInline(text)}</p>`);index++;continue;
+      }
+    }
     const heading=text.match(/^(#{1,3})\s+(.+)$/);
-    if(heading){html.push(`<h${Number(heading[1].length)+1}>${reportInline(heading[2])}</h${Number(heading[1].length)+1}>`);index++;continue;}
+    if(heading){
+      const tocClass=heading[2].replace(/\s/g,'')==='目录'?' class="report-toc-heading"':'';
+      html.push(`<h${Number(heading[1].length)+1}${tocClass}>${reportInline(heading[2])}</h${Number(heading[1].length)+1}>`);index++;continue;
+    }
     if(/^[-*]\s+/.test(text)){
       const items=[];while(index<lines.length&&/^[-*]\s+/.test(lines[index].trim()))items.push(`<li>${reportInline(lines[index++].trim().replace(/^[-*]\s+/,''))}</li>`);
       html.push(`<ul>${items.join('')}</ul>`);continue;
@@ -76,7 +103,7 @@ export function bindWorkspaceEvents(root, handlers) {
 const defaultRequest={name:'NFC 果汁加工原料采购',material:'沃柑鲜果',use:'榨汁加工',region:'广西及周边',quantity:'15—25',brix:'12.0',delivery:'2026-09-10',destination:'南宁 · 示例工厂',budget:'面议',report:true,checklist:'',preferences:['完整投入品记录','可寄样','稳定供货'],published:false};
 const requiredIntake=['organization','processingProduct','material','plannedQuantity','batch','origin','harvestDate','brix','supplier','line','sop','operator'];
 const defaultIntake={organization:'广西示例果汁企业',license:'SC45••••••••',processingProduct:'NFC 柑橘汁',material:'沃柑鲜果',plannedQuantity:'20',unit:'吨',arrivalDate:'2026-09-10',batch:'B-0903-001',origin:'广西南宁武鸣',harvestDate:'2026-09-02',brix:'12.8',supplier:'武鸣示例果园',inspectionReport:'农残检测报告待上传',fertilizerSupplier:'示例农资公司',fertilizerBrand:'柑橘专用肥 A',line:'榨汁线 B',sop:'企业 SOP v2.1',processStart:'2026-09-10T08:30',washWater:'生产用水检测合格',temperature:'4',additive:'未使用',operator:'生产员 D'};
-const defaultReport={agency:'广西某农业农村局',department:'产业发展科',preparedBy:'业务经办人',title:'柑橘产业项目报告',region:'广西',period:'2026 年度',reportType:'项目报告',template:'系统项目报告模板',templateFile:'',templateData:'',purpose:'依据批次事实形成项目立项与投资沟通材料。',generated:false,generatedAt:'',markdown:'',sources:[],generationMode:''};
+const defaultReport={agency:'广西某农业农村局',department:'产业发展科',preparedBy:'业务经办人',title:'柑橘产业项目报告',region:'广西',period:'2026 年度',reportType:'项目报告',template:'系统项目报告模板',templateFile:'',templateData:'',purpose:'依据批次事实形成项目立项与投资沟通材料。',generated:false,generatedAt:'',markdown:'',sources:[],figures:[],generationMode:''};
 const tradeCandidates=[
   {id:'SD-01',seller:'山东临沂示例合作社',origin:'山东临沂',material:'柑橘鲜果',quantity:90,brix:12.4,arrival:'11.12',docs:'完整',score:91,label:'优先推荐'},
   {id:'JX-02',seller:'江西赣州示例果业',origin:'江西赣州',material:'脐橙鲜果',quantity:120,brix:12.2,arrival:'11.14',docs:'完整',score:88,label:'备选'},
@@ -149,6 +176,7 @@ export default function(component) {
   model.supplies=model.supplies||[];
   model.intake={...defaultIntake,...model.intake};
   model.report={...defaultReport,...model.report};
+  model.report.figures=Array.isArray(model.report.figures)?model.report.figures:[];
   let reportFeedback='';
   if (data.reportResult?.requestId && model.reportActionHandled !== data.reportResult.requestId) {
     model.reportResult=structuredClone(data.reportResult);
@@ -158,6 +186,7 @@ export default function(component) {
       model.report.generatedAt=data.reportResult.created_at||'';
       model.report.markdown=data.reportResult.markdown||'';
       model.report.sources=data.reportResult.sources||[];
+      model.report.figures=Array.isArray(data.reportResult.figures)?structuredClone(data.reportResult.figures):[];
       model.report.generationMode=data.reportResult.generation_mode||'';
       reportFeedback='项目报告已生成，可预览并导出可编辑 Word。';
     } else {
@@ -296,7 +325,21 @@ export default function(component) {
 
   function renderedGeneratedReport() {
     const markdown=String(model.report.markdown||'').trim();
-    return markdown?renderReportMarkdown(markdown):'';
+    return markdown?renderReportMarkdown(markdown,model.report.figures):'';
+  }
+  function reportFigureGallery() {
+    const figures=Array.isArray(model.report.figures)?model.report.figures:[];
+    if(!model.report.generated||!figures.length)return '';
+    const labels={bar:'指标比较图',trend:'年度趋势图',flow:'工艺流程图',gantt:'实施计划图'};
+    const cards=figures.map((figure,index)=>{
+      const title=String(figure.caption||`图${index+1}`);
+      const spec=figure.visual_spec||{};
+      const kind=labels[figure.kind]||'分析图表';
+      const payload=String(figure.image_base64||'');
+      const valid=figure.mime_type==='image/png'&&payload.startsWith('iVBORw0KGgo');
+      return `<article class="report-visual-card"><div class="report-visual-thumb">${valid?`<img src="data:image/png;base64,${payload}" alt="${esc(title)}">`:'<span>图表预览不可用</span>'}</div><div class="report-visual-meta"><b>${esc(title)}</b><span>${esc(kind)}</span><p>${esc(spec.reason||'根据本报告数据结构自动选择。')}</p></div></article>`;
+    }).join('');
+    return `<section class="panel report-visual-summary"><div class="section-heading"><h2>本报告图表</h2><small>图表类型和布局会随本批次的数据关系与项目内容变化</small></div><div class="report-visual-gallery">${cards}</div></section>`;
   }
   function reportPreview() {
     const r=model.report;
@@ -310,7 +353,7 @@ export default function(component) {
     const editor=`<div class="report-layout"><form id="report-form" class="panel report-editor"><div class="section-heading"><h2>项目报告配置</h2><small>提交后生成，暂时每份报告使用一条批次信息</small></div><div class="report-form-grid"><label>使用单位${field('agency',r.agency,'使用单位')}</label><label>承办部门${field('department',r.department||'','承办部门')}</label><label>经办人员${field('preparedBy',r.preparedBy||'','经办人员')}</label><label>报告类型${select('reportType','项目报告','报告类型',['项目报告'])}</label><label>报告标题${field('title',r.title,'报告标题')}</label><label>统计区域${field('region',r.region,'统计区域')}</label><label>报告周期${field('period',r.period,'报告周期')}</label><label>工作目的${field('purpose',r.purpose||'','工作目的')}</label></div><div class="template-config"><div class="section-heading"><h3>Word 模板</h3></div><label>当前模板${select('template',r.template||'系统项目报告模板','当前模板',['系统项目报告模板','单位自定义 Word 模板'])}</label><label class="file-field">上传单位 Word 模板<input name="templateFile" aria-label="单位 Word 模板" type="file" accept=".docx">${r.templateFile?`<small>已读取：${esc(r.templateFile)}（生成时会套用样式和占位符）</small>`:'<small>支持 .docx；可使用 {{项目名称}}、{{项目摘要}} 等占位符</small>'}</label></div><h3>自动纳入内容</h3><div class="source-checks"><span>${svg('check',16)} 正式批次事实：${esc(s.batch)}</span><span>${svg('check',16)} 路线与工艺方案：${esc(s.route)}</span><span>${svg('check',16)} 产业、市场与政策资料</span><span>${svg('check',16)} 投资与实施建议</span></div></form><aside id="report-preview" class="panel report-preview">${reportPreview()}</aside></div>`;
     const archive=`<div class="report-grid"><article class="panel report-item"><div>${svg('file',28)}<h2>${esc(r.title)}</h2><p>${esc(r.agency)} · ${esc(r.period)}</p></div>${pill(r.generated?'已生成初稿':'待生成',r.generated?'black':'')}${button(r.generated?'查看报告':'继续配置','view-report')}</article><article class="panel report-item"><div>${svg('clipboard',28)}<h2>单位自定义模板</h2><p>${r.templateFile?esc(r.templateFile):'尚未上传单位模板'}</p></div>${pill(r.templateFile?'已选择':'可配置')}${button('配置模板','use-enterprise-report')}</article></div>`;
     const templateLibrary=`<div class="report-grid"><article class="panel report-item template-item"><div>${svg('file',28)}<h2>系统项目报告模板</h2><p>包含项目摘要、产业分析、路线与工艺、建设内容、投资方向、实施计划、风险和参考资料。</p></div>${pill('系统模板','black')}${button('使用系统模板','view-report')}</article><article class="panel report-item template-item"><div>${svg('clipboard',28)}<h2>单位自定义 Word 模板</h2><p>上传 .docx 后，系统会读取页面设置、标题样式、页眉页脚和约定占位符，并生成可编辑 Word。</p></div>${pill(r.templateFile?'已上传':'待上传')}${button('上传并配置','use-enterprise-report')}</article></div>`;
-    return header('REPORTS','报告中心')+`<div class="toolbar">${tabs(['生成报告','报告记录','模板库'],tab)}<div class="actions">${button('导出可编辑 Word','download-report',false,'download')}${button(r.generated?'重新生成项目报告':'生成项目报告','generate-report',true,'file')}</div></div>`+(tab===0?editor:tab===1?archive:templateLibrary);
+    return header('REPORTS','报告中心')+`<div class="toolbar">${tabs(['生成报告','报告记录','模板库'],tab)}<div class="actions">${button('导出可编辑 Word','download-report',false,'download')}${button(r.generated?'重新生成项目报告':'生成项目报告','generate-report',true,'file')}</div></div>`+(tab===0?editor+reportFigureGallery():tab===1?archive:templateLibrary);
   }
 
   function visuals() {
@@ -427,7 +470,8 @@ export default function(component) {
     root.querySelector('dialog').close();persist();
     flash(kind==='connection'||kind==='trade'?'对接申请草稿已保存；未发送给真实企业。':kind==='template'?'已载入示例需求模板。':'记录已保存到本次会话。');
   }
-  if(root._view!==view||!root.querySelector('.page')||intakeController?.refreshed)render();
+  if(reportFeedback)persist();
+  if(root._view!==view||!root.querySelector('.page')||intakeController?.refreshed||reportFeedback)render();
   return bindWorkspaceEvents(root,{click:onClick,input:onInput,change:onChange,submit:onSubmit});
 }
 

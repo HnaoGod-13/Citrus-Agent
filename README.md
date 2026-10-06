@@ -107,6 +107,8 @@
 
 邀请制账号、企业成员、资料审核、私有附件、备份恢复和上线验收见 [`docs/phase1-pilot.md`](docs/phase1-pilot.md) 与 [`docs/phase1-acceptance.md`](docs/phase1-acceptance.md)。本地初始化管理员可运行 `python scripts/init_platform.py admin@example.com`；生产环境必须配置 OIDC、持久数据库和私有对象存储，不能启用本地试点登录。
 
+已有 `.env` 和管理员账号时，运行 `python -m streamlit run app/pilot.py --server.address 127.0.0.1 --server.port 8502`，打开 `http://127.0.0.1:8502` 查看登录、资料保存和审核后台；无需再次初始化。
+
 ### 环境要求
 
 - Python 3.11 或更高版本
@@ -260,7 +262,7 @@ python -m unittest tests.test_evidence_verifiability tests.test_processing_knowl
 └── README.md
 ```
 
-第一阶段的正式运行目录是 `streamlit-deploy`，请从这里启动 `streamlit run app/main.py`。根目录的旧预览副本不包含企业账号、审核和长期资料存储能力。
+第一阶段的运行目录是 `streamlit-deploy`，请从这里启动 `python -m streamlit run app/pilot.py --server.address 127.0.0.1 --server.port 8502`。`app/main.py` 和根目录的旧副本用于预览；试点登录通过 `app/pilot.py` 进入。
 
 ## 开发约定
 

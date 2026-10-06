@@ -22,10 +22,14 @@
 1. 在 `streamlit-deploy` 目录安装依赖：`python -m pip install -r requirements.txt`。
 2. 复制 `.env.example` 为 `.env`，设置 `CITRUS_ENV=development`、`CITRUS_AUTH_REQUIRED=true`、`CITRUS_DEV_AUTH_ENABLED=true`。
 3. 执行 `python scripts/init_platform.py 你的管理员邮箱`；初始化命令会在数据库中创建平台管理员和默认企业。
-4. 启动 `streamlit run app/main.py`。
+4. 启动 `python -m streamlit run app/pilot.py --server.address 127.0.0.1 --server.port 8502`，浏览器打开 `http://127.0.0.1:8502`。试点入口自动读取项目根目录的 `.env` 并要求登录；`app/main.py` 是预览入口。
 5. 用管理员邮箱进入本地试点；在设置页生成企业邀请代码。
 6. 用另一个邮箱和邀请代码进入，填写供应端或生产端资料。
 7. 管理员切换到设置页的“平台管理后台”，审核提交资料。
+
+已有管理员和数据库时，只需执行第 4 步，无须重新初始化。展开“本地试点登录”，填写已初始化的管理员邮箱，邀请代码留空，点击“进入本地试点”；该入口不会发送验证邮件。
+
+登录后，打开“资料确认”填写并保存草稿，在“采集记录”找回已保存资料。审核需要由另一位有审核权限的成员完成；可在“设置 → 平台管理后台 → 企业邀请”为测试邮箱生成邀请，用浏览器无痕窗口登录测试邮箱并提交资料，再回到管理员窗口的“资料审核与导出”查看。
 
 ## 生产切换
 

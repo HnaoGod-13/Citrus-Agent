@@ -70,7 +70,7 @@ class ScrollPositionManagerTests(unittest.TestCase):
         self.assertIn("const commandId = 7;", bootstrap)
         self.assertIn("commandId,", bootstrap)
 
-        self.assertIn("version: 8", installer)
+        self.assertIn("version: 9", installer)
         self.assertIn("window[installerKey] = install;", installer)
         self.assertIn(
             "savedPosition = Number(window.sessionStorage.getItem(storageKey));",
@@ -179,13 +179,13 @@ class ScrollPositionManagerTests(unittest.TestCase):
             app_main.render_progress_reveal("progress-version-check")
             progress_bootstrap = iframe.call_args.args[0]
 
-        self.assertIn("version !== 8", scroll_bootstrap)
-        self.assertIn("version !== 8", progress_bootstrap)
+        self.assertIn("version !== 9", scroll_bootstrap)
+        self.assertIn("version !== 9", progress_bootstrap)
         self.assertNotIn("version !== 4", progress_bootstrap)
 
     def test_empty_state_reruns_do_not_force_scroll_reset(self) -> None:
         source = Path(app_main.__file__).read_text(encoding="utf-8-sig")
-        main_source = source[source.index("def main()") :]
+        main_source = source[source.index("def main(") :]
 
         self.assertIn("reset_to_top=reset_scroll_position,", main_source)
         self.assertNotIn(
@@ -1101,7 +1101,12 @@ class ProductRouteStateTests(unittest.TestCase):
 
         invalidate_caches.assert_called_once_with()
         self.assertEqual(
-            [call(app_main.ui_components), call(app_main.ui_industry_pages), call(app_main.ui_product_pages)],
+            [
+                call(app_main.agent_evidence),
+                call(app_main.ui_components),
+                call(app_main.ui_industry_pages),
+                call(app_main.ui_product_pages),
+            ],
             reload_module.call_args_list,
         )
         self.assertNotIn("from app.ui.product_pages import render_product_page", source)

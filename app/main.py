@@ -37,6 +37,7 @@ from agent import (
     vision_client,
     workflow,
 )
+from app import auth as platform_auth
 from app.ui import components as ui_components
 from app.ui import industry_pages as ui_industry_pages
 from app.ui import product_pages as ui_product_pages
@@ -45,6 +46,10 @@ from app.ui import product_pages as ui_product_pages
 def refresh_ui_modules() -> None:
     """Refresh lightweight UI code after a Streamlit Cloud hot deployment."""
     importlib.invalidate_caches()
+    # Evidence display helpers can change with the UI deployment. Reload the
+    # module before product_pages so its module-level reference sees the new
+    # title and excerpt cleaners in a hot-reloaded Streamlit process.
+    importlib.reload(agent_evidence)
     importlib.reload(ui_components)
     importlib.reload(ui_industry_pages)
     importlib.reload(ui_product_pages)
@@ -679,7 +684,7 @@ SCROLL_POSITION_MANAGER_INSTALLER = r"""
 
     const createManager = () => {
         const manager = {
-            version: 8,
+            version: 9,
             restoring: false,
             userScrollUntil: 0,
             scroller: null,
@@ -751,8 +756,6 @@ SCROLL_POSITION_MANAGER_INSTALLER = r"""
                 !event
                 || event.defaultPrevented
                 || event.ctrlKey
-                || window.innerWidth < 900
-                || !manager.scroller
                 || Math.abs(event.deltaY) <= Math.abs(event.deltaX)
             ) return;
 
@@ -782,6 +785,14 @@ SCROLL_POSITION_MANAGER_INSTALLER = r"""
                 if (node === boundary) break;
                 node = node.parentElement;
             }
+
+            // The assistant owns its wheel input even when it is empty or at
+            // a scroll boundary. Never forward that input to the workspace.
+            if (sidebar) {
+                event.preventDefault();
+                return;
+            }
+            if (window.innerWidth < 900 || !manager.scroller) return;
 
             const scroller = manager.scroller;
             const canMoveMainDown = event.deltaY > 0
@@ -883,7 +894,7 @@ SCROLL_POSITION_MANAGER_INSTALLER = r"""
         if (!scroller) return;
 
         let manager = window[managerKey];
-        if (!manager || manager.version !== 8) {
+        if (!manager || manager.version !== 9) {
             teardown(manager);
             manager = createManager();
             window[managerKey] = manager;
@@ -957,7 +968,7 @@ SCROLL_POSITION_MANAGER_INSTALLER = r"""
         }
     };
 
-    install.version = 8;
+    install.version = 9;
     window[installerKey] = install;
 })();
 """
@@ -1000,7 +1011,7 @@ def render_scroll_position_manager(
             const doc = host.document;
             const commandId = {command_marker};
             const installerKey = "__citrusAgentInstallScrollManager";
-            if (!host[installerKey] || host[installerKey].version !== 8) {{
+            if (!host[installerKey] || host[installerKey].version !== 9) {{
                 const loader = doc.createElement("script");
                 loader.textContent = {installer_source};
                 (doc.head || doc.documentElement).appendChild(loader);
@@ -1070,7 +1081,7 @@ def render_progress_reveal(reveal_id: str) -> None:
             const doc = host.document;
             const installerKey = "__citrusAgentInstallScrollManager";
             const managerKey = "__citrusAgentScrollManager";
-            if (!host[installerKey] || host[installerKey].version !== 8) {{
+            if (!host[installerKey] || host[installerKey].version !== 9) {{
                 const loader = doc.createElement("script");
                 loader.textContent = {installer_source};
                 (doc.head || doc.documentElement).appendChild(loader);
@@ -1264,6 +1275,11 @@ def start_new_business_task() -> None:
         "intake_last_request",
         "report_result",
         "report_last_request",
+        "batch_research_result",
+        "decision_generated",
+        "decision_generated_result",
+        "process_generated",
+        "process_generated_result",
         "industry_workspace_canvas",
     ):
         st.session_state.pop(key, None)
@@ -1308,6 +1324,9 @@ def toggle_mobile_secondary_panel() -> None:
 
 
 def _authenticated_identity() -> str:
+    pilot_email = platform_auth.current_email()
+    if pilot_email:
+        return pilot_email
     configured = os.getenv("CITRUS_USER_ID", "").strip()
     if configured:
         return configured
@@ -1322,6 +1341,8 @@ def _authenticated_identity() -> str:
 
 def initialize_memory_identity() -> None:
     project_id = os.getenv("CITRUS_PROJECT_ID", "citrus-agent").strip() or "citrus-agent"
+    if platform_auth.current_principal():
+        project_id = str(st.session_state.get("active_organization_id") or project_id)
     session_config = {
         key: value
         for key, value in {
@@ -1519,6 +1540,11 @@ def clear_active_conversation_state(*, clear_sidebar: bool = False) -> None:
     st.session_state.industry_inline_answer = ""
     st.session_state.industry_task_context = {}
     st.session_state.industry_active_record_id = ""
+    st.session_state.pop("batch_research_result", None)
+    st.session_state.pop("decision_generated", None)
+    st.session_state.pop("decision_generated_result", None)
+    st.session_state.pop("process_generated", None)
+    st.session_state.pop("process_generated_result", None)
     for key in list(st.session_state):
         if str(key).startswith(
             (
@@ -4915,7 +4941,7 @@ def submit_contextual_panel_prompt(
     sync_industry_context_messages(active_view)
 
 
-def main() -> None:
+def main(*, require_platform_login: bool = False) -> None:
     st.set_page_config(
         page_title="Citrus AI · 柑橘产业链决策",
         page_icon=":material/nutrition:",
@@ -4924,6 +4950,10 @@ def main() -> None:
     )
     refresh_ui_modules()
     inject_style()
+    if require_platform_login:
+        if not platform_auth.render_auth_gate():
+            return
+        platform_auth.render_account_controls()
     init_state()
     sync_active_agent_job()
     active_view = current_product_view()
