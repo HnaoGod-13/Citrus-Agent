@@ -2321,9 +2321,15 @@ def _render_agent_generation(page: str, result: dict[str, Any], *, title: str) -
         )
     if not ready:
         return
-    mode = st.selectbox("文献检索方式", ["deep", "quick"],
-                        format_func=lambda value: "全库深度检索（推荐精准模式）" if value == "deep" else "快速检索",
-                        key=f"{page}_literature_mode")
+    mode = st.segmented_control(
+        "文献检索方式",
+        options=["deep", "quick"],
+        format_func=lambda value: "全库深度检索（推荐精准模式）" if value == "deep" else "快速检索",
+        key=f"{page}_literature_mode",
+        required=True,
+        width="stretch",
+        persist_state="session",
+    )
     request_key = f"{batch_research.input_key(result)}:{page}:{mode}:v1"
     cached = st.session_state.get(f"{page}_generated_result") or {}
     generated = cached if cached.get("research_request_key") == request_key else None

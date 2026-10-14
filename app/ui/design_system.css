@@ -89,6 +89,40 @@
 .agent-ready-line.success .agent-ready-dot { background: #3e9f63; }
 .agent-ready-line strong { font-weight: 600; }
 .agent-ready-line small { color: var(--text-tertiary, #727272); font-size: 11px; }
+[class*="st-key-"][class*="_literature_mode"] [data-testid="stButtonGroup"] {
+    width: 100% !important;
+    max-width: none !important;
+}
+[class*="st-key-"][class*="_literature_mode"] [role="radiogroup"] {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100% !important;
+    max-width: none !important;
+    padding: 3px;
+    gap: 3px;
+    background: var(--surface-secondary, #f7f7f7);
+    border: 1px solid var(--border-default, #e9e9ea);
+    border-radius: var(--radius-input, 10px);
+}
+[class*="st-key-"][class*="_literature_mode"] [data-testid="stButtonGroup"] button {
+    width: 100% !important;
+    min-width: 0 !important;
+    min-height: 40px !important;
+    padding: 8px 12px !important;
+    color: var(--text-secondary, #666666) !important;
+    background: transparent !important;
+    border-color: transparent !important;
+    border-radius: 7px !important;
+    cursor: pointer !important;
+    white-space: normal !important;
+}
+[class*="st-key-"][class*="_literature_mode"] [data-testid="stButtonGroup"] button[aria-checked="true"],
+[class*="st-key-"][class*="_literature_mode"] [data-testid="stButtonGroup"] button[data-selected="true"] {
+    color: var(--text-primary, #111111) !important;
+    background: var(--surface, #ffffff) !important;
+    border-color: var(--border-subtle, #eeeeef) !important;
+    box-shadow: var(--shadow-subtle, 0 1px 2px rgba(0, 0, 0, 0.025)) !important;
+}
 .agent-empty-hint {
     display: flex;
     align-items: center;

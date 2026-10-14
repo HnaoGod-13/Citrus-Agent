@@ -7,6 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CSS_PATH = ROOT / "app" / "ui" / "design_system.css"
 COMPONENTS_PATH = ROOT / "app" / "ui" / "components.py"
 MAIN_PATH = ROOT / "app" / "main.py"
+PRODUCT_PAGES_PATH = ROOT / "app" / "ui" / "product_pages.py"
 CONFIG_PATH = ROOT / ".streamlit" / "config.toml"
 MISANS_SEMIBOLD_PATH = ROOT / "app" / "static" / "fonts" / "MiSans-Semibold.ttf"
 MISANS_SEMIBOLD_SHA256 = (
@@ -15,6 +16,22 @@ MISANS_SEMIBOLD_SHA256 = (
 
 
 class DesignSystemRegressionTests(unittest.TestCase):
+    def test_literature_mode_is_a_non_editable_pointer_selection(self) -> None:
+        css = CSS_PATH.read_text(encoding="utf-8-sig")
+        product_source = PRODUCT_PAGES_PATH.read_text(encoding="utf-8-sig")
+        selector = (
+            '[class*="st-key-"][class*="_literature_mode"] '
+            '[data-testid="stButtonGroup"] button {'
+        )
+        rule_start = css.index(selector)
+        button_rule = css[rule_start : css.index("}", rule_start) + 1]
+
+        self.assertIn("mode = st.segmented_control(", product_source)
+        self.assertNotIn('mode = st.selectbox("文献检索方式"', product_source)
+        self.assertIn('required=True,', product_source)
+        self.assertIn('width="stretch",', product_source)
+        self.assertIn("cursor: pointer !important;", button_rule)
+
     def test_hero_bilingual_title_ignores_streamlit_anchor_width(self) -> None:
         css = CSS_PATH.read_text(encoding="utf-8-sig")
         selector = '.hero h1 [data-testid="stHeaderActionElements"] {'
