@@ -152,8 +152,13 @@ def test_private_analytics_use_saved_batch_values_without_attachments(tmp_path):
     assert analytics["inputTons"] == 1
     assert analytics["outputTons"] == .5
     assert analytics["averageBrix"] == 12.6
+    assert analytics["brixCount"] == 1
     assert analytics["origins"] == [{"label": "重庆", "value": 1}]
     assert analytics["quality"]["qualified"] == 1
+    assert len(analytics["records"]) == 2
+    assert {row["side"] for row in analytics["records"]} == {"supplier", "processor"}
+    assert all("attachments" not in row for row in analytics["records"])
+    assert analytics["records"][0]["origin"] == "重庆"
     assert store.analytics("someone-else", "p")["recordCount"] == 0
     blank_store = IntakeStore(tmp_path / "blank.db")
     blank_store.save("u", "p", dict(side="supplier"))

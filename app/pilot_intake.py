@@ -198,6 +198,7 @@ class PilotIntakeStore:
             permission = self._permission(db)
             rows = db.execute(select(t.records).where(self._filter(permission))).mappings().all()
         origins, quality = Counter(), Counter()
+        metric_records = []
         timeline = defaultdict(lambda: {"supply":0.0, "output":0.0})
         supply = inputs = output = 0.0
         brix, supplier_count, processor_count = [], 0, 0
@@ -207,29 +208,57 @@ class PilotIntakeStore:
         for row in rows:
             doc = json.loads(row["payload"])
             f, r = doc["fields"], doc["rows"]
+            record_quality = Counter()
+            record_supply = record_input = record_output = 0.0
+            record_brix = None
             if row["side"] == "supplier":
                 supplier_count += 1
                 q = amount(f.get("harvest.quantity"), f.get("harvest.unit"))
+                record_supply = q
                 supply += q
-                timeline[(f.get("harvest.date") or row["updated_at"])[:7]]["supply"] += q
+                record_date = f.get("harvest.date") or row["updated_at"]
+                timeline[record_date[:7]]["supply"] += q
                 if f.get("base.origin"):
                     origins[f["base.origin"]] += 1
                 num = float_or_none(f.get("quality.brix"))
                 if num is not None:
+                    record_brix = num
                     brix.append(num)
             else:
                 processor_count += 1
                 q = amount(f.get("output.productMass"))
+                record_output = q
                 output += q
-                timeline[(f.get("product.date") or row["updated_at"])[:7]]["output"] += q
-                inputs += sum(amount(m.get("input"), m.get("unit")) for m in r.get("materials", []))
+                record_date = f.get("product.date") or row["updated_at"]
+                timeline[record_date[:7]]["output"] += q
+                record_input = sum(amount(m.get("input"), m.get("unit")) for m in r.get("materials", []))
+                inputs += record_input
+                release = f.get("release.conclusion")
+                if release:
+                    key = {"合格":"qualified", "不合格":"unqualified"}.get(release, "pending")
+                    quality[key] += 1
+                    record_quality[key] += 1
             for item in r.get("tests", []):
-                quality[{"合格":"qualified", "不合格":"unqualified"}.get(item.get("conclusion"), "pending")] += 1
+                conclusion = item.get("conclusion")
+                if conclusion:
+                    key = {"合格":"qualified", "不合格":"unqualified"}.get(conclusion, "pending")
+                    quality[key] += 1
+                    record_quality[key] += 1
+            metric_records.append(dict(
+                side=row["side"], status=row["status"], date=str(record_date)[:10],
+                origin=str(f.get("base.origin") or "").strip(),
+                supplyTons=round(record_supply,3), inputTons=round(record_input,3),
+                outputTons=round(record_output,3), brix=record_brix,
+                quality={k:record_quality[k] for k in ("qualified", "pending", "unqualified")},
+                updatedAt=row["updated_at"],
+            ))
         return dict(source="当前企业授权范围内的采集记录", recordCount=len(rows), supplierCount=supplier_count,
             processorCount=processor_count, submittedCount=sum(r["status"] != "draft" for r in rows),
             draftCount=sum(r["status"] == "draft" for r in rows), supplyTons=round(supply,3), inputTons=round(inputs,3),
             outputTons=round(output,3), averageBrix=round(sum(brix)/len(brix),2) if brix else None,
+            brixCount=len(brix),
             timeline=[dict(label=m, **timeline[m]) for m in sorted(timeline)[-12:]],
             origins=[dict(label=k,value=v) for k,v in origins.most_common(8)],
             quality={k:quality[k] for k in ("qualified", "unqualified", "pending")},
+            records=metric_records,
             updatedAt=max((r["updated_at"] for r in rows), default=""))

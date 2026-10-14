@@ -961,8 +961,8 @@ with (
         for retired, heading in (
             ("assets", "资料确认"), ("数据资产", "资料确认"),
             ("results", "报告撰写"), ("成果中心", "报告撰写"),
-            ("analytics", "选择你的工作身份"),
-            ("运行分析", "选择你的工作身份"), ("分析", "选择你的工作身份"),
+            ("analytics", "产业可视化"),
+            ("运行分析", "产业可视化"), ("分析", "产业可视化"),
         ):
             with self.subTest(view=retired):
                 app = self._render_page(retired)
@@ -1009,12 +1009,12 @@ with (
             product_pages._workspace_sample_row(workspace["samples"][0]),
         )
 
-    def test_retired_workspace_page_resolves_to_identity(self) -> None:
+    def test_retired_workspace_page_resolves_to_intake(self) -> None:
         app = self._render_page("workspace")
         rendered = "\n".join(element.value for element in app.markdown)
 
         self.assertFalse(app.exception)
-        self.assertIn("选择你的工作身份", rendered)
+        self.assertIn("资料确认", rendered)
         self.assertNotIn("我的任务流", rendered)
         self.assertNotIn("优先处理", rendered)
         self.assertNotIn("workspace-table", rendered)

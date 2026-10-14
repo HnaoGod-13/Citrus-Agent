@@ -161,11 +161,11 @@ const equipment=(drafts=[],showAll=true)=>`<div class="equipment">${[['conveyor'
 export default function(component) {
   const {parentElement,data,setStateValue}=component;
   const root=parentElement.querySelector('.iw');
-  if(root._intakeScope!==data.intakeScope){delete root._model;delete root._view;delete root._intakeAck;root._intakeScope=data.intakeScope;}
+  if(root._intakeScope!==data.intakeScope){delete root._model;delete root._view;delete root._intakeAck;delete root._visualFilters;root._intakeScope=data.intakeScope;}
   const newTaskToken=Number(data.newTaskToken||0);
   if(root._newTaskToken!==newTaskToken){
     delete root._model;delete root._view;delete root._intakeAck;
-    delete root._tab;delete root._selected;delete root._listMode;
+    delete root._tab;delete root._selected;delete root._listMode;delete root._visualFilters;
     root._newTaskToken=newTaskToken;
   }
   const model=root._model||structuredClone(data.model||{});
@@ -357,7 +357,7 @@ export default function(component) {
   }
 
   function visuals() {
-    return renderIndustryVisuals({tab,raw:data.intakeAnalytics,request:model.request,header,tabs,button,svg,esc});
+    return renderIndustryVisuals({tab,raw:data.intakeAnalytics,request:model.request,filters:root._visualFilters||{},header,tabs,button,svg,esc});
   }
   function render() {
     root._view=view;root._tab=tab;root._selected=selected;root._listMode=listMode;
@@ -402,7 +402,8 @@ export default function(component) {
       if(!result.docx_base64){flash('Word 文件尚未生成，请重新生成项目报告。');return;}
       const raw=atob(result.docx_base64),bytes=new Uint8Array(raw.length);for(let i=0;i<raw.length;i++)bytes[i]=raw.charCodeAt(i);const url=URL.createObjectURL(new Blob([bytes],{type:'application/vnd.openxmlformats-officedocument.wordprocessingml.document'})),a=document.createElement('a');a.href=url;a.download=`${fileName}.docx`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);return;
     }
-    if(action==='download-chart'){downloadFile('柑橘产业可视化数据.csv',visualizationCsv(data.intakeAnalytics),'text/csv;charset=utf-8');return;}
+    if(action==='download-chart'){downloadFile('柑橘产业可视化数据.csv',visualizationCsv(data.intakeAnalytics,root._visualFilters||{}),'text/csv;charset=utf-8');return;}
+    if(action==='visual-filter-reset'){root._visualFilters={};render();return;}
     if(action==='visual-goto'){tab=Number(el.dataset.visualTab)||0;render();return;}
     if(action==='view-report'){tab=0;render();return;}
     if(action==='use-enterprise-report'){model.report.agency=model.report.agency||'本单位';model.report.reportType='项目报告';model.report.template='单位自定义 Word 模板';model.report.generated=false;tab=0;persist();render();return;}
@@ -443,6 +444,7 @@ export default function(component) {
   function onChange(event) {
     const el=event.target;
     if(intakeController?.change(el))return;
+    if(el.dataset.visualFilter){root._visualFilters={...(root._visualFilters||{}),[el.dataset.visualFilter]:el.value};render();return;}
     if(['supply-type','supply-status'].includes(el.name)){root.querySelector('#supply-results').innerHTML=supplyResults();return;}
     if(el.closest('#intake-form')){onInput(event);persist();return;}
     if(el.closest('#report-form')){if(el.name==='templateFile'){const file=el.files?.[0];model.report.templateFile=file?.name||'';model.report.generated=false;if(file){const reader=new FileReader();reader.onload=()=>{model.report.templateData=String(reader.result||'').split(',')[1]||'';persist();};reader.readAsDataURL(file);}}else onInput(event);persist();const preview=root.querySelector('#report-preview');if(preview)preview.innerHTML=reportPreview();return;}

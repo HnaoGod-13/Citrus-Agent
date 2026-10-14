@@ -715,10 +715,10 @@ class ProductRouteStateTests(unittest.TestCase):
 
     def test_retired_links_and_sessions_keep_task_data_when_redirected(self) -> None:
         for retired, target in (
-            ("workspace", "identity"), ("工作台", "identity"),
+            ("workspace", "intake"), ("工作台", "intake"),
             ("assets", "intake"), ("数据资产", "intake"),
             ("results", "report"), ("成果中心", "report"),
-            ("analytics", "identity"), ("运行分析", "identity"), ("分析", "identity"),
+            ("analytics", "analytics"), ("运行分析", "analytics"), ("分析", "analytics"),
         ):
             for query in (retired, ""):
                 with self.subTest(retired=retired, query=query):
@@ -747,7 +747,10 @@ class ProductRouteStateTests(unittest.TestCase):
                     self.assertEqual("existing-context", state.memory_context_token)
                     self.assertEqual("已录入的外观描述", state.sidebar_draft_observation)
                     self.assertEqual(b"saved-image", state.sidebar_draft_image_bytes)
-                    set_query.assert_called_once_with("view", target)
+                    if query == target:
+                        set_query.assert_not_called()
+                    else:
+                        set_query.assert_called_once_with("view", target)
 
     def test_industry_navigation_uses_the_remaining_task_pages(self) -> None:
         for industry, page in (

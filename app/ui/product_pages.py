@@ -2700,7 +2700,7 @@ def render_report_page() -> None:
 
 def render_analytics_page() -> None:
     _render_industry_task_page(
-        "analytics", "visuals", "数据看板", "查看供应、产量、质量和区域流向等任务指标。"
+        "analytics", "visuals", "产业可视化", "柑橘供应、加工、质量与区域数据分析。"
     )
 
 

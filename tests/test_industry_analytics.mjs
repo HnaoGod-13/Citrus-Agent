@@ -4,7 +4,7 @@ import {readFile} from 'node:fs/promises';
 
 const source=await readFile(new URL('../app/ui/industry_workspace/analytics.js',import.meta.url),'utf8');
 const styles=await readFile(new URL('../app/ui/industry_workspace/workspace.css',import.meta.url),'utf8');
-const {visualizationDataset,visualizationCsv,renderIndustryVisuals}=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
+const {visualizationDataset,visualizationFilterOptions,visualizationCsv,renderIndustryVisuals}=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
 
 test('empty accounts receive clearly labelled preview data',()=>{
   const data=visualizationDataset({recordCount:0});
@@ -30,6 +30,35 @@ test('downloaded chart data carries source and preview status',()=>{
   const csv=visualizationCsv({recordCount:0});
   assert.match(csv,/结构预览数据/);
   assert.match(csv,/非政府统计、非企业实报/);
+});
+
+test('real record filters recalculate every dashboard aggregate and export',()=>{
+  const raw={
+    source:'当前账号产业数据采集记录',recordCount:3,updatedAt:'2026-09-30',
+    records:[
+      {side:'supplier',status:'submitted',date:'2026-08-03',origin:'重庆奉节',supplyTons:2,brix:12.2,quality:{qualified:1},updatedAt:'2026-08-03'},
+      {side:'supplier',status:'draft',date:'2026-09-05',origin:'广西武鸣',supplyTons:4,brix:13,quality:{pending:1},updatedAt:'2026-09-05'},
+      {side:'processor',status:'submitted',date:'2026-09-08',inputTons:3,outputTons:1.5,quality:{qualified:1},updatedAt:'2026-09-08'},
+    ],
+  };
+  const options=visualizationFilterOptions(raw);
+  assert.deepEqual(options.periods,['2026-09','2026-08']);
+  assert.deepEqual(new Set(options.origins),new Set(['广西武鸣','重庆奉节']));
+  const data=visualizationDataset(raw,{period:'2026-09'});
+  assert.equal(data.recordCount,2);
+  assert.equal(data.supplierCount,1);
+  assert.equal(data.processorCount,1);
+  assert.equal(data.supplyTons,4);
+  assert.equal(data.inputTons,3);
+  assert.equal(data.outputTons,1.5);
+  assert.equal(data.averageBrix,13);
+  assert.equal(data.submittedCount,1);
+  assert.equal(data.draftCount,1);
+  assert.deepEqual(data.origins,[{label:'广西武鸣',value:1}]);
+  const csv=visualizationCsv(raw,{period:'2026-09'});
+  assert.match(csv,/筛选条件：月份/);
+  assert.match(csv,/2026-09/);
+  assert.match(csv,/投入加工量/);
 });
 
 test('regional view renders readable flow cards and an explicit destination',()=>{
@@ -84,14 +113,20 @@ test('visual dashboard keeps provenance fields without prototype explanation cop
   for(const phrase of ['当前账号尚无已保存采集记录','仅用于展示图表结构','供应端采收量对比生产端成品净产量','图表所用的同一组数据']){
     assert.doesNotMatch(html,new RegExp(phrase));
   }
+  assert.equal((html.match(/class="viz-kpi /g)||[]).length,4);
+  assert.match(html,/平均糖度/);
+  assert.match(html,/未收集经纬度或行政区编码/);
+  assert.doesNotMatch(html,/viz-region-map/);
+  assert.doesNotMatch(html,/VISUAL INTELLIGENCE/);
 });
 
 test('industry charts use one restrained publication palette and no decorative card gradients',()=>{
-  for(const token of ['--viz-neutral:#34353a','--viz-ochre:#8a6b3d','--viz-green:#4f6956','--viz-red:#8f5f5a']){
+  for(const token of ['--viz-ink:#17191c','--viz-supply:#44566c','--viz-output:#1c9b87','--viz-warning:#d59b43']){
     assert.ok(styles.includes(token),`missing palette token ${token}`);
   }
-  assert.match(styles,/\.iw \.viz-line\.supply \{ stroke:var\(--viz-ochre\); \}/);
-  assert.match(styles,/\.iw \.viz-line\.output \{ stroke:var\(--viz-neutral\); \}/);
+  assert.match(styles,/\.iw \.viz-line\.output \{ stroke:var\(--viz-output\); \}/);
+  assert.match(styles,/\.iw \.viz-kpis \{ display:grid; grid-template-columns:repeat\(4,minmax\(0,1fr\)\)/);
+  assert.match(styles,/\.iw \.viz-top-grid \{ display:grid; min-width:0; grid-template-columns:minmax\(0,3fr\) minmax\(0,2fr\)/);
   assert.doesNotMatch(styles,/\.iw \.ic-entry-(?:supplier|processor)[^\n]*linear-gradient/);
   assert.doesNotMatch(styles,/\.iw \.viz-route-target[^\n]*box-shadow:(?!none)/);
 });

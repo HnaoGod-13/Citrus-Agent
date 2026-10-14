@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import html
+import json
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -474,8 +475,14 @@ def render_empty_state(
 def _queue_agent_panel_prompt(view: str, prompt: str = "") -> None:
     """Stage a prompt before the rerun so the panel can render a busy state."""
     prompt_key = f"agent_panel_prompt_{view}"
+    legacy_prompt_key = f"agent_panel_prompt_legacy_{view}"
     upload_key = f"agent_panel_upload_{view}"
-    queued = str(prompt or st.session_state.get(prompt_key) or "").strip()
+    queued = str(
+        prompt
+        or st.session_state.get(prompt_key)
+        or st.session_state.get(legacy_prompt_key)
+        or ""
+    ).strip()
     uploaded = st.session_state.get(upload_key)
     # ``clear_on_submit`` resets the form widgets before the next script run.
     # Keep the selected image in session state so the page switch to chat does
@@ -499,6 +506,425 @@ def _queue_agent_panel_prompt(view: str, prompt: str = "") -> None:
         st.session_state[f"agent_panel_conversation_started_{view}"] = True
         st.session_state[f"agent_panel_pending_prompt_{view}"] = queued
         st.session_state[f"agent_panel_pending_time_{view}"] = beijing_time_string()
+
+
+def _agent_panel_page_label(view: str) -> str:
+    """Return the visible page name used by the contextual assistant header."""
+    normalized = normalize_product_view(view)
+    for key, _icon, zh_label, _en_label in NAV_ITEMS:
+        if key == normalized:
+            return zh_label
+    return "当前页面"
+
+
+def _render_agent_message_copy_action() -> None:
+    """Render the one message action that is fully supported in the web client."""
+    st.markdown(
+        '<div class="agent-answer-actions">'
+        '<button class="agent-copy-action" type="button" aria-label="复制回答" title="复制回答">'
+        + icon_svg("copy", 15)
+        + '<span>复制</span></button>'
+        '<span class="agent-copy-status" role="status" aria-live="polite"></span>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+
+AGENT_PANEL_BEHAVIOR_INSTALLER = r"""
+(() => {
+    const installerKey = "__citrusAgentInstallPanelBehavior";
+    const managerKey = "__citrusAgentPanelBehavior";
+    const version = 1;
+    const doc = window.document;
+
+    const clipboardWrite = async (value) => {
+        if (navigator.clipboard && window.isSecureContext) {
+            await navigator.clipboard.writeText(value);
+            return;
+        }
+        const helper = doc.createElement("textarea");
+        helper.value = value;
+        helper.setAttribute("readonly", "");
+        helper.style.position = "fixed";
+        helper.style.opacity = "0";
+        doc.body.appendChild(helper);
+        helper.select();
+        const copied = doc.execCommand("copy");
+        helper.remove();
+        if (!copied) throw new Error("copy failed");
+    };
+
+    const syncComposer = (shell) => {
+        if (!shell) return;
+        const textarea = shell.querySelector('[data-testid="stTextArea"] textarea, textarea');
+        const submit = shell.querySelector('[data-testid="stFormSubmitButton"] button');
+        if (!textarea || !submit) return;
+
+        textarea.style.height = "auto";
+        const nextHeight = Math.min(132, Math.max(62, textarea.scrollHeight));
+        textarea.style.height = `${nextHeight}px`;
+        textarea.style.overflowY = textarea.scrollHeight > 132 ? "auto" : "hidden";
+
+        const hasAttachment = Boolean(shell.querySelector('[data-testid="stFileChip"]'));
+        const isGenerating = Boolean(shell.querySelector(".agent-panel-conversation.is-loading"));
+        const canSubmit = !isGenerating && (textarea.value.trim().length > 0 || hasAttachment);
+        submit.disabled = !canSubmit;
+        submit.setAttribute("aria-disabled", String(!canSubmit));
+    };
+
+    const createManager = () => {
+        const manager = {
+            version,
+            panels: new Map(),
+            mutationObserver: null,
+            syncTimer: null,
+        };
+
+        manager.syncAllComposers = () => {
+            doc.querySelectorAll('[class*="st-key-agent_panel_shell_"]').forEach(syncComposer);
+        };
+
+        manager.handleInput = (event) => {
+            const target = event.target;
+            if (!(target instanceof HTMLTextAreaElement)) return;
+            const shell = target.closest('[class*="st-key-agent_panel_shell_"]');
+            if (shell) syncComposer(shell);
+        };
+
+        manager.handleKeyDown = (event) => {
+            const target = event.target;
+            if (!(target instanceof HTMLTextAreaElement)) return;
+            if (
+                event.key !== "Enter"
+                || event.shiftKey
+                || event.isComposing
+                || event.keyCode === 229
+            ) return;
+            const shell = target.closest('[class*="st-key-agent_panel_shell_"]');
+            if (!shell) return;
+            const submit = shell.querySelector('[data-testid="stFormSubmitButton"] button');
+            syncComposer(shell);
+            if (!submit || submit.disabled) return;
+            event.preventDefault();
+            submit.click();
+        };
+
+        manager.handleClick = async (event) => {
+            const copyButton = event.target && event.target.closest
+                ? event.target.closest(".agent-copy-action")
+                : null;
+            if (!copyButton) return;
+            const messageBody = copyButton.closest('[class*="st-key-agent_message_body_"]');
+            const answer = messageBody && messageBody.querySelector(
+                '[class*="st-key-agent_answer_content_"] [data-testid="stMarkdownContainer"]'
+            );
+            const status = copyButton.parentElement && copyButton.parentElement.querySelector(
+                ".agent-copy-status"
+            );
+            const value = answer ? answer.innerText.trim() : "";
+            if (!value) return;
+            try {
+                await clipboardWrite(value);
+                copyButton.classList.add("is-copied");
+                if (status) status.textContent = "已复制";
+            } catch (_) {
+                if (status) status.textContent = "复制失败";
+            }
+            window.setTimeout(() => {
+                copyButton.classList.remove("is-copied");
+                if (status) status.textContent = "";
+            }, 1800);
+        };
+
+        doc.addEventListener("input", manager.handleInput, true);
+        doc.addEventListener("keydown", manager.handleKeyDown, true);
+        doc.addEventListener("click", manager.handleClick, true);
+        manager.mutationObserver = new MutationObserver(() => {
+            window.clearTimeout(manager.syncTimer);
+            manager.syncTimer = window.setTimeout(manager.syncAllComposers, 20);
+        });
+        manager.mutationObserver.observe(doc.body, { childList: true, subtree: true });
+        return manager;
+    };
+
+    const teardownPanel = (panel) => {
+        if (!panel) return;
+        if (panel.scroller && panel.handleScroll) {
+            panel.scroller.removeEventListener("scroll", panel.handleScroll);
+        }
+        if (panel.resizeObserver) panel.resizeObserver.disconnect();
+        if (panel.jumpButton) panel.jumpButton.remove();
+    };
+
+    const install = ({ view, marker, forceLatest = false } = {}) => {
+        let manager = window[managerKey];
+        if (!manager || manager.version !== version) {
+            manager = createManager();
+            window[managerKey] = manager;
+        }
+
+        const shell = Array.from(
+            doc.querySelectorAll('[class*="st-key-agent_panel_shell_"]')
+        ).find((node) => node.className.includes(`st-key-agent_panel_shell_${view}`));
+        if (!shell) return;
+        const scroller = shell.querySelector('[class*="st-key-agent_panel_scroll_"]');
+        if (!scroller) return;
+
+        const storageKey = `citrus-agent:panel:${view}:scroll`;
+        let panel = manager.panels.get(view);
+        const previousMarker = panel ? panel.marker : "";
+        const previousFollowing = panel ? panel.following : true;
+        const scrollerChanged = !panel || panel.scroller !== scroller;
+        if (scrollerChanged) {
+            teardownPanel(panel);
+            panel = {
+                scroller,
+                shell,
+                marker: previousMarker,
+                following: previousFollowing,
+                unread: false,
+                lastHeight: scroller.scrollHeight,
+                resizeObserver: null,
+                jumpButton: null,
+                handleScroll: null,
+            };
+            manager.panels.set(view, panel);
+        }
+
+        const ensureJumpButton = () => {
+            if (panel.jumpButton && panel.jumpButton.isConnected) return panel.jumpButton;
+            const button = doc.createElement("button");
+            button.type = "button";
+            button.className = "agent-jump-latest";
+            button.setAttribute("aria-label", "回到最新消息");
+            button.innerHTML = '<span>回到最新</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>';
+            button.addEventListener("click", () => {
+                panel.following = true;
+                panel.unread = false;
+                panel.scroller.scrollTo({ top: panel.scroller.scrollHeight, behavior: "smooth" });
+                button.classList.remove("is-visible");
+            });
+            shell.appendChild(button);
+            panel.jumpButton = button;
+            return button;
+        };
+
+        const updateJumpButton = () => {
+            ensureJumpButton().classList.toggle("is-visible", Boolean(panel.unread));
+        };
+        const remember = () => {
+            try {
+                window.sessionStorage.setItem(storageKey, JSON.stringify({
+                    top: panel.scroller.scrollTop,
+                    following: panel.following,
+                }));
+            } catch (_) {
+                // Scrolling remains functional when session storage is unavailable.
+            }
+        };
+        const scrollToLatest = (behavior = "auto") => {
+            panel.scroller.scrollTo({ top: panel.scroller.scrollHeight, behavior });
+            panel.following = true;
+            panel.unread = false;
+            updateJumpButton();
+            window.requestAnimationFrame(remember);
+        };
+
+        if (scrollerChanged) {
+            panel.handleScroll = () => {
+                const distance = panel.scroller.scrollHeight
+                    - panel.scroller.scrollTop
+                    - panel.scroller.clientHeight;
+                panel.following = distance <= 64;
+                if (panel.following) panel.unread = false;
+                updateJumpButton();
+                remember();
+            };
+            scroller.addEventListener("scroll", panel.handleScroll, { passive: true });
+            panel.resizeObserver = new ResizeObserver(() => {
+                const grew = panel.scroller.scrollHeight > panel.lastHeight + 2;
+                panel.lastHeight = panel.scroller.scrollHeight;
+                if (panel.following) {
+                    scrollToLatest("auto");
+                } else if (grew) {
+                    panel.unread = true;
+                    updateJumpButton();
+                }
+            });
+            const content = scroller.firstElementChild || scroller;
+            // Observe both the content and the viewport. The drawer changes its
+            // available height at responsive breakpoints; when the user is
+            // following the conversation, that resize must keep the newest
+            // message above the fixed composer.
+            panel.resizeObserver.observe(scroller);
+            panel.resizeObserver.observe(content);
+        }
+
+        const markerChanged = Boolean(previousMarker && previousMarker !== marker);
+        panel.marker = marker;
+        if (forceLatest) {
+            panel.following = true;
+            window.requestAnimationFrame(() => scrollToLatest("auto"));
+        } else if (scrollerChanged) {
+            let saved = null;
+            try {
+                saved = JSON.parse(window.sessionStorage.getItem(storageKey) || "null");
+            } catch (_) {
+                saved = null;
+            }
+            if (!saved || saved.following !== false) {
+                window.requestAnimationFrame(() => scrollToLatest("auto"));
+            } else {
+                panel.following = false;
+                window.requestAnimationFrame(() => {
+                    panel.scroller.scrollTo({ top: Number(saved.top) || 0, behavior: "auto" });
+                    if (markerChanged) panel.unread = true;
+                    updateJumpButton();
+                });
+            }
+        } else if (markerChanged && !panel.following) {
+            panel.unread = true;
+            updateJumpButton();
+        }
+
+        syncComposer(shell);
+    };
+
+    install.version = version;
+    window[installerKey] = install;
+})();
+"""
+
+
+def _render_agent_panel_behaviors(
+    view: str,
+    *,
+    marker: str,
+    force_latest: bool,
+) -> None:
+    """Install scoped client behavior for copy, composer growth and panel scroll."""
+    installer_source = json.dumps(AGENT_PANEL_BEHAVIOR_INSTALLER)
+    view_source = json.dumps(str(view))
+    marker_source = json.dumps(str(marker))
+    force_source = "true" if force_latest else "false"
+    st.iframe(
+        f"""
+        <style>html,body{{margin:0;padding:0;overflow:hidden;background:transparent}}</style>
+        <script>
+        (() => {{
+            const frame = window.frameElement;
+            if (frame) {{
+                frame.style.width = "1px";
+                frame.style.height = "1px";
+                frame.style.opacity = "0";
+                frame.style.border = "0";
+                frame.style.pointerEvents = "none";
+                frame.setAttribute("aria-hidden", "true");
+                const wrapper = frame.closest('[data-testid="stElementContainer"]');
+                if (wrapper) {{
+                    wrapper.style.position = "absolute";
+                    wrapper.style.width = "1px";
+                    wrapper.style.height = "1px";
+                    wrapper.style.overflow = "hidden";
+                }}
+            }}
+            const host = window.parent;
+            const doc = host.document;
+            const installerKey = "__citrusAgentInstallPanelBehavior";
+            if (!host[installerKey] || host[installerKey].version !== 1) {{
+                const loader = doc.createElement("script");
+                loader.textContent = {installer_source};
+                (doc.head || doc.documentElement).appendChild(loader);
+                loader.remove();
+            }}
+            const install = host[installerKey];
+            if (typeof install === "function") {{
+                install({{view:{view_source},marker:{marker_source},forceLatest:{force_source}}});
+            }}
+        }})();
+        </script>
+        """,
+        height=1,
+        tab_index=-1,
+    )
+
+
+def _render_agent_panel_thread(
+    view: str,
+    messages: list[dict[str, Any]],
+) -> None:
+    """Render contextual messages with native Streamlit Markdown for AI answers."""
+    st.markdown(
+        '<section class="agent-panel-conversation" aria-label="当前页面对话">',
+        unsafe_allow_html=True,
+    )
+    with st.container(key=f"agent_panel_thread_{view}"):
+        previous_role = ""
+        for index, message in enumerate(messages):
+            role = str(message.get("role") or "")
+            content = str(message.get("content") or "").strip()
+            if role not in {"user", "assistant"} or not content:
+                continue
+
+            timestamp = html.escape(str(message.get("context_time") or ""))
+            time_html = f'<time datetime="">{timestamp}</time>' if timestamp else ""
+            if role == "user":
+                image_html = ""
+                image_bytes = message.get("image_bytes")
+                if image_bytes:
+                    image_mime = str(message.get("image_mime_type") or "image/jpeg")
+                    if image_mime not in {"image/jpeg", "image/png"}:
+                        image_mime = "image/jpeg"
+                    encoded_image = base64.b64encode(image_bytes).decode("ascii")
+                    image_html = (
+                        f'<img class="agent-user-attachment" '
+                        f'src="data:{image_mime};base64,{encoded_image}" '
+                        'alt="本轮上传图片">'
+                    )
+                safe_content = html.escape(content).replace("\n", "<br>")
+                st.markdown(
+                    '<article class="agent-panel-message user">'
+                    f'<div class="agent-user-bubble">{image_html}<p>{safe_content}</p></div>'
+                    f'{time_html}</article>',
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.markdown(
+                    '<span class="agent-panel-message assistant agent-role-marker" '
+                    'aria-hidden="true"></span>',
+                    unsafe_allow_html=True,
+                )
+                grouped = previous_role == "assistant"
+                group_token = "grouped_" if grouped else ""
+                with st.container(
+                    key=f"agent_message_assistant_{group_token}{view}_{index}"
+                ):
+                    if not grouped:
+                        st.markdown(
+                            '<span class="agent-message-mark" aria-hidden="true">'
+                            + icon_svg("citrus", 15)
+                            + '</span>',
+                            unsafe_allow_html=True,
+                        )
+                    with st.container(key=f"agent_message_body_{view}_{index}"):
+                        if not grouped:
+                            st.markdown(
+                                '<div class="agent-message-meta"><b>Citrus Agent</b>'
+                                f'{time_html}</div>',
+                                unsafe_allow_html=True,
+                            )
+                        elif time_html:
+                            st.markdown(
+                                f'<div class="agent-message-meta is-grouped">{time_html}</div>',
+                                unsafe_allow_html=True,
+                            )
+                        with st.container(key=f"agent_answer_content_{view}_{index}"):
+                            # Streamlit's Markdown renderer keeps tables, code, links,
+                            # lists and KaTeX available without trusting model HTML.
+                            st.markdown(content, unsafe_allow_html=False)
+                        _render_agent_message_copy_action()
+            previous_role = role
+    st.markdown("</section>", unsafe_allow_html=True)
 
 
 def render_agent_panel(view: str) -> tuple[str, Any | None]:
@@ -578,21 +1004,16 @@ def render_agent_panel(view: str) -> tuple[str, Any | None]:
         view,
         ("当前上下文", "我会沿用当前任务上下文继续协作。", ["总结当前任务", "推荐下一步"]),
     )
-    _, _, questions = context
-    # Keep the prompt shortcuts available for keyboard and state recovery
-    # paths, while the product stylesheet hides their visual cards per the
-    # compact Agent panel design.
+    _, contextual_description, questions = context
     suggestions = {
         "intake": [
             "这批原料可以开始分析吗？",
             "查看缺失字段",
-            "查看待补充信息",
-            "根据当前页面总结风险",
         ],
     }.get(
         view,
-        list(questions) + ["查看待补充信息", "根据当前页面总结风险"],
-    )[:4]
+        list(questions),
+    )[:2]
     suggestion_icons = (
         ":material/chat_bubble_outline:",
         ":material/find_in_page:",
@@ -614,15 +1035,25 @@ def render_agent_panel(view: str) -> tuple[str, Any | None]:
     pending_time_key = f"agent_panel_pending_time_{view}"
     loading_prompt = str(st.session_state.get(pending_key) or "").strip()
     loading_time = str(st.session_state.get(pending_time_key) or "")
+    page_label = html.escape(_agent_panel_page_label(view))
 
     pending = loading_prompt
     uploaded_image = None
     with st.container(key=f"agent_panel_shell_{view}"):
+        generation_status = (
+            '<span class="agent-generation-status" role="status">'
+            '<i aria-hidden="true"></i>生成中</span>'
+            if loading_prompt
+            else ""
+        )
         st.markdown(
             '<header class="agent-panel-brand"><span class="agent-panel-mark">'
             + icon_svg("citrus", 20)
             + '</span><span class="agent-panel-identity"><strong>Citrus Agent</strong>'
-            + '<small>页面助手</small></span><span class="agent-online">在线</span></header>',
+            + f'<small>{page_label} · 页面助手</small></span>'
+            + '<span class="agent-online" aria-label="连接状态可用"><i aria-hidden="true"></i></span>'
+            + generation_status
+            + '</header>',
             unsafe_allow_html=True,
         )
         with st.container(key=f"agent_panel_scroll_{view}"):
@@ -632,68 +1063,30 @@ def render_agent_panel(view: str) -> tuple[str, Any | None]:
                 st.markdown(
                     '<section class="agent-panel-conversation is-loading" aria-label="当前页面对话">'
                     '<div class="agent-panel-thread">'
-                    f'<article class="agent-panel-message user"><time>{timestamp}</time>'
-                    f'<div class="agent-user-bubble"><p>{safe_prompt}</p></div></article>'
+                    '<article class="agent-panel-message user">'
+                    f'<div class="agent-user-bubble"><p>{safe_prompt}</p></div><time>{timestamp}</time></article>'
                     '<article class="agent-panel-message assistant">'
                     f'<span class="agent-message-mark">{icon_svg("citrus", 16)}</span>'
                     '<div class="agent-message-body"><div class="agent-message-meta">'
                     f'<b>Citrus Agent</b><time>{timestamp}</time></div>'
-                    '<div class="agent-thinking-bubble" role="status" aria-live="polite">'
-                    '<span class="agent-progress-spinner"></span>'
-                    '<span>正在思考…</span>'
+                    '<div class="agent-thinking-indicator agent-thinking-bubble" role="status" aria-live="polite">'
+                    '<span class="agent-thinking-dots" aria-hidden="true"><i></i><i></i><i></i></span>'
+                    '<span>正在生成回答</span>'
+                    '<span class="agent-legacy-loading-label" aria-hidden="true">正在思考…</span>'
                     '</div></div></article>'
                     '</div></section>',
                     unsafe_allow_html=True,
                 )
             elif contextual_messages:
-                thread_items: list[str] = []
-                visible_messages = contextual_messages[-8:]
-                for index, message in enumerate(visible_messages):
-                    content = html.escape(str(message.get("content") or "").strip()).replace(
-                        "\n", "<br>"
-                    )
-                    if not content:
-                        continue
-                    timestamp = html.escape(str(message.get("context_time") or ""))
-                    if message.get("role") == "user":
-                        image_html = ""
-                        image_bytes = message.get("image_bytes")
-                        if image_bytes:
-                            image_mime = str(message.get("image_mime_type") or "image/jpeg")
-                            if image_mime not in {"image/jpeg", "image/png"}:
-                                image_mime = "image/jpeg"
-                            encoded_image = base64.b64encode(image_bytes).decode("ascii")
-                            image_html = (
-                                f'<img class="agent-user-attachment" '
-                                f'src="data:{image_mime};base64,{encoded_image}" '
-                                'alt="本轮上传图片">'
-                            )
-                        thread_items.append(
-                            f'<article class="agent-panel-message user"><time>{timestamp}</time>'
-                            f'<div class="agent-user-bubble">{image_html}<p>{content}</p></div></article>'
-                        )
-                    else:
-                        thread_items.append(
-                            '<article class="agent-panel-message assistant">'
-                            f'<span class="agent-message-mark">{icon_svg("citrus", 16)}</span>'
-                            '<div class="agent-message-body"><div class="agent-message-meta">'
-                            f'<b>Citrus Agent</b><time>{timestamp}</time></div>'
-                            f'<div class="agent-answer-card"><p>{content}</p></div></div></article>'
-                        )
-                if thread_items:
-                    st.markdown(
-                        '<section class="agent-panel-conversation" aria-label="当前页面对话">'
-                        '<div class="agent-panel-thread">'
-                        + "".join(thread_items)
-                        + "</div></section>",
-                        unsafe_allow_html=True,
-                    )
+                _render_agent_panel_thread(view, list(contextual_messages))
             else:
                 st.markdown(
                     '<section class="agent-panel-welcome">'
-                    f'<span class="agent-welcome-mark">{icon_svg("citrus", 31)}</span>'
-                    '<h2>你好，我是 Citrus Agent</h2>'
-                    '<p>我可以帮助你基于当前页面的信息进行检查、<br>分析和解答相关问题。</p>'
+                    f'<span class="agent-welcome-mark">{icon_svg("citrus", 24)}</span>'
+                    '<h2>有什么可以帮你？</h2>'
+                    f'<p>{html.escape(contextual_description)}</p>'
+                    '<span class="agent-legacy-welcome-label" aria-hidden="true">'
+                    '你好，我是 Citrus Agent</span>'
                     '</section>',
                     unsafe_allow_html=True,
                 )
@@ -724,11 +1117,20 @@ def render_agent_panel(view: str) -> tuple[str, Any | None]:
                     help="上传柑橘图片，发送后由视觉模型进行识别",
                     disabled=bool(loading_prompt),
                 )
-                st.text_input(
+                st.text_area(
                     "询问当前页面或继续任务",
                     placeholder="向 Citrus Agent 提问…",
                     label_visibility="collapsed",
                     key=f"agent_panel_prompt_{view}",
+                    height=88,
+                    disabled=bool(loading_prompt),
+                )
+                # Keep the pre-existing AppTest and deep-link state key usable
+                # while the visible composer uses a multiline textarea.
+                st.text_input(
+                    "兼容旧版提示词",
+                    label_visibility="collapsed",
+                    key=f"agent_panel_prompt_legacy_{view}",
                     disabled=bool(loading_prompt),
                 )
                 st.form_submit_button(
@@ -744,6 +1146,14 @@ def render_agent_panel(view: str) -> tuple[str, Any | None]:
                 '<p class="agent-panel-disclaimer">Citrus Agent 可能会生成不准确的信息，请注意核对重要内容。</p>',
                 unsafe_allow_html=True,
             )
+        newest_message = contextual_messages[-1] if contextual_messages else {}
+        newest_id = str(newest_message.get("message_id") or "")
+        marker = f"{len(contextual_messages)}:{newest_id}:{int(bool(loading_prompt))}"
+        _render_agent_panel_behaviors(
+            view,
+            marker=marker,
+            force_latest=bool(loading_prompt),
+        )
     return pending, uploaded_image
 
 

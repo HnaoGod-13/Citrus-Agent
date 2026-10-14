@@ -215,6 +215,7 @@ class IntakeStore:
         timeline = defaultdict(lambda: {"supply": 0.0, "output": 0.0})
         origins = Counter()
         quality = Counter()
+        metric_records = []
         supply_tons = input_tons = output_tons = 0.0
         brix_values = []
         supplier_count = processor_count = submitted_count = 0
@@ -232,11 +233,15 @@ class IntakeStore:
                 continue
             fields = document.get("fields", {})
             rows = document.get("rows", {})
-            if record["status"] == "submitted":
+            record_quality = Counter()
+            record_supply = record_input = record_output = 0.0
+            record_brix = None
+            if record["status"] != "draft":
                 submitted_count += 1
             if record["side"] == "supplier":
                 supplier_count += 1
                 quantity = amount(fields.get("harvest.quantity"), fields.get("harvest.unit"))
+                record_supply = quantity
                 supply_tons += quantity
                 date = fields.get("harvest.date") or record["updated_at"][:10]
                 if quantity > 0:
@@ -246,31 +251,57 @@ class IntakeStore:
                     origins[origin] += 1
                 brix = float_or_none(fields.get("quality.brix"))
                 if brix is not None:
+                    record_brix = brix
                     brix_values.append(brix)
             else:
                 processor_count += 1
                 date = fields.get("product.date") or record["updated_at"][:10]
                 output = amount(fields.get("output.productMass"), "kg")
+                record_output = output
                 output_tons += output
                 if output > 0:
                     timeline[str(date)[:7]]["output"] += output
                 for material in rows.get("materials", []):
-                    input_tons += amount(material.get("input"), material.get("unit"))
+                    material_input = amount(material.get("input"), material.get("unit"))
+                    record_input += material_input
+                    input_tons += material_input
                 release = fields.get("release.conclusion")
                 if release == "合格":
                     quality["qualified"] += 1
+                    record_quality["qualified"] += 1
                 elif release == "不合格":
                     quality["unqualified"] += 1
+                    record_quality["unqualified"] += 1
                 elif release:
                     quality["pending"] += 1
+                    record_quality["pending"] += 1
             for test in rows.get("tests", []):
                 conclusion = test.get("conclusion")
                 if conclusion == "合格":
                     quality["qualified"] += 1
+                    record_quality["qualified"] += 1
                 elif conclusion == "不合格":
                     quality["unqualified"] += 1
+                    record_quality["unqualified"] += 1
                 elif conclusion:
                     quality["pending"] += 1
+                    record_quality["pending"] += 1
+            metric_records.append({
+                "side": record["side"],
+                "status": record["status"],
+                "date": str(date)[:10],
+                "origin": str(fields.get("base.origin") or "").strip(),
+                "supplyTons": round(record_supply, 3),
+                "inputTons": round(record_input, 3),
+                "outputTons": round(record_output, 3),
+                "brix": record_brix,
+                "quality": {
+                    "qualified": record_quality["qualified"],
+                    "pending": record_quality["pending"],
+                    "unqualified": record_quality["unqualified"],
+                },
+                "updatedAt": record["updated_at"],
+            })
 
         points = [
             {"label": month, "supply": round(values["supply"], 3), "output": round(values["output"], 3)}
@@ -287,9 +318,11 @@ class IntakeStore:
             "inputTons": round(input_tons, 3),
             "outputTons": round(output_tons, 3),
             "averageBrix": round(sum(brix_values) / len(brix_values), 2) if brix_values else None,
+            "brixCount": len(brix_values),
             "timeline": points,
             "origins": [{"label": label, "value": value} for label, value in origins.most_common(8)],
             "quality": dict(qualified=quality["qualified"], pending=quality["pending"], unqualified=quality["unqualified"]),
+            "records": metric_records,
             "updatedAt": records[-1]["updated_at"] if records else "",
         }
 
